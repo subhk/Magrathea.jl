@@ -1,8 +1,6 @@
 using LinearAlgebra, SparseArrays, Arpack
 
-
-
-# 2) critical Ra for rotating spherical shell, fixed m
+# critical Ra for rotating spherical shell, fixed m
 function critical_Ra_shell(m;
         N=40, lmax=80,
         E=1e-4, Pr=1.0,
@@ -49,7 +47,7 @@ function critical_Ra_shell(m;
         # only P‐eqn (block A22) carries Ra coupling via Θ:
         B[1:Np, 2Np+1:3Np] .= -LTP*Iden
 
-        # 4) enforce BCs via tau‐rows
+        # enforce BCs via tau‐rows
         # stress‐free: P=0 & P''=0  at r=ri,r0:
         #   replace rows 1,2 and rows Np-1,Np of A0 and B
         function tau!(M)
@@ -71,7 +69,7 @@ function critical_Ra_shell(m;
 
         tau!(A0);  tau!(B)   # impose on both
 
-        # 5) solve generalized eigenproblem for smallest Ra
+        # solve generalized eigenproblem for smallest Ra
         vals, _ = eigs(A0, B; nev=1, which=:SR)
         Ra_ℓ = real(vals[1])
         if Ra_ℓ < best.Ra
