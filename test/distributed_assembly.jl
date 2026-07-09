@@ -1,12 +1,12 @@
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "_mhd_index_map tiles rows by section" begin
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
                        m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0)
     op = MHDStabilityOperator(params)
-    im = Cross._mhd_index_map(op)
+    im = Magrathea._mhd_index_map(op)
     n_per_mode = params.N + 1
     @test all(length(r) == n_per_mode for r in values(im))
     sorted = sort(collect(values(im)); by=first)
@@ -15,18 +15,18 @@ using Cross
         @test first(sorted[i]) == last(sorted[i-1]) + 1
     end
     @test last(sorted[end]) == op.matrix_size
-    key, loc = Cross.row_to_dof(im, n_per_mode + 1)
-    @test Cross.dof_to_row(im, key, loc) == n_per_mode + 1
+    key, loc = Magrathea.row_to_dof(im, n_per_mode + 1)
+    @test Magrathea.dof_to_row(im, key, loc) == n_per_mode + 1
 end
 
 @testset "_owned_coo_nnz counts owned rows by band" begin
     rows = [1, 1, 2, 3, 3, 4]
     cols = [1, 3, 2, 1, 4, 4]
-    d, o = Cross._owned_coo_nnz(rows, cols, 0, 2)
+    d, o = Magrathea._owned_coo_nnz(rows, cols, 0, 2)
     @test d == [1, 1] && o == [1, 0]
-    d2, o2 = Cross._owned_coo_nnz(rows, cols, 2, 4)
+    d2, o2 = Magrathea._owned_coo_nnz(rows, cols, 2, 4)
     @test d2 == [1, 1] && o2 == [1, 0]
-    d3, o3 = Cross._owned_coo_nnz(rows, cols, 0, 4)
+    d3, o3 = Magrathea._owned_coo_nnz(rows, cols, 0, 4)
     @test d3 == [2,1,2,1] && o3 == [0,0,0,0]
 end
 
@@ -34,7 +34,7 @@ end
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
                        m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0)
     op = MHDStabilityOperator(params)
-    full = Cross._assemble_mhd_coo(op)
+    full = Magrathea._assemble_mhd_coo(op)
     n = full.n
     A_pre = sparse(full.A_rows, full.A_cols, full.A_vals, n, n)
     B_pre = sparse(full.B_rows, full.B_cols, full.B_vals, n, n)
@@ -42,7 +42,7 @@ end
     Ar=Int[]; Ac=Int[]; Av=ComplexF64[]; Br=Int[]; Bc=Int[]; Bv=ComplexF64[]
     for i in 1:3
         R = (cuts[i]+1):cuts[i+1]
-        c = Cross._assemble_mhd_coo(op; owned_julia_rows=R)
+        c = Magrathea._assemble_mhd_coo(op; owned_julia_rows=R)
         @test all(r -> r in R, c.A_rows)
         @test all(r -> r in R, c.B_rows)
         append!(Ar,c.A_rows); append!(Ac,c.A_cols); append!(Av,c.A_vals)

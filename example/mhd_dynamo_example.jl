@@ -15,8 +15,8 @@ using LinearAlgebra
 using SparseArrays
 using Printf
 
-# Load Cross (includes MHD and eigenvalue solver functionality)
-using Cross
+# Load Magrathea (includes MHD and eigenvalue solver functionality)
+using Magrathea
 
 println("="^80)
 println("MHD Dynamo Stability Analysis Example")

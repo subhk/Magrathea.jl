@@ -1,26 +1,26 @@
-# Spec: Migrate Cross.jl docs to Documenter.jl (BiGSTARS-style)
+# Spec: Migrate Magrathea.jl docs to Documenter.jl (BiGSTARS-style)
 
 **Date:** 2026-06-17
 **Goal:** Replace the current MkDocs (Material) documentation with a Documenter.jl
-site styled to match BiGSTARS.jl, so Cross.jl's docs share the same framework,
+site styled to match BiGSTARS.jl, so Magrathea.jl's docs share the same framework,
 chrome, navigation, API rendering, and visual design as the author's BiGSTARS.jl.
 
 ## Motivation
 
-- BiGSTARS.jl (same author) uses **Documenter.jl** + `bigstars.css`; Cross.jl uses
+- BiGSTARS.jl (same author) uses **Documenter.jl** + `bigstars.css`; Magrathea.jl uses
   **MkDocs Material** (Python). The two render fundamentally differently (sidebar,
   nav, typography), so CSS alone cannot make MkDocs look like a Documenter site.
 - Documenter is the idiomatic choice for a Julia package and gives native API docs
   (`@docs`/`@autodocs` from docstrings), consistent with BiGSTARS.
-- Cross's current `extra.css` already uses the BiGSTARS palette and a hero/card/path
+- Magrathea's current `extra.css` already uses the BiGSTARS palette and a hero/card/path
   concept, so the visual intent is established — this migration makes it faithful.
 
 ## Constraints
 
-- **No SLEPc/MPI in docs CI.** Cross's solvers require `backend=:slepc` (the only
+- **No SLEPc/MPI in docs CI.** Magrathea's solvers require `backend=:slepc` (the only
   backend; non-slepc paths throw). So any example that *solves* must render as
   **static** code (`execute=false`, plain ` ```julia ` fences) — identical to how
-  BiGSTARS handles its SLEPc examples. `using Cross` itself loads fine (PetscWrap/
+  BiGSTARS handles its SLEPc examples. `using Magrathea` itself loads fine (PetscWrap/
   SlepcWrap are weakdeps), so `@docs` autodocs and non-solving snippets are safe.
 - Preserve all existing documentation content; do not drop pages.
 - Keep the existing color palette (navy #10233f / blue #226f9f / teal #18a39b /
@@ -32,23 +32,23 @@ chrome, navigation, API rendering, and visual design as the author's BiGSTARS.jl
 
 - **`docs/make.jl`** — mirror BiGSTARS' structure:
   ```julia
-  using Documenter, Cross
+  using Documenter, Magrathea
   # (DocumenterCitations only if we add a bibliography; see Open Questions)
   makedocs(
-      sitename = "Cross.jl",
-      modules  = [Cross],
+      sitename = "Magrathea.jl",
+      modules  = [Magrathea],
       format   = Documenter.HTML(
           prettyurls = get(ENV, "CI", nothing) == "true",
-          canonical  = "https://subhk.github.io/Cross.jl/stable",
-          assets     = ["assets/cross.css"],
+          canonical  = "https://subhk.github.io/Magrathea.jl/stable",
+          assets     = ["assets/magrathea.css"],
           collapselevel = 2,
       ),
       pages = PAGES,   # see §2
       warnonly = [:missing_docs, :cross_references],  # keep first migration green
   )
-  deploydocs(repo = "github.com/subhk/Cross.jl", devbranch = "main", push_preview = false)
+  deploydocs(repo = "github.com/subhk/Magrathea.jl", devbranch = "main", push_preview = false)
   ```
-- **`docs/Project.toml`** — `Documenter`; `Cross` added via `make.jl` dev path or a
+- **`docs/Project.toml`** — `Documenter`; `Magrathea` added via `make.jl` dev path or a
   `docs/Project.toml` with `[deps]` Documenter + a `Pkg.develop(path="..")` step in CI.
 - **`.github/workflows/docs.yml`** — replace the MkDocs job with the standard Julia
   Documenter job: setup-julia → instantiate `docs/` → `julia --project=docs docs/make.jl`
@@ -100,23 +100,23 @@ PAGES = [
 
 ### 3. Styling
 
-- Port `bigstars.css` → **`docs/src/assets/cross.css`**: same `:root` palette; rename
-  `--bigstars-*` → `--cross-*`; keep the Documenter selectors (`.docs-sidebar`,
+- Port `bigstars.css` → **`docs/src/assets/magrathea.css`**: same `:root` palette; rename
+  `--bigstars-*` → `--magrathea-*`; keep the Documenter selectors (`.docs-sidebar`,
   `.docs-menu .tocitem`, `#documenter-page h1/h2/h3`, `pre`/`code`, and the dark-theme
-  variants `html.theme--documenter-dark` / catppuccin). Add the `cross-hero`,
-  `cross-card`, `cross-card-grid`, `cross-path`, `cross-button` rules (ported from
+  variants `html.theme--documenter-dark` / catppuccin). Add the `magrathea-hero`,
+  `magrathea-card`, `magrathea-card-grid`, `magrathea-path`, `magrathea-button` rules (ported from
   BiGSTARS' `bigstars-*` block).
 - **`index.md`** landing page: hero (eyebrow + headline + action buttons) + card-grid +
-  learning-path via ` ```@raw html `, mirroring BiGSTARS' `index.md`, with Cross's
+  learning-path via ` ```@raw html `, mirroring BiGSTARS' `index.md`, with Magrathea's
   content (onset/biglobal/triglobal/MHD feature cards; "what to read first" path).
-- Logo/favicon: reuse `docs/assets/cross-banner.svg` → `docs/src/assets/`.
+- Logo/favicon: reuse `docs/assets/magrathea-banner.svg` → `docs/src/assets/`.
 
 ### 4. API reference
 
-`reference.md` uses Documenter autodocs from Cross's docstrings. Either:
-- `@autodocs` with `Modules = [Cross]` (everything with a docstring), or
+`reference.md` uses Documenter autodocs from Magrathea's docstrings. Either:
+- `@autodocs` with `Modules = [Magrathea]` (everything with a docstring), or
 - curated `@docs` blocks grouped by theme (Params, Problems, solve, BasicStates, MHD,
-  Operators), matching the export groups in `src/Cross.jl`.
+  Operators), matching the export groups in `src/Magrathea.jl`.
 
 Default: curated `@docs` blocks grouped by theme (cleaner, avoids dumping internals);
 fall back to `@autodocs` per submodule if coverage gaps appear. `warnonly=[:missing_docs]`
@@ -141,7 +141,7 @@ during the first migration so the build stays green while docstring coverage is 
 `examples.md` (and any solving snippet in getting_started/problem_setup) renders as
 **static** ` ```julia ` blocks (no `@example`/`@repl` execution), because solving needs
 SLEPc. A short note states how to run them locally (`mpiexec … julia …`), mirroring
-BiGSTARS. No Literate dependency (Cross has no `examples/*.jl`).
+BiGSTARS. No Literate dependency (Magrathea has no `examples/*.jl`).
 
 ## Out of scope
 
@@ -154,16 +154,16 @@ BiGSTARS. No Literate dependency (Cross has no `examples/*.jl`).
 
 - `julia --project=docs docs/make.jl` builds locally with no errors (warnings allowed
   via `warnonly` initially).
-- Site renders with the BiGSTARS-style hero/cards/path landing page and `cross.css`
+- Site renders with the BiGSTARS-style hero/cards/path landing page and `magrathea.css`
   palette in both light and dark Documenter themes.
-- All current pages present and navigable; API reference shows Cross docstrings.
+- All current pages present and navigable; API reference shows Magrathea docstrings.
 - CI `docs.yml` builds and deploys via `deploydocs` to GitHub Pages.
 - MkDocs files (`mkdocs.yml`, `docs/requirements.txt`) removed.
 
 ## Open questions
 
-1. **Bibliography:** BiGSTARS uses `DocumenterCitations` + `references.bib`. Does Cross
-   want citations? Default: NO (Cross docs currently have none) — skip DocumenterCitations
+1. **Bibliography:** BiGSTARS uses `DocumenterCitations` + `references.bib`. Does Magrathea
+   want citations? Default: NO (Magrathea docs currently have none) — skip DocumenterCitations
    unless a `references.bib` is desired.
 2. **API style:** curated `@docs` groups (default) vs blanket `@autodocs`.
 3. **Orphan MHD pages:** fold-in vs add-to-nav (default: add USER_GUIDE, merge IMPLEMENTATION).

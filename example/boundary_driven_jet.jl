@@ -6,7 +6,7 @@
 # varies meridionally (hotter at equator, cooler at poles), which drives
 # a zonal jet through thermal wind balance.
 
-using Cross
+using Magrathea
 using Printf
 using Plots
 

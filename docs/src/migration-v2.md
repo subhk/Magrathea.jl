@@ -1,7 +1,7 @@
-# Migrating to Cross.jl v2.0
+# Migrating to Magrathea.jl v2.0
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">v1.x &rarr; v2.0</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">v1.x &rarr; v2.0</div>
   <h1>Migrating to the v2.0 problem / solve API.</h1>
   <p>Everything that changed from v1.x to v2.0, and how to update your code.</p>
 </div>
@@ -64,7 +64,7 @@ src/Stability/    — OnsetParams, eigenvalue solvers, analysis modes
 src/MHD/          — MHDParams, Lorentz/induction operators, assembly
 ```
 
-All symbols remain in the `Cross` namespace. No import changes needed unless you were including standalone module files directly.
+All symbols remain in the `Magrathea` namespace. No import changes needed unless you were including standalone module files directly.
 
 ## 4. Removed v1 Compatibility Constructors
 
@@ -113,11 +113,11 @@ estimate_size(OnsetProblem(params))
 
 ```julia
 # Plots.jl recipes (lightweight)
-using Cross, Plots
+using Magrathea, Plots
 plot(result)                    # eigenvalue spectrum
 
 # Makie (interactive)
-using Cross, CairoMakie
+using Magrathea, CairoMakie
 eigenspectrum(result)           # interactive spectrum with hover
 plot_meridional(result, 1)      # meridional slice
 plot_radial(result, 1)          # radial profiles

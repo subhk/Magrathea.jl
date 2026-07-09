@@ -49,7 +49,7 @@ jobs:
             using Pkg;
             Pkg.activate(pwd());
             Pkg.instantiate(; allow_autoprecomp=false);
-            using Cross;
+            using Magrathea;
             Pkg.test(; coverage = get(ENV, "COVERAGE", "false") == "true");
           '
 

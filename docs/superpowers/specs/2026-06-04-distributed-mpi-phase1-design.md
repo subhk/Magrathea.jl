@@ -6,7 +6,7 @@ Program: see [[project_distributed_mpi_roadmap]] — Phase 1 of 6.
 
 ## Goal
 
-A PETSc-free, serial-testable abstraction that maps between Cross.jl's
+A PETSc-free, serial-testable abstraction that maps between Magrathea.jl's
 `(field, ℓ, radial-index)` degrees of freedom and global matrix row indices, and
 answers ownership queries for a PETSc row range `[rstart, rend)`. This is the
 bookkeeping layer that Phase 2+ distributed assembly uses to insert only the rows
@@ -14,7 +14,7 @@ a rank owns. No assembly changes and no PETSc/MPI in this phase.
 
 ## Context
 
-Every Cross.jl problem lays matrix rows out as **contiguous `Nr`-row blocks keyed by
+Every Magrathea.jl problem lays matrix rows out as **contiguous `Nr`-row blocks keyed by
 `(ℓ, field)`**:
 - `LinearStabilityOperator` and triglobal `SingleModeOperator` expose this directly
   as `index_map::Dict{Tuple{Int,Symbol}, UnitRange{Int}}` (1-based Julia row ranges,

@@ -24,7 +24,7 @@
 ## File Structure
 
 - `src/MHD/assembly.jl` (modify) — add `_mhd_index_map`, `_owned_coo_nnz`; extract `_assemble_mhd_coo`; make `assemble_mhd_matrices` a wrapper.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` (modify) — `_create_dist_mat`, `_fill_dist_mat!`, `_apply_dist_bcs!`; rewire MHD `_slepc_solve`.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` (modify) — `_create_dist_mat`, `_fill_dist_mat!`, `_apply_dist_bcs!`; rewire MHD `_slepc_solve`.
 - `test/distributed_assembly.jl` (create) — serial tests; wired into `runtests.jl`.
 
 ---
@@ -38,13 +38,13 @@
 ```julia
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "_mhd_index_map tiles rows by section" begin
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
                        m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0)
     op = MHDStabilityOperator(params)
-    im = Cross._mhd_index_map(op)
+    im = Magrathea._mhd_index_map(op)
     n_per_mode = params.N + 1
     # every block is n_per_mode rows, ranges tile 1:matrix_size contiguously
     @test all(length(r) == n_per_mode for r in values(im))
@@ -55,19 +55,19 @@ using Cross
     end
     @test last(sorted[end]) == op.matrix_size
     # round-trips against the Phase-1 mapping
-    key, loc = Cross.row_to_dof(im, n_per_mode + 1)
-    @test Cross.dof_to_row(im, key, loc) == n_per_mode + 1
+    key, loc = Magrathea.row_to_dof(im, n_per_mode + 1)
+    @test Magrathea.dof_to_row(im, key, loc) == n_per_mode + 1
 end
 
 @testset "_owned_coo_nnz counts owned rows by band" begin
     # rows/cols are 1-based Julia COO; ownership band is 0-based [rstart,rend)
     rows = [1, 1, 2, 3, 3, 4]
     cols = [1, 3, 2, 1, 4, 4]
-    d, o = Cross._owned_coo_nnz(rows, cols, 0, 2)   # own rows 1,2; band cols [0,2)→cols 1,2
+    d, o = Magrathea._owned_coo_nnz(rows, cols, 0, 2)   # own rows 1,2; band cols [0,2)→cols 1,2
     @test d == [1, 1] && o == [1, 0]
-    d2, o2 = Cross._owned_coo_nnz(rows, cols, 2, 4) # own rows 3,4; band cols 3,4
+    d2, o2 = Magrathea._owned_coo_nnz(rows, cols, 2, 4) # own rows 3,4; band cols 3,4
     @test d2 == [1, 1] && o2 == [1, 0]
-    d3, o3 = Cross._owned_coo_nnz(rows, cols, 0, 4)
+    d3, o3 = Magrathea._owned_coo_nnz(rows, cols, 0, 4)
     @test d3 == [2,1,2,1] && o3 == [0,0,0,0]
 end
 ```
@@ -135,7 +135,7 @@ This refactors the existing `assemble_mhd_matrices` body. Today (line numbers ap
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
                        m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0)
     op = MHDStabilityOperator(params)
-    full = Cross._assemble_mhd_coo(op)                       # owned=nothing → full interior
+    full = Magrathea._assemble_mhd_coo(op)                       # owned=nothing → full interior
     n = full.n
     A_pre = sparse(full.A_rows, full.A_cols, full.A_vals, n, n)
     B_pre = sparse(full.B_rows, full.B_cols, full.B_vals, n, n)
@@ -145,7 +145,7 @@ This refactors the existing `assemble_mhd_matrices` body. Today (line numbers ap
     Ar=Int[]; Ac=Int[]; Av=ComplexF64[]; Br=Int[]; Bc=Int[]; Bv=ComplexF64[]
     for i in 1:3
         R = (cuts[i]+1):cuts[i+1]
-        c = Cross._assemble_mhd_coo(op; owned_julia_rows=R)
+        c = Magrathea._assemble_mhd_coo(op; owned_julia_rows=R)
         @test all(r -> r in R, c.A_rows)                     # only owned rows emitted
         @test all(r -> r in R, c.B_rows)
         append!(Ar,c.A_rows); append!(Ac,c.A_cols); append!(Av,c.A_vals)
@@ -228,11 +228,11 @@ end
 
 ## Task 3: Extension — distributed Mat build, fill, BCs, rewire (NOT runnable here)
 
-**Files:** Modify `ext/CrossSlepcExt/CrossSlepcExt.jl` (and `raw_petsc.jl` if `MatZeroRows` needs a raw ccall).
+**Files:** Modify `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` (and `raw_petsc.jl` if `MatZeroRows` needs a raw ccall).
 
 > Cannot run here. Verify: `Meta.parseall`, symbol-audit vs installed PetscWrap 0.1.5 / SlepcWrap 0.1.3, `CORE_OK`. Follow Phase-0 ccall conventions.
 
-- [ ] **Step 1: Add `_create_dist_mat` + `_fill_dist_mat!` to `CrossSlepcExt.jl`**
+- [ ] **Step 1: Add `_create_dist_mat` + `_fill_dist_mat!` to `MagratheaSlepcExt.jl`**
 
 ```julia
 function _create_dist_mat(n::Int)
@@ -245,7 +245,7 @@ end
 
 function _fill_dist_mat!(mat, rows, cols, vals, rstart::Int, rend::Int)
     PI = PetscWrap.PetscInt
-    d, o = Cross._owned_coo_nnz(rows, cols, rstart, rend)
+    d, o = Magrathea._owned_coo_nnz(rows, cols, rstart, rend)
     MatMPIAIJSetPreallocation(mat, PI(0), PI.(d), PI(0), PI.(o))
     @inbounds for k in eachindex(rows)
         r0 = rows[k] - 1
@@ -290,17 +290,17 @@ NOTE: `MatZeroRows` is collective — every rank must call it with its owned BC-
     n = op.matrix_size
     Amat, rstart, rend = _create_dist_mat(n)
     Bmat, _, _ = _create_dist_mat(n)
-    coo = Cross._assemble_mhd_coo(op; owned_julia_rows=(rstart+1):rend)
+    coo = Magrathea._assemble_mhd_coo(op; owned_julia_rows=(rstart+1):rend)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rstart, rend)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rstart, rend)
     _apply_dist_bcs!(Amat, Bmat, op, rstart, rend)
     # ... then EPSCreate/EPSSetOperators(eps, Amat, Bmat)/solve/gather as in Phase 0
 ```
-This requires `_slepc_solve` (or a new MHD-specific entry the MHD solve path calls) to receive the `op::MHDStabilityOperator` rather than pre-built `(A,B)`. Decide the cleanest wiring by reading how `solve(::MHDProblem; backend=:slepc)` currently reaches `_slepc_solve` (via `solve_eigenvalue_problem(A,B; backend=:slepc)`); add an MHD-aware path that passes `op` through to the extension (e.g. a `Cross._SLEPC_MHD_SOLVER` hook analogous to `_SLEPC_SOLVER`, registered by the extension, used by `solve(::MHDProblem)` when `backend==:slepc`). Keep the generic `_slepc_solve(A,B;...)` (Phase 0) for non-MHD and as fallback. Report the exact wiring you chose.
+This requires `_slepc_solve` (or a new MHD-specific entry the MHD solve path calls) to receive the `op::MHDStabilityOperator` rather than pre-built `(A,B)`. Decide the cleanest wiring by reading how `solve(::MHDProblem; backend=:slepc)` currently reaches `_slepc_solve` (via `solve_eigenvalue_problem(A,B; backend=:slepc)`); add an MHD-aware path that passes `op` through to the extension (e.g. a `Magrathea._SLEPC_MHD_SOLVER` hook analogous to `_SLEPC_SOLVER`, registered by the extension, used by `solve(::MHDProblem)` when `backend==:slepc`). Keep the generic `_slepc_solve(A,B;...)` (Phase 0) for non-MHD and as fallback. Report the exact wiring you chose.
 
-- [ ] **Step 4: Parse + symbol-audit + CORE_OK** — `$JL -e 'for f in ("ext/CrossSlepcExt/raw_petsc.jl","ext/CrossSlepcExt/CrossSlepcExt.jl"); Meta.parseall(read(f,String)); end; println("PARSE_OK")'`; audit `MatMPIAIJSetPreallocation`, `MatGetOwnershipRange`, `MatSetValue`, `MatZeroRows` (raw), `MatAssembly*` against installed source; `$JL --project=. -e 'using Cross; println("CORE_OK")'` (sandbox off). Report the audit table + any symbol you could not confirm.
+- [ ] **Step 4: Parse + symbol-audit + CORE_OK** — `$JL -e 'for f in ("ext/MagratheaSlepcExt/raw_petsc.jl","ext/MagratheaSlepcExt/MagratheaSlepcExt.jl"); Meta.parseall(read(f,String)); end; println("PARSE_OK")'`; audit `MatMPIAIJSetPreallocation`, `MatGetOwnershipRange`, `MatSetValue`, `MatZeroRows` (raw), `MatAssembly*` against installed source; `$JL --project=. -e 'using Magrathea; println("CORE_OK")'` (sandbox off). Report the audit table + any symbol you could not confirm.
 
-- [ ] **Step 5: Commit (ASK USER FIRST)** — `git add ext/CrossSlepcExt/` / `git commit -m "feat(mpi): distributed MHD assembly + BC application in SLEPc extension"`
+- [ ] **Step 5: Commit (ASK USER FIRST)** — `git add ext/MagratheaSlepcExt/` / `git commit -m "feat(mpi): distributed MHD assembly + BC application in SLEPc extension"`
 
 ---
 

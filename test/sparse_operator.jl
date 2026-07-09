@@ -1,8 +1,8 @@
 using Test
-using Cross
+using Magrathea
 
 function _expected_matrix_size(params::SparseOnsetParams{T}) where {T}
-    ll_top, ll_bot = Cross.compute_l_modes(params.m, params.lmax, params.symm)
+    ll_top, ll_bot = Magrathea.compute_l_modes(params.m, params.lmax, params.symm)
     n_per_mode = params.N + 1
     return (2 * length(ll_top) + length(ll_bot)) * n_per_mode
 end
@@ -49,8 +49,8 @@ end
     ]
 
     for (power, deriv, f, exact) in cases
-        a = Cross.chebyshev_coefficients(Float64, f, N + 1, ri, ro)
-        b = Cross.sparse_radial_operator(power, deriv, N, ri, ro) * a
+        a = Magrathea.chebyshev_coefficients(Float64, f, N + 1, ri, ro)
+        b = Magrathea.sparse_radial_operator(power, deriv, N, ri, ro) * a
         err = maximum(abs(recon(b, x̂) - exact(r_of_x(x̂)))
                       for x̂ in range(-0.9, 0.9, length=15))
         @test err < 1e-9
@@ -61,12 +61,12 @@ end
     # d/dx C_n^(λ)(x) = 2λ C_{n-1}^(λ+1)(x): superdiagonal must be constant 2λ
     # for λ > 0, and (n+1) for λ = 0 (Chebyshev T_n -> U_{n-1}).
     N = 8
-    D0 = Cross.ultraspherical_derivative(Float64, 0, N)
+    D0 = Magrathea.ultraspherical_derivative(Float64, 0, N)
     for n in 0:N-1
         @test D0[n + 1, n + 2] ≈ n + 1
     end
     for λ in (1, 2, 3)
-        Dλ = Cross.ultraspherical_derivative(Float64, λ, N)
+        Dλ = Magrathea.ultraspherical_derivative(Float64, λ, N)
         for n in 0:N-1
             @test Dλ[n + 1, n + 2] ≈ 2λ
         end

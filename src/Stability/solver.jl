@@ -17,8 +17,8 @@ using Logging
 
 # ---------------------------------------------------------------------------
 # Pluggable eigensolver backends. The SLEPc backend lives in an optional package
-# extension (CrossSlepcExt) and registers itself here on load; core never
-# references PETSc/SLEPc symbols, keeping `using Cross` PETSc-free.
+# extension (MagratheaSlepcExt) and registers itself here on load; core never
+# references PETSc/SLEPc symbols, keeping `using Magrathea` PETSc-free.
 # ---------------------------------------------------------------------------
 const _SLEPC_SOLVER = Ref{Union{Nothing,Function}}(nothing)
 const _SLEPC_MHD_SOLVER = Ref{Union{Nothing,Function}}(nothing)
@@ -34,7 +34,7 @@ PETSc-free in core; errors if the extension is absent. Returns `(eigenvalues,
 eigenvectors)` (eigenvectors gathered full on rank 0, empty on workers)."""
 function _solve_triglobal_slepc(problem; kwargs...)
     f = _SLEPC_TRIGLOBAL_SOLVER[]
-    f === nothing && error("backend=:slepc (distributed triglobal) requires `using PetscWrap, SlepcWrap` and Cross.slepc_init!().")
+    f === nothing && error("backend=:slepc (distributed triglobal) requires `using PetscWrap, SlepcWrap` and Magrathea.slepc_init!().")
     return f(problem; kwargs...)
 end
 
@@ -48,12 +48,12 @@ PETSc-free in core; errors if the extension is absent. Returns the common
 on rank 0, empty on workers)."""
 function _solve_constrained_slepc(op; kwargs...)
     f = _SLEPC_CONSTRAINED_SOLVER[]
-    f === nothing && error("backend=:slepc (distributed constrained reduction) requires `using PetscWrap, SlepcWrap` and Cross.slepc_init!().")
+    f === nothing && error("backend=:slepc (distributed constrained reduction) requires `using PetscWrap, SlepcWrap` and Magrathea.slepc_init!().")
     return f(op; kwargs...)
 end
 
 """Initialize SLEPc once per process (collective). Pass a PETSc/SLEPc option string.
-Requires the CrossSlepcExt extension (`using PetscWrap, SlepcWrap`)."""
+Requires the MagratheaSlepcExt extension (`using PetscWrap, SlepcWrap`)."""
 function slepc_init!(opts::AbstractString="")
     f = _SLEPC_INIT[]
     f === nothing && error(
@@ -62,7 +62,7 @@ function slepc_init!(opts::AbstractString="")
     return f(opts)
 end
 
-"""Finalize SLEPc once at process end. Requires the CrossSlepcExt extension."""
+"""Finalize SLEPc once at process end. Requires the MagratheaSlepcExt extension."""
 function slepc_finalize!()
     f = _SLEPC_FINALIZE[]
     f === nothing && error(
@@ -110,11 +110,11 @@ function _solve_mhd_slepc(op; kwargs...)
     f = _SLEPC_MHD_SOLVER[]
     f === nothing && error(
         "backend=:slepc (distributed MHD) requires `using PetscWrap, SlepcWrap` " *
-        "and Cross.slepc_init!().")
+        "and Magrathea.slepc_init!().")
     return f(op; kwargs...)
 end
 
-"""Solve `A x = σ B x` with SLEPc. Requires the CrossSlepcExt extension (load
+"""Solve `A x = σ B x` with SLEPc. Requires the MagratheaSlepcExt extension (load
 `PetscWrap` and `SlepcWrap`, with a complex-scalar PETSc build)."""
 function _solve_generalized_eigen_slepc(A::SparseMatrixCSC, B::SparseMatrixCSC; kwargs...)
     solver = _SLEPC_SOLVER[]
@@ -122,7 +122,7 @@ function _solve_generalized_eigen_slepc(A::SparseMatrixCSC, B::SparseMatrixCSC; 
         "backend=:slepc requires the SLEPc extension. Load it with " *
         "`using PetscWrap, SlepcWrap` (needs a complex-scalar PETSc build with " *
         "PETSC_DIR/PETSC_ARCH and SLEPC_DIR set)." *
-        " Also call Cross.slepc_init!() once before solving.")
+        " Also call Magrathea.slepc_init!() once before solving.")
     return solver(A, B; kwargs...)
 end
 

@@ -48,7 +48,7 @@ Exported user-facing functions (error actionably if the hook is `nothing`):
 - `slepc_finalize!()` → forwards to `_SLEPC_FINALIZE[]`.
 
 `_solve_generalized_eigen_slepc` (exists) keeps forwarding to `_SLEPC_SOLVER[]`;
-its error message gains "…and call `Cross.slepc_init!()` once before solving."
+its error message gains "…and call `Magrathea.slepc_init!()` once before solving."
 
 **Serial-testable pure helper (lives in core, no PETSc):**
 ```julia
@@ -60,9 +60,9 @@ function _petsc_owned_nnz(M::SparseMatrixCSC, rstart::Int, rend::Int) -> (Vector
 ```
 This is the fiddly preallocation math, isolated and unit-testable in serial.
 
-### Extension (`ext/CrossSlepcExt/`)
+### Extension (`ext/MagratheaSlepcExt/`)
 
-- `CrossSlepcExt.jl` — `__init__` registers all three hooks (`_SLEPC_SOLVER`,
+- `MagratheaSlepcExt.jl` — `__init__` registers all three hooks (`_SLEPC_SOLVER`,
   `_SLEPC_INIT`, `_SLEPC_FINALIZE`). Holds an `Ref{Bool}` `_INITIALIZED` guard.
   - `_slepc_init!(opts)` → if not initialized, `SlepcInitialize(opts)` (collective),
     set guard. Idempotent.
@@ -77,7 +77,7 @@ This is the fiddly preallocation math, isolated and unit-testable in serial.
 
 ## Data flow (per `_slepc_solve`, collective on all ranks)
 
-1. Guard: `_INITIALIZED[] || error("call Cross.slepc_init!() first")`. Complex-build
+1. Guard: `_INITIALIZED[] || error("call Magrathea.slepc_init!() first")`. Complex-build
    guard (`PetscScalar <: Real` → error).
 2. `n = size(A,1)`. `target` from `sigma`/`which` (same rule as serial).
 3. Build distributed `Amat`, `Bmat`:
@@ -105,7 +105,7 @@ This is the fiddly preallocation math, isolated and unit-testable in serial.
    - rank 0: `(vals[perm], vecs[:,perm], info)` with full `vecs`.
    - workers: `(vals[perm], Matrix{ComplexF64}(undef,n,0), info)` (empty eigenvectors).
 
-## Cross contract on workers
+## Magrathea contract on workers
 
 `_dispatch_eigen` and the downstream reconstruction (linear.jl / galerkin column
 loops, `_eigvecs_to_matrix`) must tolerate an `n×0` (or `0`-column) eigenvector
@@ -132,7 +132,7 @@ eigenvalues are valid everywhere. Driver reads eigenvectors on rank 0
 - `backend=:slepc` without extension → existing error; with extension absent,
   `slepc_init!()`/`slepc_finalize!()` error actionably.
 - `:krylovkit` default unchanged (existing suite + smoke asserts).
-- `Meta.parseall` of the extension + `vecscatter.jl`; `using Cross` → `CORE_OK`.
+- `Meta.parseall` of the extension + `vecscatter.jl`; `using Magrathea` → `CORE_OK`.
 
 **Cluster-validate (user, on a complex-scalar PETSc+MUMPS build):**
 - `mpirun -n {1,2,4} julia driver.jl`: `slepc_init!(); solve(prob; backend=:slepc); slepc_finalize!()`.
@@ -144,10 +144,10 @@ eigenvalues are valid everywhere. Driver reads eigenvectors on rank 0
 
 - `src/Stability/solver.jl` — add `_SLEPC_INIT`/`_SLEPC_FINALIZE` Refs,
   `slepc_init!`/`slepc_finalize!`, `_petsc_owned_nnz`; extend the slepc error text.
-- `src/Cross.jl` — export `slepc_init!`, `slepc_finalize!`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` — distributed `_slepc_solve`, init/finalize,
+- `src/Magrathea.jl` — export `slepc_init!`, `slepc_finalize!`.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` — distributed `_slepc_solve`, init/finalize,
   register 3 hooks, `_INITIALIZED` guard.
-- `ext/CrossSlepcExt/raw_petsc.jl` — hand-written `ccall`s for primitives SlepcWrap
+- `ext/MagratheaSlepcExt/raw_petsc.jl` — hand-written `ccall`s for primitives SlepcWrap
   0.1.3 doesn't wrap: `VecScatterCreateToZero` gather helper and `EPSSetDimensions`.
 - `test/slepc_backend.jl` — `_petsc_owned_nnz` unit tests; init/finalize stub-error
   tests; the MPI equivalence test (guarded/skip).

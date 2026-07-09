@@ -23,10 +23,10 @@
 ## File Structure
 
 - `src/Stability/solver.jl` (modify) — add `_SLEPC_INIT`/`_SLEPC_FINALIZE` Refs, `slepc_init!`/`slepc_finalize!`, pure helper `_petsc_owned_nnz`; extend the `:slepc` error text.
-- `src/Cross.jl` (modify) — export `slepc_init!`, `slepc_finalize!`.
+- `src/Magrathea.jl` (modify) — export `slepc_init!`, `slepc_finalize!`.
 - `src/Stability/linear.jl`, `src/Stability/triglobal.jl`, `src/solve.jl` (modify) — harden the three `:slepc` divert sites against empty worker eigenvectors.
-- `ext/CrossSlepcExt/raw_petsc.jl` (create) — raw `ccall`s: `_vec_scatter_to_zero`, `_eps_set_dimensions`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` (modify) — distributed `_slepc_solve`, `_slepc_init!`/`_slepc_finalize!`, `_INITIALIZED` guard, register 3 hooks, `include("raw_petsc.jl")`.
+- `ext/MagratheaSlepcExt/raw_petsc.jl` (create) — raw `ccall`s: `_vec_scatter_to_zero`, `_eps_set_dimensions`.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` (modify) — distributed `_slepc_solve`, `_slepc_init!`/`_slepc_finalize!`, `_INITIALIZED` guard, register 3 hooks, `include("raw_petsc.jl")`.
 - `test/slepc_backend.jl` (modify) — `_petsc_owned_nnz` units, init/finalize stub-error tests, empty-eigenvector tolerance tests, guarded MPI test.
 
 ---
@@ -34,7 +34,7 @@
 ## Task 1: Core lifecycle hooks + `_petsc_owned_nnz` (fully verifiable here)
 
 **Files:**
-- Modify: `src/Stability/solver.jl`, `src/Cross.jl`
+- Modify: `src/Stability/solver.jl`, `src/Magrathea.jl`
 - Test: `test/slepc_backend.jl`
 
 - [ ] **Step 1: Write failing tests** (append to `test/slepc_backend.jl`)
@@ -43,21 +43,21 @@
 @testset "_petsc_owned_nnz splits diagonal/off-diagonal blocks" begin
     # 4x4: row1→(1,1),(1,3); row2→(2,2); row3→(3,1),(3,4); row4→(4,4)
     M = sparse([1,1,2,3,3,4], [1,3,2,1,4,4], ComplexF64[1,1,1,1,1,1], 4, 4)
-    d, o = Cross._petsc_owned_nnz(M, 0, 2)      # own rows 1,2; col band [0,2)
+    d, o = Magrathea._petsc_owned_nnz(M, 0, 2)      # own rows 1,2; col band [0,2)
     @test d == [1, 1] && o == [1, 0]
-    d2, o2 = Cross._petsc_owned_nnz(M, 2, 4)    # own rows 3,4; col band [2,4)
+    d2, o2 = Magrathea._petsc_owned_nnz(M, 2, 4)    # own rows 3,4; col band [2,4)
     @test d2 == [1, 1] && o2 == [1, 0]
-    d3, o3 = Cross._petsc_owned_nnz(M, 0, 4)    # own all; everything diagonal-band
+    d3, o3 = Magrathea._petsc_owned_nnz(M, 0, 4)    # own all; everything diagonal-band
     @test o3 == [0, 0, 0, 0] && d3 == [2, 1, 2, 1]
-    d4, o4 = Cross._petsc_owned_nnz(M, 2, 2)    # empty block
+    d4, o4 = Magrathea._petsc_owned_nnz(M, 2, 2)    # empty block
     @test isempty(d4) && isempty(o4)
 end
 
 @testset "slepc_init!/finalize! error without extension" begin
-    @test_throws ErrorException Cross.slepc_init!()
-    e = try Cross.slepc_init!(); catch err; err end
+    @test_throws ErrorException Magrathea.slepc_init!()
+    e = try Magrathea.slepc_init!(); catch err; err end
     @test occursin("SlepcWrap", sprint(showerror, e))
-    @test_throws ErrorException Cross.slepc_finalize!()
+    @test_throws ErrorException Magrathea.slepc_finalize!()
 end
 ```
 
@@ -70,7 +70,7 @@ const _SLEPC_INIT     = Ref{Union{Nothing,Function}}(nothing)
 const _SLEPC_FINALIZE = Ref{Union{Nothing,Function}}(nothing)
 
 """Initialize SLEPc once per process (collective). Pass PETSc/SLEPc option string.
-Requires the CrossSlepcExt extension (`using PetscWrap, SlepcWrap`)."""
+Requires the MagratheaSlepcExt extension (`using PetscWrap, SlepcWrap`)."""
 function slepc_init!(opts::AbstractString="")
     f = _SLEPC_INIT[]
     f === nothing && error(
@@ -79,7 +79,7 @@ function slepc_init!(opts::AbstractString="")
     return f(opts)
 end
 
-"""Finalize SLEPc once at process end. Requires the CrossSlepcExt extension."""
+"""Finalize SLEPc once at process end. Requires the MagratheaSlepcExt extension."""
 function slepc_finalize!()
     f = _SLEPC_FINALIZE[]
     f === nothing && error(
@@ -119,27 +119,27 @@ function _petsc_owned_nnz(M::SparseMatrixCSC, rstart::Int, rend::Int)
 end
 ```
 
-- [ ] **Step 4: Extend the `:slepc` error text** — in `_solve_generalized_eigen_slepc` (solver.jl), append to the existing error string: `" Also call Cross.slepc_init!() once before solving."`
+- [ ] **Step 4: Extend the `:slepc` error text** — in `_solve_generalized_eigen_slepc` (solver.jl), append to the existing error string: `" Also call Magrathea.slepc_init!() once before solving."`
 
-- [ ] **Step 5: Export in `src/Cross.jl`** — add `slepc_init!,` and `slepc_finalize!,` to the `export` list (near other public solve symbols).
+- [ ] **Step 5: Export in `src/Magrathea.jl`** — add `slepc_init!,` and `slepc_finalize!,` to the `export` list (near other public solve symbols).
 
 - [ ] **Step 6: Run tests, verify PASS** — same command as Step 2 → all PASS.
 
 - [ ] **Step 7: Regression — default suite green** — `$JL --project=. test/runtests.jl 2>&1 | grep -iE "Error During Test|did not pass"; echo done` → only `done`.
 
-- [ ] **Step 8: Commit (ASK USER FIRST)** — `git add src/Stability/solver.jl src/Cross.jl test/slepc_backend.jl` / `git commit -m "feat(slepc): add explicit lifecycle hooks + distributed preallocation helper"`
+- [ ] **Step 8: Commit (ASK USER FIRST)** — `git add src/Stability/solver.jl src/Magrathea.jl test/slepc_backend.jl` / `git commit -m "feat(slepc): add explicit lifecycle hooks + distributed preallocation helper"`
 
 ---
 
 ## Task 2: Distributed `_slepc_solve` + raw ccalls (NOT runnable here)
 
 **Files:**
-- Create: `ext/CrossSlepcExt/raw_petsc.jl`
-- Modify: `ext/CrossSlepcExt/CrossSlepcExt.jl`
+- Create: `ext/MagratheaSlepcExt/raw_petsc.jl`
+- Modify: `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`
 
-> Cannot precompile/run here (no PETSc). Verify: (a) `Meta.parseall` of both files; (b) symbol-audit EVERY PETSc/SLEPc symbol + ccall signature against installed PetscWrap 0.1.5 (`~/.julia/packages/PetscWrap/pFwKF/src`) and SlepcWrap 0.1.3 (`~/.julia/packages/SlepcWrap/VVZOZ/src`); (c) `using Cross` → `CORE_OK`. Follow PetscWrap's ccall convention: pass `PetscMat`/`PetscVec`/`SlepcEPS` wrappers directly into ccalls (their `cconvert` yields the `Ptr{Cvoid}` handle); reference `PetscWrap.libpetsc`, `PetscWrap.PetscErrorCode`, `PetscWrap.CVec`, `PetscWrap.PetscInt`, `PetscWrap.PetscScalar`, `SlepcWrap.libslepc`.
+> Cannot precompile/run here (no PETSc). Verify: (a) `Meta.parseall` of both files; (b) symbol-audit EVERY PETSc/SLEPc symbol + ccall signature against installed PetscWrap 0.1.5 (`~/.julia/packages/PetscWrap/pFwKF/src`) and SlepcWrap 0.1.3 (`~/.julia/packages/SlepcWrap/VVZOZ/src`); (c) `using Magrathea` → `CORE_OK`. Follow PetscWrap's ccall convention: pass `PetscMat`/`PetscVec`/`SlepcEPS` wrappers directly into ccalls (their `cconvert` yields the `Ptr{Cvoid}` handle); reference `PetscWrap.libpetsc`, `PetscWrap.PetscErrorCode`, `PetscWrap.CVec`, `PetscWrap.PetscInt`, `PetscWrap.PetscScalar`, `SlepcWrap.libslepc`.
 
-- [ ] **Step 1: Create `ext/CrossSlepcExt/raw_petsc.jl`**
+- [ ] **Step 1: Create `ext/MagratheaSlepcExt/raw_petsc.jl`**
 
 ```julia
 # Raw ccall bindings for primitives SlepcWrap 0.1.3 / PetscWrap 0.1.5 do not wrap.
@@ -199,12 +199,12 @@ function _vec_scatter_to_zero(v::PetscWrap.PetscVec)
 end
 ```
 
-- [ ] **Step 2: Rewrite `ext/CrossSlepcExt/CrossSlepcExt.jl`**
+- [ ] **Step 2: Rewrite `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`**
 
 ```julia
-module CrossSlepcExt
+module MagratheaSlepcExt
 
-using Cross
+using Magrathea
 using SparseArrays
 using PetscWrap
 using SlepcWrap
@@ -236,7 +236,7 @@ function _to_petsc_dist(M::SparseMatrixCSC, n::Int)
     MatSetSizes(mat, PETSC_DECIDE, PETSC_DECIDE, n, n)
     MatSetFromOptions(mat)
     rstart, rend = MatGetOwnershipRange(mat)          # 0-based, half-open
-    d, o = Cross._petsc_owned_nnz(M, rstart, rend)
+    d, o = Magrathea._petsc_owned_nnz(M, rstart, rend)
     MatMPIAIJSetPreallocation(mat, 0, d, 0, o)
     rows = rowvals(M); vals = nonzeros(M)
     @inbounds for col in 1:size(M, 2)
@@ -254,7 +254,7 @@ end
 function _slepc_solve(A::SparseMatrixCSC, B::SparseMatrixCSC;
                       nev::Int, sigma, which::Symbol, selection::Symbol,
                       tol::Float64, maxiter::Int, verbosity::Int=0)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real &&
         error("PETSc/SLEPc must be built with complex scalars (--with-scalar-type=complex)")
     size(A) == size(B) || throw(DimensionMismatch("A and B must match"))
@@ -312,9 +312,9 @@ function _sort_indices_local(ev::AbstractVector{<:Complex}, selection::Symbol)
 end
 
 function __init__()
-    Cross._SLEPC_SOLVER[]   = _slepc_solve
-    Cross._SLEPC_INIT[]     = _slepc_init!
-    Cross._SLEPC_FINALIZE[] = _slepc_finalize!
+    Magrathea._SLEPC_SOLVER[]   = _slepc_solve
+    Magrathea._SLEPC_INIT[]     = _slepc_init!
+    Magrathea._SLEPC_FINALIZE[] = _slepc_finalize!
     return nothing
 end
 
@@ -324,11 +324,11 @@ Note: `MPI` is used directly now (`MPI.COMM_WORLD`, `MPI.Comm_rank/size`). Petsc
 
 - [ ] **Step 3: Symbol + MPI-availability audit.** For every new symbol (`MatMPIAIJSetPreallocation` 5-arg form `(mat, dnz, d_nnz, onz, o_nnz)`, `MatGetOwnershipRange`, `MatCreateVecs`, `EPSGetEigenpair`, `MPI.COMM_WORLD/Comm_rank/Comm_size`, `PetscWrap.PetscInt/PetscScalar/CVec/libpetsc/PETSC_DECIDE`, `SlepcWrap.libslepc`, `eps.ptr`/`SlepcEPS` field, `VecScatterCreateToZero`/`Begin`/`End`/`Destroy` arg types) confirm against the installed source and PETSc man pages. Produce a table: symbol → found (file:line) / adjusted. Confirm how `MPI` is reachable in the extension and wire it (weakdep if needed).
 
-- [ ] **Step 4: Parse check** — `$JL -e 'for f in ("ext/CrossSlepcExt/raw_petsc.jl","ext/CrossSlepcExt/CrossSlepcExt.jl"); Meta.parseall(read(f,String)); end; println("PARSE_OK")'` → `PARSE_OK`.
+- [ ] **Step 4: Parse check** — `$JL -e 'for f in ("ext/MagratheaSlepcExt/raw_petsc.jl","ext/MagratheaSlepcExt/MagratheaSlepcExt.jl"); Meta.parseall(read(f,String)); end; println("PARSE_OK")'` → `PARSE_OK`.
 
-- [ ] **Step 5: Core still PETSc-free** — `$JL --project=. -e 'using Cross; println("CORE_OK")'` (sandbox off) → `CORE_OK`.
+- [ ] **Step 5: Core still PETSc-free** — `$JL --project=. -e 'using Magrathea; println("CORE_OK")'` (sandbox off) → `CORE_OK`.
 
-- [ ] **Step 6: Commit (ASK USER FIRST)** — `git add ext/CrossSlepcExt/` / `git commit -m "feat(slepc): distributed COMM_WORLD solve, MUMPS shift-invert, rank-0 gather"`
+- [ ] **Step 6: Commit (ASK USER FIRST)** — `git add ext/MagratheaSlepcExt/` / `git commit -m "feat(slepc): distributed COMM_WORLD solve, MUMPS shift-invert, rank-0 gather"`
 
 ---
 
@@ -353,7 +353,7 @@ Rationale: on workers, `_slepc_solve` returns `nev` eigenvalues but an `n×0` ei
     @test size(out) == (10, 0)
     # _eigvecs_to_matrix must accept an empty vector-of-vectors with nev eigenvalues
     empty_vv = Vector{Vector{ComplexF64}}()
-    M = Cross._eigvecs_to_matrix(vals, empty_vv, Float64)
+    M = Magrathea._eigvecs_to_matrix(vals, empty_vv, Float64)
     @test size(M, 2) == 0
 end
 ```
@@ -394,16 +394,16 @@ end
         @test true
     else
         @eval using PetscWrap, SlepcWrap
-        Cross.slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
+        Magrathea.slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
                           "-st_pc_factor_mat_solver_type mumps -eps_target_magnitude")
         p = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
                       m=1, lmax=3, N=12, B0_type=dipole, B0_amplitude=1.0)
         op = MHDStabilityOperator(p)
         A, B, _, _ = assemble_mhd_matrices(op)
-        vK, _, _ = Cross.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:krylovkit)
-        vS, _, _ = Cross.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:slepc)
+        vK, _, _ = Magrathea.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:krylovkit)
+        vS, _, _ = Magrathea.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:slepc)
         @test isapprox(sort(real.(vK))[1:2], sort(real.(vS))[1:2]; rtol=1e-4)
-        Cross.slepc_finalize!()
+        Magrathea.slepc_finalize!()
     end
 end
 ```
@@ -414,12 +414,12 @@ end
   - Requires PETSc+SLEPc with **complex scalars** AND **MUMPS** (`--download-mumps` or system), plus MPI; set `PETSC_DIR`/`PETSC_ARCH`/`SLEPC_DIR`.
   - Driver pattern:
     ```julia
-    using Cross, PetscWrap, SlepcWrap
-    Cross.slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu -st_pc_factor_mat_solver_type mumps -eps_target_magnitude")
+    using Magrathea, PetscWrap, SlepcWrap
+    Magrathea.slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu -st_pc_factor_mat_solver_type mumps -eps_target_magnitude")
     result = solve(problem; backend=:slepc)
     # eigenvalues valid on all ranks; eigenvectors on rank 0 only:
     # if MPI.Comm_rank(MPI.COMM_WORLD) == 0  ... use result.eigenvectors ... end
-    Cross.slepc_finalize!()
+    Magrathea.slepc_finalize!()
     ```
   - Launch: `mpirun -n N julia --project=. driver.jl`.
   - Note: replicated assembly (full matrix per rank); eigenvectors gathered to rank 0; `slepc_init!`/`slepc_finalize!` once per process.

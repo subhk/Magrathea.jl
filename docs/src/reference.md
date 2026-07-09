@@ -1,7 +1,7 @@
 # API Reference
 
 ```@meta
-CurrentModule = Cross
+CurrentModule = Magrathea
 ```
 
 ## Parameters

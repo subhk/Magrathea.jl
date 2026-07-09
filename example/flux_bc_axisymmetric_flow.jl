@@ -25,7 +25,7 @@
 
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 
-using Cross
+using Magrathea
 using Printf
 using LinearAlgebra
 

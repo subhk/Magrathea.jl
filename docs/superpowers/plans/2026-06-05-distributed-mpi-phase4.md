@@ -28,12 +28,12 @@
 ```julia
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "onset interior COO partition-reassembles (pre-BC)" begin
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
     op = LinearStabilityOperator(params)
-    full = Cross._assemble_onset_coo(op)
+    full = Magrathea._assemble_onset_coo(op)
     n = full.n
     A_pre = sparse(full.A_rows, full.A_cols, full.A_vals, n, n)
     B_pre = sparse(full.B_rows, full.B_cols, full.B_vals, n, n)
@@ -41,7 +41,7 @@ using Cross
     Ar=Int[]; Ac=Int[]; Av=ComplexF64[]; Br=Int[]; Bc=Int[]; Bv=ComplexF64[]
     for i in 1:3
         R = (cuts[i]+1):cuts[i+1]
-        c = Cross._assemble_onset_coo(op; owned_julia_rows=R)
+        c = Magrathea._assemble_onset_coo(op; owned_julia_rows=R)
         @test all(r -> r in R, c.A_rows)
         @test all(r -> r in R, c.B_rows)
         append!(Ar,c.A_rows); append!(Ac,c.A_cols); append!(Av,c.A_vals)
@@ -140,17 +140,17 @@ READ the original lines 454–471 and paste verbatim. (Note: the basic-state add
     A_bc, _, _, _ = assemble_matrices(op)         # post-BC dense
     for ℓ in op.l_sets[:P]
         idx = op.index_map[(ℓ, :P)]
-        ri, it, ot, ro = Cross.poloidal_tau_indices(idx)
-        sub = Cross._constraint_subblock(op, ℓ, :P)
+        ri, it, ot, ro = Magrathea.poloidal_tau_indices(idx)
+        sub = Magrathea._constraint_subblock(op, ℓ, :P)
         @test sub ≈ A_bc[[ri, it, ot, ro], idx] rtol=1e-10
     end
     for ℓ in op.l_sets[:T]
-        idx = op.index_map[(ℓ, :T)]; r1, r2 = Cross.toroidal_boundary_indices(idx)
-        @test Cross._constraint_subblock(op, ℓ, :T) ≈ A_bc[[r1, r2], idx] rtol=1e-10
+        idx = op.index_map[(ℓ, :T)]; r1, r2 = Magrathea.toroidal_boundary_indices(idx)
+        @test Magrathea._constraint_subblock(op, ℓ, :T) ≈ A_bc[[r1, r2], idx] rtol=1e-10
     end
     for ℓ in op.l_sets[:Θ]
-        idx = op.index_map[(ℓ, :Θ)]; r1, r2 = Cross.temperature_boundary_indices(idx)
-        @test Cross._constraint_subblock(op, ℓ, :Θ) ≈ A_bc[[r1, r2], idx] rtol=1e-10
+        idx = op.index_map[(ℓ, :Θ)]; r1, r2 = Magrathea.temperature_boundary_indices(idx)
+        @test Magrathea._constraint_subblock(op, ℓ, :Θ) ≈ A_bc[[r1, r2], idx] rtol=1e-10
     end
 end
 ```
@@ -173,9 +173,9 @@ end
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
     op = LinearStabilityOperator(params)
     A_full, B_full, idofs, bdofs = assemble_matrices(op)
-    A_ref, B_ref, _ = Cross._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)
-    red = Cross._constraint_reduction_from_subblocks(op)
-    S, P = Cross._constraint_projection_matrices(red, idofs)
+    A_ref, B_ref, _ = Magrathea._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)
+    red = Magrathea._constraint_reduction_from_subblocks(op)
+    S, P = Magrathea._constraint_projection_matrices(red, idofs)
     A_sub = Matrix(S * A_full * P); B_sub = Matrix(S * B_full * P)
     # reduced spectra agree (nullspace basis may differ; spectrum is invariant)
     λref = sort(eigvals(A_ref, B_ref); by=abs)
@@ -192,24 +192,24 @@ end
 
 ## Task 4: extension — fully distributed onset/biglobal `:slepc` (NOT runnable here)
 
-**Files:** Modify `ext/CrossSlepcExt/CrossSlepcExt.jl`.
+**Files:** Modify `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`.
 
 > Cluster-only. Verify: `Meta.parseall`, symbol-audit, `CORE_OK`, full default suite green.
 
 - [ ] **Step 1: rewrite `_slepc_constrained_solve(op; …)`** (currently the Phase-3 replicated-full-`A` version) to the fully distributed flow:
 ```julia
 function _slepc_constrained_solve(op; nev::Int, sigma, which::Symbol, tol::Float64, maxiter::Int)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
     # reduction from sub-blocks (cheap, replicated; no full A)
-    red = Cross._constraint_reduction_from_subblocks(op)
+    red = Magrathea._constraint_reduction_from_subblocks(op)
     # interior_dofs: recompute via the boundary mask (same as assemble_matrices tail) WITHOUT full A
-    idofs = Cross._onset_interior_dofs(op)        # add this tiny helper in core (see note)
-    S, P = Cross._constraint_projection_matrices(red, idofs)
+    idofs = Magrathea._onset_interior_dofs(op)        # add this tiny helper in core (see note)
+    S, P = Magrathea._constraint_projection_matrices(red, idofs)
     nfull = red.n_full; nred = red.n_reduced
     # distributed assembly of A, B (owned rows only)
     Amat, rs, re = _create_dist_mat(nfull); Bmat, _, _ = _create_dist_mat(nfull)
-    coo = Cross._assemble_onset_coo(op; owned_julia_rows=(rs+1):re)
+    coo = Magrathea._assemble_onset_coo(op; owned_julia_rows=(rs+1):re)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rs, re)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rs, re)
     # distribute S, P; reduce; solve; reconstruct
@@ -228,7 +228,7 @@ NOTE: add a tiny core helper `_onset_interior_dofs(op)` = the boundary-mask comp
 
 - [ ] **Step 2: Parse + CORE_OK + full suite** — `PARSE_OK`; `CORE_OK`; `$JL --project=. test/runtests.jl 2>&1 | grep -iE "Error During Test|did not pass"; echo done` → only `done` (the `:krylovkit` onset/biglobal default unaffected; `_solve_constrained_slepc` only runs under the loaded extension).
 - [ ] **Step 3: symbol-audit** any new ccalls (none expected beyond Phase 2/3) + report.
-- [ ] **Step 4: Commit (ASK USER FIRST)** — `git add ext/CrossSlepcExt/ src/Stability/linear.jl` / `git commit -m "feat(mpi): fully distributed onset/biglobal :slepc (no replicated full A)"`
+- [ ] **Step 4: Commit (ASK USER FIRST)** — `git add ext/MagratheaSlepcExt/ src/Stability/linear.jl` / `git commit -m "feat(mpi): fully distributed onset/biglobal :slepc (no replicated full A)"`
 
 ---
 

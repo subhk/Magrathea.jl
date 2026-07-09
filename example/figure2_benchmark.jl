@@ -10,7 +10,7 @@
 # Expected results from the paper:
 #   Critical point: m_c = 15, Ra_c ≈ 1.05567 × 10^7
 
-using Cross
+using Magrathea
 using Printf
 
 # Physical parameters matching Figure 2 of Barik et al. (2023)

@@ -1,10 +1,10 @@
 # Basic States
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Base states</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Base states</div>
   <h1>Separate the background state from the perturbations.</h1>
   <p>
-    Cross.jl decouples the steady base state from the perturbations whose stability
+    Magrathea.jl decouples the steady base state from the perturbations whose stability
     you study, so you can analyze onset against realistic background temperature and
     flow profiles.
   </p>
@@ -21,10 +21,10 @@ Two data structures handle base states:
 
 ## Quick Start: Symbolic Boundary Conditions
 
-Cross.jl provides an intuitive interface for specifying temperature boundary conditions using spherical harmonic notation. Instead of constructing dictionaries manually, use symbolic constructors:
+Magrathea.jl provides an intuitive interface for specifying temperature boundary conditions using spherical harmonic notation. Instead of constructing dictionaries manually, use symbolic constructors:
 
 ```julia
-using Cross
+using Magrathea
 
 # Create Chebyshev differentiation matrices
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
@@ -171,7 +171,7 @@ bs = basic_state(cd, χ, E, Ra, Pr; temperature_bc=bc)
 In v2.0, all basic state types are accessible through a single `basic_state(params; mode=...)` function. This eliminates the need to manage `ChebyshevDiffn` objects and dispatch manually:
 
 ```julia
-using Cross
+using Magrathea
 
 # Define parameters once
 params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35, m=4, lmax=30, Nr=64)
@@ -220,7 +220,7 @@ end
 The simplest case is pure conduction with no flow:
 
 ```julia
-using Cross
+using Magrathea
 
 # Create Chebyshev differentiation matrices
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
@@ -331,7 +331,7 @@ params = OnsetParams(
 result = solve(BiglobalProblem(params, bs); nev=8)
 ```
 
-Cross.jl automatically augments the linearized operator with advection terms:
+Magrathea.jl automatically augments the linearized operator with advection terms:
 
 ```math
 \mathbf{u}' \cdot \nabla \bar{\mathbf{u}} + \bar{\mathbf{u}} \cdot \nabla \mathbf{u}'
@@ -462,7 +462,7 @@ bs3d = BasicState3D(
 To import coefficients from other simulation codes (e.g., Rayleigh, Magic):
 
 1. **Export spectral coefficients** from the source code
-2. **Transform to Cross.jl convention** (check normalization)
+2. **Transform to Magrathea.jl convention** (check normalization)
 3. **Populate the dictionaries** with radially interpolated values
 4. **Compute derivatives** using Chebyshev differentiation
 
@@ -473,7 +473,7 @@ using JLD2
 # Load external data
 @load "external_basic_state.jld2" theta_lm r_ext
 
-# Interpolate to Cross.jl grid
+# Interpolate to Magrathea.jl grid
 using Interpolations
 for (lm, coeffs) in theta_lm
     itp = LinearInterpolation(r_ext, coeffs)
@@ -545,7 +545,7 @@ end
 ### Example 1: Meridional Heating with Symbolic BCs
 
 ```julia
-using Cross
+using Magrathea
 
 # Setup
 E = 1e-5
@@ -668,10 +668,10 @@ For most planetary/stellar scenarios with moderate forcing amplitudes, the Lapla
 
 ### Using the Self-Consistent Solver
 
-Cross.jl provides `basic_state_selfconsistent()` which iteratively solves the coupled advection-diffusion equation:
+Magrathea.jl provides `basic_state_selfconsistent()` which iteratively solves the coupled advection-diffusion equation:
 
 ```julia
-using Cross
+using Magrathea
 
 # Setup
 cd = ChebyshevDiffn(64, [0.35, 1.0], 4)
@@ -730,7 +730,7 @@ info.residual_history # Vector of residuals at each iteration
 ### Example: Comparing Standard vs Self-Consistent
 
 ```julia
-using Cross
+using Magrathea
 using Printf
 
 cd = ChebyshevDiffn(64, [0.35, 1.0], 4)
@@ -816,7 +816,7 @@ This requires solving a **block-tridiagonal system** for all ``\ell`` modes at e
 
 ### Toroidal-Poloidal Decomposition
 
-Cross.jl uses the **toroidal-poloidal decomposition** for the meridional circulation, which:
+Magrathea.jl uses the **toroidal-poloidal decomposition** for the meridional circulation, which:
 
 1. **Eliminates pressure** from the formulation
 2. **Automatically satisfies** the continuity equation ``\nabla \cdot \bar{\mathbf{u}} = 0``
@@ -852,7 +852,7 @@ After solving for ``\bar{u}_\theta``, the radial velocity ``\bar{u}_r`` is compu
 The self-consistent solver automatically uses the full geostrophic balance:
 
 ```julia
-using Cross
+using Magrathea
 
 # Setup
 cd = ChebyshevDiffn(32, [0.35, 1.0], 4)
@@ -896,7 +896,7 @@ solve_meridional_circulation_toroidal_poloidal!(
 
 ### Coupling Coefficient Functions
 
-Cross.jl provides functions for computing the spherical harmonic coupling coefficients:
+Magrathea.jl provides functions for computing the spherical harmonic coupling coefficients:
 
 ```julia
 # cos(θ) × Y_ℓm coupling

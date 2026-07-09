@@ -3,18 +3,18 @@
 # future correct nonaxisymmetric ū·∇T̄ = ∇·(ūT̄) will use, so it can't regress.
 
 using Test
-using Cross
+using Magrathea
 using LinearAlgebra
 import Random
 
 @testset "Real-orthonormal SH transform (cos+sin, ±m)" begin
     Random.seed!(11)
-    g = Cross.sh_grid(8, 4, Float64)
+    g = Magrathea.sh_grid(8, 4, Float64)
 
     @testset "synthesis ↔ analysis round-trip" begin
         c0 = Dict{Tuple{Int,Int},Float64}((ℓ, m) => randn()
               for m in -4:4 for ℓ in abs(m):8)
-        c1 = Cross.sh_analyze(Cross.sh_synthesize(c0, g), g)
+        c1 = Magrathea.sh_analyze(Magrathea.sh_synthesize(c0, g), g)
         err = maximum(abs(c1[k] - c0[k]) for k in keys(c0))
         @test err < 1e-12
     end
@@ -22,9 +22,9 @@ import Random
     @testset "horizontal divergence: ∇_h·∇_hψ = -ℓ(ℓ+1)ψ" begin
         ψ = Dict{Tuple{Int,Int},Float64}((ℓ, m) => randn()
               for m in -4:4 for ℓ in max(1, abs(m)):6)
-        Vθ = Cross.sh_synthesize(ψ, g; Yf=Cross._sh_dYθ)            # ∂θψ
-        Vφ = Cross.sh_synthesize(ψ, g; Yf=Cross._sh_dYφ_over_sin)   # (1/sinθ)∂φψ
-        div = Cross.sh_horizontal_divergence(Vθ, Vφ, g)
+        Vθ = Magrathea.sh_synthesize(ψ, g; Yf=Magrathea._sh_dYθ)            # ∂θψ
+        Vφ = Magrathea.sh_synthesize(ψ, g; Yf=Magrathea._sh_dYφ_over_sin)   # (1/sinθ)∂φψ
+        div = Magrathea.sh_horizontal_divergence(Vθ, Vφ, g)
         err = maximum(abs(div[(ℓ, m)] - (-ℓ * (ℓ + 1) * get(ψ, (ℓ, m), 0.0)))
                       for (ℓ, m) in keys(div) if ℓ <= 6)
         @test err < 1e-11
@@ -34,9 +34,9 @@ import Random
         χ = Dict{Tuple{Int,Int},Float64}((ℓ, m) => randn()
               for m in -4:4 for ℓ in max(1, abs(m)):6)
         # u_h = r̂×∇_hχ  ⇒  (Vθ, Vφ) = (-(1/sinθ)∂φχ, ∂θχ)
-        Vθ = -Cross.sh_synthesize(χ, g; Yf=Cross._sh_dYφ_over_sin)
-        Vφ =  Cross.sh_synthesize(χ, g; Yf=Cross._sh_dYθ)
-        div = Cross.sh_horizontal_divergence(Vθ, Vφ, g)
+        Vθ = -Magrathea.sh_synthesize(χ, g; Yf=Magrathea._sh_dYφ_over_sin)
+        Vφ =  Magrathea.sh_synthesize(χ, g; Yf=Magrathea._sh_dYθ)
+        div = Magrathea.sh_horizontal_divergence(Vθ, Vφ, g)
         @test maximum(abs, values(div)) < 1e-12
     end
 
@@ -51,7 +51,7 @@ import Random
         dur_dr     = Dict{Tuple{Int,Int},Vector{Float64}}((0, 0) => -2.0 ./ r .^ 3)
         utheta     = Dict{Tuple{Int,Int},Vector{Float64}}()
         uphi       = Dict{Tuple{Int,Int},Vector{Float64}}()
-        F = Cross.vecsh_advection(theta, dtheta_dr, ur, dur_dr, utheta, uphi, 2, 0, r)
+        F = Magrathea.vecsh_advection(theta, dtheta_dr, ur, dur_dr, utheta, uphi, 2, 0, r)
         expected = N00 ./ r .^ 2
         @test maximum(abs.(F[(1, 0)] .- expected)) < 1e-10
         # purely radial incompressible flow ⇒ no spurious other-mode forcing
@@ -63,7 +63,7 @@ import Random
         r = collect(range(0.35, 1.0, length=12))
         mk() = Dict{Tuple{Int,Int},Vector{Float64}}((ℓ, m) => randn(length(r))
                 for m in -2:2 for ℓ in abs(m):3)
-        F = Cross.vecsh_advection(mk(), mk(), mk(), mk(), mk(), mk(), 3, 2, r)
+        F = Magrathea.vecsh_advection(mk(), mk(), mk(), mk(), mk(), mk(), 3, 2, r)
         @test all(all(isfinite, v) for v in values(F))
         @test haskey(F, (3, -2)) && length(F[(3, 0)]) == length(r)
     end
@@ -80,16 +80,16 @@ import Random
         dur_dr    = Dict{Tuple{Int,Int},Vector{Float64}}((0, 0) => -2.0 ./ r .^ 3)
         utheta    = Dict{Tuple{Int,Int},Vector{Float64}}()
         uphi      = Dict{Tuple{Int,Int},Vector{Float64}}()
-        F = Cross.compute_full_advection_spectral(theta, dtheta_dr, ur, dur_dr,
+        F = Magrathea.compute_full_advection_spectral(theta, dtheta_dr, ur, dur_dr,
                                                   utheta, uphi, 2, 1, r)
         @test maximum(abs.(F[(2, 1)] .- N00 ./ r .^ 2)) < 1e-10
     end
 
     @testset "Float32 grid constructs and round-trips" begin
-        g32 = Cross.sh_grid(6, 2, Float32)
+        g32 = Magrathea.sh_grid(6, 2, Float32)
         c0 = Dict{Tuple{Int,Int},Float32}((ℓ, m) => randn(Float32)
               for m in -2:2 for ℓ in abs(m):6)
-        c1 = Cross.sh_analyze(Cross.sh_synthesize(c0, g32), g32)
+        c1 = Magrathea.sh_analyze(Magrathea.sh_synthesize(c0, g32), g32)
         @test maximum(abs(c1[k] - c0[k]) for k in keys(c0)) < 1f-4
     end
 end

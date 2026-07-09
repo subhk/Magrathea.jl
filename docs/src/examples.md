@@ -1,15 +1,15 @@
 # Examples
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Ready-to-run scripts</div>
-  <h1>Learn Cross.jl by running complete examples.</h1>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Ready-to-run scripts</div>
+  <h1>Learn Magrathea.jl by running complete examples.</h1>
   <p>
     Each script in the <code>example/</code> directory is a self-contained stability
     calculation you can run and adapt to your own problem.
   </p>
-  <div class="cross-actions">
-    <a class="cross-button primary" href="../getting_started/">Get started</a>
-    <a class="cross-button secondary" href="../analysis/onset_convection/">Analysis modes</a>
+  <div class="magrathea-actions">
+    <a class="magrathea-button primary" href="../getting_started/">Get started</a>
+    <a class="magrathea-button secondary" href="../analysis/onset_convection/">Analysis modes</a>
   </div>
 </div>
 
@@ -62,7 +62,7 @@ m    Re(λ₁)          Im(λ₁)          iterations
 ...
 ```
 
-**When to use:** First introduction to Cross.jl, verifying installation.
+**When to use:** First introduction to Magrathea.jl, verifying installation.
 
 ---
 
@@ -384,10 +384,10 @@ Use this template for new analyses:
 #!/usr/bin/env julia
 # my_analysis.jl - Description
 
-# Add Cross.jl to path
+# Add Magrathea.jl to path
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 
-using Cross
+using Magrathea
 using Printf
 using JLD2
 
@@ -456,7 +456,7 @@ params = OnsetParams(
 The v2.0 API uses `OnsetParams`, `basic_state(params; mode=...)`, typed problem types, and `solve`:
 
 ```julia
-using Cross
+using Magrathea
 
 # Define parameters
 params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35,

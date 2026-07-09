@@ -23,12 +23,12 @@
 #  - Triglobal: basic state has m_bs ≠ 0 → modes couple
 # =============================================================================
 
-# Dependencies provided by Cross module:
+# Dependencies provided by Magrathea module:
 # Parameters, LinearAlgebra, Printf
 # LinearStabilityOperator, OnsetParams, BasicState,
 # assemble_matrices, solve_eigenvalue_problem, find_growth_rate,
 # ChebyshevDiffn, conduction_basic_state, meridional_basic_state,
-# find_critical_rayleigh are available in the Cross namespace
+# find_critical_rayleigh are available in the Magrathea namespace
 
 """
     BiglobalParams{T<:Real}
@@ -380,7 +380,7 @@ function solve_biglobal_problem(params::BiglobalParams{T};
         # Distributed constrained-reduction path (see solve_onset_problem): distributes
         # the full tau pencil + S/P, forms S·A·P / S·B·P via MatMatMult, runs the EPS
         # solve, and reconstructs eigenvectors to full DOFs on rank 0.
-        eigenvalues, eigenvectors, info = Cross._solve_constrained_slepc(op;
+        eigenvalues, eigenvectors, info = Magrathea._solve_constrained_slepc(op;
             nev=nev, sigma=sigma, which=which, tol=tol, maxiter=maxiter)
     else
         eigenvalues, eigenvectors, info = solve_eigenvalue_problem(op;
@@ -724,4 +724,4 @@ function analyze_basic_state(bs::BasicState{T}; verbose::Bool=true) where T
 end
 
 
-# Exports are centralized in Cross.jl
+# Exports are centralized in Magrathea.jl

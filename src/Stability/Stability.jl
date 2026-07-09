@@ -1,4 +1,4 @@
-# Cross.Stability -- Linear stability analysis
+# Magrathea.Stability -- Linear stability analysis
 include("linear.jl")
 include("solver.jl")
 include("dof_ownership.jl")

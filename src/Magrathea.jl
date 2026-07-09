@@ -1,4 +1,4 @@
-module Cross
+module Magrathea
 
     using LinearAlgebra
     using SparseArrays

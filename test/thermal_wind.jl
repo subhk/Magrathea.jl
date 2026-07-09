@@ -17,7 +17,7 @@
 
 using Test
 using LinearAlgebra
-using Cross
+using Magrathea
 
 # =============================================================================
 #  Helper Functions for Analytical Solutions
@@ -185,7 +185,7 @@ end
     Pr = 1.0
 
     # Create Chebyshev grid
-    cd = Cross.ChebyshevDiffn(Nr, [r_i, r_o], 4)
+    cd = Magrathea.ChebyshevDiffn(Nr, [r_i, r_o], 4)
     r = cd.x
 
     @testset "Axisymmetric (Biglobal) - Constant θ̄₂₀" begin
@@ -214,7 +214,7 @@ end
         end
 
         # Solve thermal wind
-        Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                     cd, r_i, r_o, Ra, Pr;
                                     mechanical_bc=:no_slip, E=E)
 
@@ -276,7 +276,7 @@ end
             duphi_dr_coeffs[ℓ] = zeros(Nr)
         end
 
-        Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                     cd, r_i, r_o, Ra, Pr;
                                     mechanical_bc=:no_slip, E=E)
 
@@ -323,7 +323,7 @@ end
             duphi_dr_coeffs[ℓ] = zeros(Nr)
         end
 
-        Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                     cd, r_i, r_o, Ra, Pr;
                                     mechanical_bc=:no_slip, E=E)
 
@@ -359,7 +359,7 @@ end
                 duphi_dr_coeffs[ℓ] = zeros(Nr)
             end
 
-            Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+            Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                         cd, r_i, r_o, Ra_test, Pr_test;
                                         mechanical_bc=:no_slip, E=E_test)
 
@@ -397,7 +397,7 @@ end
         uphi_coeffs = Dict(ℓ => zeros(Nr) for ℓ in 0:lmax_bs)
         duphi_dr_coeffs = Dict(ℓ => zeros(Nr) for ℓ in 0:lmax_bs)
 
-        Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                     cd, r_i, r_o, Ra, Pr; E=E)
 
         # L=1 and L=3 should be non-zero
@@ -414,7 +414,7 @@ end
         uphi_coeffs = Dict(ℓ => zeros(Nr) for ℓ in 0:lmax_bs)
         duphi_dr_coeffs = Dict(ℓ => zeros(Nr) for ℓ in 0:lmax_bs)
 
-        Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                     cd, r_i, r_o, Ra, Pr; E=E)
 
         @test maximum(abs.(uphi_coeffs[3])) > 1e-14
@@ -439,7 +439,7 @@ end
             duphi_dr_coeffs[ℓ] = zeros(Nr)
         end
 
-        Cross.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                     cd, r_i, r_o, Ra, Pr; E=E)
 
         # All velocity modes should be zero (∂Y_00/∂θ = 0)
@@ -451,7 +451,7 @@ end
     @testset "Conduction basic state API" begin
         # Test that conduction_basic_state produces zero zonal flow
 
-        bs = Cross.conduction_basic_state(cd, χ, 6)
+        bs = Magrathea.conduction_basic_state(cd, χ, 6)
 
         for (ℓ, uphi) in bs.uphi_coeffs
             @test maximum(abs.(uphi)) < 1e-14
@@ -462,7 +462,7 @@ end
         # Test the meridional_basic_state function
 
         amplitude = 0.1
-        bs = Cross.meridional_basic_state(cd, χ, E, Ra, Pr, 6, amplitude;
+        bs = Magrathea.meridional_basic_state(cd, χ, E, Ra, Pr, 6, amplitude;
                                     mechanical_bc=:no_slip)
 
         # Should have non-zero ℓ=2 temperature
@@ -530,14 +530,14 @@ end  # @testset "Thermal Wind Balance"
     Ra = 1e6
     Pr = 1.0
 
-    cd = Cross.ChebyshevDiffn(Nr, [r_i, r_o], 4)
+    cd = Magrathea.ChebyshevDiffn(Nr, [r_i, r_o], 4)
     r = cd.x
 
     @testset "m=0 reduces to axisymmetric" begin
         # For m_bs=0, the 3D solver should give same result as axisymmetric
 
         # Import the 3D solver
-        solve_tw_3d! = Cross.solve_thermal_wind_balance_3d!
+        solve_tw_3d! = Magrathea.solve_thermal_wind_balance_3d!
 
         A = 0.1
         ℓ_theta = 2
@@ -549,7 +549,7 @@ end  # @testset "Thermal Wind Balance"
         uphi_axi = Dict(ℓ => zeros(Nr) for ℓ in 0:lmax_bs)
         duphi_axi = Dict(ℓ => zeros(Nr) for ℓ in 0:lmax_bs)
 
-        Cross.solve_thermal_wind_balance!(uphi_axi, duphi_axi, theta_axi,
+        Magrathea.solve_thermal_wind_balance!(uphi_axi, duphi_axi, theta_axi,
                                     cd, r_i, r_o, Ra, Pr; E=E)
 
         # 3D solve with m_bs=0
@@ -567,7 +567,7 @@ end  # @testset "Thermal Wind Balance"
     end
 
     @testset "Non-axisymmetric diagonal solver matches analytical coefficient (m_bs=2)" begin
-        solve_tw_3d! = Cross.solve_thermal_wind_balance_3d!
+        solve_tw_3d! = Magrathea.solve_thermal_wind_balance_3d!
 
         A = 0.1
         m_bs = 2
@@ -602,7 +602,7 @@ end  # @testset "Thermal Wind Balance"
         uphi_coeffs = Dict(ℓ => zeros(Nr) for ℓ in 0:(lmax_bs + 1))
         duphi_dr_coeffs = Dict(ℓ => zeros(Nr) for ℓ in 0:(lmax_bs + 1))
 
-        Cross.solve_thermal_wind_coupled!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
+        Magrathea.solve_thermal_wind_coupled!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
                                           m_bs, cd, r_i, r_o, Ra, Pr;
                                           mechanical_bc=:no_slip, E=E,
                                           lmax=lmax_bs + 1)
@@ -625,7 +625,7 @@ end  # @testset "Thermal Wind Balance"
         uphi_coeffs = Dict{Int,Vector{Float64}}()
         duphi_dr_coeffs = Dict{Int,Vector{Float64}}()
 
-        @test_logs (:warn, r"minimum-norm") Cross.solve_thermal_wind_coupled!(
+        @test_logs (:warn, r"minimum-norm") Magrathea.solve_thermal_wind_coupled!(
             uphi_coeffs, duphi_dr_coeffs, theta_coeffs, m_bs, cd, r_i, r_o, Ra, Pr;
             mechanical_bc=:stress_free, E=E)
 
@@ -640,7 +640,7 @@ end  # @testset "Thermal Wind Balance"
         # Galerkin row Σ_L [A_1L dŪ_L/dr − (1/r)B_1L Ū_L] = F_1 at interior nodes
         # (only L=2 contributes: A_{1,2}=α_2⁻, B_{1,2}=−3α_2⁻)
         αm(L) = sqrt((L^2 - m_bs^2) / ((2L - 1) * (2L + 1)))
-        Mp = Cross._dtheta_sphere_projection([1], [2], m_bs, Float64)
+        Mp = Magrathea._dtheta_sphere_projection([1], [2], m_bs, Float64)
         pref = -(Ra * E^2) / (2 * Pr * r_o)
         dU2 = cd.D1 * uphi_coeffs[2]
         res = 0.0; rhsmax = 0.0
@@ -655,7 +655,7 @@ end  # @testset "Thermal Wind Balance"
     @testset "Amplitude scaling for 3D" begin
         # Thermal wind should still scale as Ra × E² / Pr for non-axisymmetric
 
-        solve_tw_3d! = Cross.solve_thermal_wind_balance_3d!
+        solve_tw_3d! = Magrathea.solve_thermal_wind_balance_3d!
 
         A = 0.1
         m_bs = 0  # Use m=0 for simplicity
@@ -696,7 +696,7 @@ end  # @testset "Triglobal"
     lmax_bs = 4
     mmax_bs = 2
 
-    cd = Cross.ChebyshevDiffn(Nr, [χ, 1.0], 4)
+    cd = Magrathea.ChebyshevDiffn(Nr, [χ, 1.0], 4)
 
     @testset "nonaxisymmetric_basic_state produces valid flow" begin
         # Create a 3D basic state with mixed modes
@@ -705,7 +705,7 @@ end  # @testset "Triglobal"
             (2, 2) => 0.05,  # Non-axisymmetric Y₂₂
         )
 
-        bs3d = Cross.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
+        bs3d = Magrathea.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
                                                   lmax_bs, mmax_bs, amplitudes)
 
         # Check that velocity was computed
@@ -726,7 +726,7 @@ end  # @testset "Triglobal"
     @testset "nonaxisymmetric_basic_state computes meridional flow for longitudinal forcing" begin
         amplitudes = Dict((2, 2) => 0.05)
 
-        bs3d = Cross.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
+        bs3d = Magrathea.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
                                                   lmax_bs, mmax_bs, amplitudes)
 
         meridional_norm = zero(Float64)
@@ -747,9 +747,9 @@ end  # @testset "Triglobal"
     @testset "nonaxisymmetric_basic_state defaults to coupled thermal wind" begin
         amplitudes = Dict((2, 2) => 0.05)
 
-        bs_default = Cross.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
+        bs_default = Magrathea.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
                                                        lmax_bs, mmax_bs, amplitudes)
-        bs_coupled = Cross.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
+        bs_coupled = Magrathea.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
                                                        lmax_bs, mmax_bs, amplitudes;
                                                        coupled_thermal_wind=true)
 
@@ -762,11 +762,11 @@ end  # @testset "Triglobal"
         # Only Y₂₀ mode
         amplitudes = Dict((2, 0) => 0.1)
 
-        bs3d = Cross.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
+        bs3d = Magrathea.nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr,
                                                   lmax_bs, mmax_bs, amplitudes)
 
         # Should match the axisymmetric result
-        bs_axi = Cross.meridional_basic_state(cd, χ, E, Ra, Pr, lmax_bs, 0.1)
+        bs_axi = Magrathea.meridional_basic_state(cd, χ, E, Ra, Pr, lmax_bs, 0.1)
 
         # Compare L=2 velocity (dominant even mode; both paths use the coupled m=0 solve)
         if haskey(bs3d.uphi_coeffs, (2, 0)) && haskey(bs_axi.uphi_coeffs, 2)
@@ -825,7 +825,7 @@ end  # @testset "Full BasicState3D"
     @testset "Projection coefficients match independent quadrature" begin
         for (ℓ, m) in [(2, 1), (3, 1), (4, 2), (5, 3)]
             Kset = collect(m:(ℓ + 3))
-            M = Cross._dtheta_sphere_projection(Kset, [ℓ], m, Float64)
+            M = Magrathea._dtheta_sphere_projection(Kset, [ℓ], m, Float64)
             for K in Kset
                 got = get(M, (K, ℓ), 0.0)
                 ref = proj_ref(ℓ, K, m)
@@ -836,7 +836,7 @@ end  # @testset "Full BasicState3D"
 
     @testset "PDE residual is small and converges under lmax" begin
         χ = 0.35; r_i = χ; r_o = 1.0; Nr = 48; E = 1e-4; Ra = 1e6; Pr = 1.0
-        cd = Cross.ChebyshevDiffn(Nr, [r_i, r_o], 4); r = cd.x; D1 = cd.D1
+        cd = Magrathea.ChebyshevDiffn(Nr, [r_i, r_o], 4); r = cd.x; D1 = cd.D1
         m_bs = 2
         theta = Dict(2 => 0.1 .* r .^ 2, 4 => 0.05 .* r)
         prefactor = -(Ra * E^2) / (2 * Pr * r_o)
@@ -844,7 +844,7 @@ end  # @testset "Full BasicState3D"
         function residual(lmax_vel)
             uc = Dict(ℓ => zeros(Nr) for ℓ in 0:(lmax_vel + 2))
             dc = Dict(ℓ => zeros(Nr) for ℓ in 0:(lmax_vel + 2))
-            Cross.solve_thermal_wind_coupled!(uc, dc, theta, m_bs, cd, r_i, r_o, Ra, Pr;
+            Magrathea.solve_thermal_wind_coupled!(uc, dc, theta, m_bs, cd, r_i, r_o, Ra, Pr;
                                               E=E, lmax=lmax_vel)
             active = [(L, U, D1 * U) for (L, U) in uc if L >= m_bs && maximum(abs.(U)) > 0]
             uphi(i, θ)  = sum(U[i] * Ybar(L, m_bs, θ) for (L, U, _) in active; init=0.0)

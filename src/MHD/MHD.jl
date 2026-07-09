@@ -1,4 +1,4 @@
-# Cross.MHD -- Magnetohydrodynamic extensions
+# Magrathea.MHD -- Magnetohydrodynamic extensions
 include("types.jl")
 include("dipole.jl")
 include("operator_functions.jl")

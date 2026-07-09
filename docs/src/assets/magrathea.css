@@ -1,0 +1,112 @@
+/* Magrathea.jl documentation polish.
+   Layers on top of Documenter's default themes (ported from BiGSTARS bigstars.css). */
+
+:root {
+  --magrathea-navy: #10233f;
+  --magrathea-blue: #226f9f;
+  --magrathea-teal: #18a39b;
+  --magrathea-gold: #d59a26;
+  --magrathea-ink: #142033;
+  --magrathea-muted: #5c6c80;
+  --magrathea-panel: #f7fafc;
+  --magrathea-border: rgba(34, 111, 159, 0.18);
+  --magrathea-shadow: 0 18px 45px rgba(16, 35, 63, 0.12);
+}
+
+html.theme--documenter-dark,
+html.theme--catppuccin-mocha,
+html.theme--catppuccin-macchiato,
+html.theme--catppuccin-frappe {
+  --magrathea-navy: #dbeafe;
+  --magrathea-blue: #6cc8ff;
+  --magrathea-teal: #5eead4;
+  --magrathea-gold: #f8d477;
+  --magrathea-ink: #e9f2ff;
+  --magrathea-muted: #b7c5d8;
+  --magrathea-panel: rgba(255, 255, 255, 0.06);
+  --magrathea-border: rgba(117, 211, 255, 0.22);
+  --magrathea-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
+}
+
+.docs-sidebar { border-right: 1px solid var(--magrathea-border); }
+.docs-package-name { letter-spacing: 0.02em; }
+.docs-menu .tocitem { border-radius: 9px; }
+.docs-menu .is-active > .tocitem,
+.docs-menu .tocitem:hover {
+  background: linear-gradient(90deg, rgba(34, 111, 159, 0.16), rgba(24, 163, 155, 0.10));
+}
+
+#documenter-page h1,
+#documenter-page h2,
+#documenter-page h3 { color: var(--magrathea-ink); letter-spacing: -0.015em; }
+#documenter-page h2 { border-bottom: 1px solid var(--magrathea-border); padding-bottom: 0.28rem; }
+#documenter-page p,
+#documenter-page li { line-height: 1.72; }
+#documenter-page code { border-radius: 6px; }
+#documenter-page pre {
+  border: 1px solid var(--magrathea-border);
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(16, 35, 63, 0.08);
+}
+
+.magrathea-hero {
+  position: relative; overflow: hidden; margin: 0.6rem 0 2rem; padding: 2.2rem;
+  border: 1px solid var(--magrathea-border); border-radius: 24px;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(24, 163, 155, 0.26), transparent 28%),
+    radial-gradient(circle at 86% 12%, rgba(213, 154, 38, 0.24), transparent 30%),
+    linear-gradient(135deg, rgba(34, 111, 159, 0.14), rgba(24, 163, 155, 0.08) 52%, rgba(213, 154, 38, 0.08));
+  box-shadow: var(--magrathea-shadow);
+}
+.magrathea-hero::after {
+  content: ""; position: absolute; right: -6rem; bottom: -7rem; width: 18rem; height: 18rem;
+  border: 1px solid rgba(34, 111, 159, 0.22); border-radius: 50%;
+  background: repeating-linear-gradient(35deg, rgba(34,111,159,0.12), rgba(34,111,159,0.12) 2px, transparent 2px, transparent 12px);
+  pointer-events: none;
+}
+.magrathea-eyebrow {
+  margin-bottom: 0.7rem; color: var(--magrathea-blue); font-size: 0.78rem; font-weight: 800;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.magrathea-hero h1 { margin: 0; max-width: 760px; color: var(--magrathea-ink); font-size: clamp(2rem, 5vw, 3.8rem); line-height: 1.04; }
+.magrathea-hero p { position: relative; max-width: 720px; margin-top: 1rem; color: var(--magrathea-muted); font-size: 1.08rem; }
+
+.magrathea-actions, .magrathea-card-grid, .magrathea-path { display: grid; gap: 1rem; }
+.magrathea-actions { grid-template-columns: repeat(auto-fit, minmax(180px, max-content)); margin-top: 1.35rem; }
+.magrathea-button {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem;
+  padding: 0.75rem 1rem; border-radius: 999px; border: 1px solid var(--magrathea-border);
+  font-weight: 800; text-decoration: none !important;
+}
+.magrathea-button.primary {
+  color: white !important;
+  background: linear-gradient(135deg, var(--magrathea-blue), var(--magrathea-teal));
+  box-shadow: 0 10px 25px rgba(34, 111, 159, 0.26);
+}
+.magrathea-button.secondary { color: var(--magrathea-blue) !important; background: rgba(255, 255, 255, 0.58); }
+
+.magrathea-card-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 1.4rem 0 2rem; }
+.magrathea-card {
+  padding: 1.1rem; border: 1px solid var(--magrathea-border); border-radius: 18px;
+  background: var(--magrathea-panel); box-shadow: 0 10px 24px rgba(16, 35, 63, 0.06);
+}
+.magrathea-card strong { display: block; margin-bottom: 0.35rem; color: var(--magrathea-ink); font-size: 1.02rem; }
+.magrathea-card p { margin: 0; color: var(--magrathea-muted); font-size: 0.95rem; }
+
+.magrathea-path { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); counter-reset: docs-path; margin: 1.1rem 0 2rem; }
+.magrathea-step {
+  position: relative; padding: 1rem 1rem 1rem 3.2rem; border: 1px solid var(--magrathea-border);
+  border-radius: 16px; background: linear-gradient(180deg, var(--magrathea-panel), transparent);
+}
+.magrathea-step::before {
+  counter-increment: docs-path; content: counter(docs-path); position: absolute; top: 1rem; left: 1rem;
+  display: grid; width: 1.7rem; height: 1.7rem; place-items: center; border-radius: 50%;
+  color: white; background: var(--magrathea-blue); font-weight: 800;
+}
+.magrathea-step a { font-weight: 800; }
+.magrathea-step p { margin: 0.25rem 0 0; color: var(--magrathea-muted); font-size: 0.94rem; }
+
+@media (max-width: 640px) {
+  .magrathea-hero { padding: 1.4rem; border-radius: 18px; }
+  .magrathea-actions { grid-template-columns: 1fr; }
+}

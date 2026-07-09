@@ -1,10 +1,10 @@
-module CrossRecipesBaseExt
+module MagratheaRecipesBaseExt
 
-using Cross
+using Magrathea
 using RecipesBase
 
 # Eigenvalue spectrum scatter plot
-@recipe function f(r::Cross.StabilityResult)
+@recipe function f(r::Magrathea.StabilityResult)
     xlabel --> "Growth rate (σᵣ)"
     ylabel --> "Frequency (σᵢ)"
     seriestype --> :scatter
@@ -15,7 +15,7 @@ using RecipesBase
 end
 
 # Growth rate vs parameter sweep
-@recipe function f(results::Vector{<:Cross.StabilityResult}; sweep_param=:Ra)
+@recipe function f(results::Vector{<:Magrathea.StabilityResult}; sweep_param=:Ra)
     xlabel --> string(sweep_param)
     ylabel --> "Growth rate"
     seriestype --> :line

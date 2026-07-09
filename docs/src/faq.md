@@ -1,9 +1,9 @@
 # FAQ & Troubleshooting
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Help</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Help</div>
   <h1>FAQ &amp; troubleshooting.</h1>
-  <p>Common questions and fixes for Cross.jl users.</p>
+  <p>Common questions and fixes for Magrathea.jl users.</p>
 </div>
 
 ## Installation
@@ -63,7 +63,7 @@ Or activate manually:
 ```julia
 using Pkg
 Pkg.activate(".")
-using Cross
+using Magrathea
 ```
 
 ---
@@ -174,7 +174,7 @@ using Cross
 
 **Optimization strategies:**
 
-1. **Use sparse matrices** (default in Cross.jl)
+1. **Use sparse matrices** (default in Magrathea.jl)
 
 2. **Adjust BLAS threads:**
    ```julia
@@ -237,7 +237,7 @@ using Cross
 
 1. Export spectral coefficients from source code (Rayleigh, Magic, etc.)
 2. Save to portable format (HDF5, JLD2, NPY)
-3. Load and transform to Cross.jl convention:
+3. Load and transform to Magrathea.jl convention:
 
 ```julia
 using JLD2, Interpolations
@@ -245,7 +245,7 @@ using JLD2, Interpolations
 # Load external data
 @load "external_data.jld2" theta_lm r_external
 
-# Interpolate to Cross.jl grid
+# Interpolate to Magrathea.jl grid
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
 
 theta_coeffs = Dict{Tuple{Int,Int}, Vector{Float64}}()
@@ -306,8 +306,8 @@ params = MHDParams(
 **Common differences:**
 
 1. **Parameter definitions:** Verify E, Pr, Pm, Ra, Le match exactly
-2. **Boundary conditions:** Cross.jl uses numerical codes (0, 1, 2)
-3. **Approximation:** Cross.jl uses Boussinesq (no anelastic effects)
+2. **Boundary conditions:** Magrathea.jl uses numerical codes (0, 1, 2)
+3. **Approximation:** Magrathea.jl uses Boussinesq (no anelastic effects)
 4. **Resolution:** May need higher `lmax` or `N` for convergence
 
 **Validation approach:**
@@ -403,7 +403,7 @@ using BenchmarkTools
 
 If you're still stuck:
 
-1. **Check existing issues:** [GitHub Issues](https://github.com/subhk/Cross.jl/issues)
+1. **Check existing issues:** [GitHub Issues](https://github.com/subhk/Magrathea.jl/issues)
 
 2. **Open a new issue** with:
    - Julia version (`VERSION`)
@@ -413,7 +413,7 @@ If you're still stuck:
 
 3. **Enable verbose output:**
    ```julia
-   ENV["CROSS_VERBOSE"] = "1"
+   ENV["MAGRATHEA_VERBOSE"] = "1"
    # Run your code
    ```
 
@@ -425,5 +425,5 @@ If you're still stuck:
     using Pkg
     println("Julia: ", VERSION)
     println("OS: ", Sys.KERNEL)
-    Pkg.status("Cross")
+    Pkg.status("Magrathea")
     ```

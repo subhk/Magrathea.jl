@@ -1,7 +1,7 @@
 using Test
 using LinearAlgebra
 using SparseArrays
-using Cross
+using Magrathea
 
 # =============================================================================
 # Coverage for NON-SOLVE code paths in:
@@ -52,19 +52,19 @@ end
 
     # (1) matrix input → converted to Matrix{Complex{T}} unchanged in shape
     M_in = ComplexF64[1 2; 3 4; 5 6]
-    M_out = Cross._eigvecs_to_matrix(vals, M_in, Float64)
+    M_out = Magrathea._eigvecs_to_matrix(vals, M_in, Float64)
     @test M_out isa Matrix{ComplexF64}
     @test size(M_out) == (3, 2)
     @test M_out == M_in
 
     # Float32 target type is honoured for the matrix path
-    M_out32 = Cross._eigvecs_to_matrix(vals, M_in, Float32)
+    M_out32 = Magrathea._eigvecs_to_matrix(vals, M_in, Float32)
     @test M_out32 isa Matrix{ComplexF32}
     @test size(M_out32) == (3, 2)
 
     # (2) vector-of-vectors input → columns packed into a matrix
     vv = [ComplexF64[1, 2, 3], ComplexF64[4, 5, 6]]
-    Mvv = Cross._eigvecs_to_matrix(vals, vv, Float64)
+    Mvv = Magrathea._eigvecs_to_matrix(vals, vv, Float64)
     @test Mvv isa Matrix{ComplexF64}
     @test size(Mvv) == (3, 2)
     @test Mvv[:, 1] == vv[1]
@@ -72,12 +72,12 @@ end
 
     # (2b) empty vector-of-vectors → 0 × length(eigenvalues)
     empty_vv = Vector{Vector{ComplexF64}}()
-    Mempty = Cross._eigvecs_to_matrix(vals, empty_vv, Float64)
+    Mempty = Magrathea._eigvecs_to_matrix(vals, empty_vv, Float64)
     @test size(Mempty) == (0, 2)
     @test isempty(Mempty)
 
     # (3) fallback for a container matching neither concrete shape (e.g. a tuple)
-    Mfb = Cross._eigvecs_to_matrix(vals, (1, 2, 3), Float64)
+    Mfb = Magrathea._eigvecs_to_matrix(vals, (1, 2, 3), Float64)
     @test Mfb isa Matrix{ComplexF64}
     @test size(Mfb) == (0, 2)
     @test isempty(Mfb)
@@ -90,17 +90,17 @@ end
 # -----------------------------------------------------------------------------
 @testset "_check_memory Biglobal & Triglobal dispatch" begin
     op_small = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=0, lmax=6, Nr=16)
-    bs = Cross.basic_state(op_small; mode=:conduction)
+    bs = Magrathea.basic_state(op_small; mode=:conduction)
     bp = BiglobalProblem(op_small, bs)
 
     # modest biglobal problem: returns nothing, emits no 8 GB warning
-    @test Cross._check_memory(bp, "BiglobalProblem") === nothing
+    @test Magrathea._check_memory(bp, "BiglobalProblem") === nothing
 
     # huge biglobal problem: forwards the 8 GB memory warning (built, NEVER solved)
     op_huge = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=0, lmax=250, Nr=64)
-    bs_huge = Cross.basic_state(op_huge; mode=:conduction)
+    bs_huge = Magrathea.basic_state(op_huge; mode=:conduction)
     bp_huge = BiglobalProblem(op_huge, bs_huge)
-    @test_logs (:warn, r"exceeds 8 GB") Cross._check_memory(bp_huge, "BiglobalProblem")
+    @test_logs (:warn, r"exceeds 8 GB") Magrathea._check_memory(bp_huge, "BiglobalProblem")
 
     # Triglobal dispatch (axisymmetric basic state, m_range includes m=0):
     T = Float64; Nr = 16; χ = 0.35; lmax_bs = 6
@@ -113,7 +113,7 @@ end
         ur_coeffs = emptyd, utheta_coeffs = emptyd, uphi_coeffs = Dict(coeffs),
         dur_dr_coeffs = emptyd, dutheta_dr_coeffs = emptyd, duphi_dr_coeffs = Dict(coeffs))
     tp = TriglobalProblem(op_small, bs3d, 0:2)
-    @test Cross._check_memory(tp, "TriglobalProblem") === nothing
+    @test Magrathea._check_memory(tp, "TriglobalProblem") === nothing
 end
 
 # -----------------------------------------------------------------------------
@@ -161,20 +161,20 @@ end
 # -----------------------------------------------------------------------------
 @testset "find_critical_Ra_onset bracketing & promotion paths" begin
     # default bracket = (Ra_guess/10, Ra_guess*10)
-    @test _throws_slepc_absent(() -> Cross.find_critical_Ra_onset(
+    @test _throws_slepc_absent(() -> Magrathea.find_critical_Ra_onset(
         E=1e-3, Pr=1.0, χ=0.35, m=0, lmax=6, Nr=12, Ra_guess=1e3))
 
     # explicit Ra_bracket branch (Ra_bracket !== nothing)
-    @test _throws_slepc_absent(() -> Cross.find_critical_Ra_onset(
+    @test _throws_slepc_absent(() -> Magrathea.find_critical_Ra_onset(
         E=1e-3, Pr=1.0, χ=0.35, m=0, lmax=6, Nr=12,
         Ra_guess=1e3, Ra_bracket=(1e2, 1e4)))
 
     # mixed-type scalars exercise float(promote_type(...)) promotion to Float64
-    @test _throws_slepc_absent(() -> Cross.find_critical_Ra_onset(
+    @test _throws_slepc_absent(() -> Magrathea.find_critical_Ra_onset(
         E=1//1000, Pr=1, χ=0.35f0, m=0, lmax=6, Nr=12, Ra_guess=1000))
 
     # non-default boundary conditions are threaded through to the operator builder
-    @test _throws_slepc_absent(() -> Cross.find_critical_Ra_onset(
+    @test _throws_slepc_absent(() -> Magrathea.find_critical_Ra_onset(
         E=1e-3, Pr=1.0, χ=0.35, m=0, lmax=6, Nr=12, Ra_guess=1e3,
         mechanical_bc=:stress_free, thermal_bc=:fixed_flux,
         equatorial_symmetry=:symmetric))
@@ -185,11 +185,11 @@ end
 # -----------------------------------------------------------------------------
 @testset "find_global_critical_onset validation (pre-solve)" begin
     # negative m in the range → ArgumentError before any eigensolve
-    @test_throws ArgumentError Cross.find_global_critical_onset(
+    @test_throws ArgumentError Magrathea.find_global_critical_onset(
         E=1e-3, Pr=1.0, χ=0.35, lmax=6, Nr=12, m_range=-1:1, verbose=false)
 
     # invalid equatorial_symmetry → ArgumentError before any eigensolve
-    @test_throws ArgumentError Cross.find_global_critical_onset(
+    @test_throws ArgumentError Magrathea.find_global_critical_onset(
         E=1e-3, Pr=1.0, χ=0.35, lmax=6, Nr=12, m_range=0:2,
         equatorial_symmetry=:nope, verbose=false)
 end
@@ -202,7 +202,7 @@ end
 # -----------------------------------------------------------------------------
 @testset "find_global_critical_onset no-valid-results error path" begin
     err = try
-        Cross.find_global_critical_onset(
+        Magrathea.find_global_critical_onset(
             E=1e-3, Pr=1.0, χ=0.35, lmax=6, Nr=12, m_range=0:1, verbose=false)
         nothing
     catch e
@@ -315,7 +315,7 @@ end
     bs, _ = create_conduction_basic_state(χ, Nr)
 
     # fixed basic_state path: basic_state key present, no builder
-    kw1 = Cross._biglobal_rayleigh_kwargs(
+    kw1 = Magrathea._biglobal_rayleigh_kwargs(
         :no_slip, :fixed_temperature, :both, 6, bs, nothing)
     @test kw1.basic_state === bs
     @test kw1.nev == 6
@@ -324,7 +324,7 @@ end
 
     # builder path: wrapper validates return type — a good builder returns a BasicState
     good_builder = Ra -> bs
-    kw2 = Cross._biglobal_rayleigh_kwargs(
+    kw2 = Magrathea._biglobal_rayleigh_kwargs(
         :stress_free, :fixed_flux, :symmetric, 4, nothing, good_builder)
     @test haskey(kw2, :basic_state_builder)
     @test !haskey(kw2, :basic_state)
@@ -333,7 +333,7 @@ end
 
     # builder returning a non-BasicState → wrapper errors (no solve involved)
     bad_builder = Ra -> 42
-    kw3 = Cross._biglobal_rayleigh_kwargs(
+    kw3 = Magrathea._biglobal_rayleigh_kwargs(
         :no_slip, :fixed_temperature, :both, 6, nothing, bad_builder)
     @test_throws ErrorException kw3.basic_state_builder(1e5)
     err = try kw3.basic_state_builder(1e5); catch e; e end
@@ -350,7 +350,7 @@ end
 
     # neither basic_state nor builder → error
     err1 = try
-        Cross.find_critical_Ra_biglobal(E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr)
+        Magrathea.find_critical_Ra_biglobal(E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr)
         nothing
     catch e; e end
     @test err1 isa ErrorException
@@ -358,7 +358,7 @@ end
 
     # both basic_state AND builder → error
     err2 = try
-        Cross.find_critical_Ra_biglobal(E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr,
+        Magrathea.find_critical_Ra_biglobal(E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr,
                                         basic_state=bs, basic_state_builder=(Ra -> bs))
         nothing
     catch e; e end
@@ -366,7 +366,7 @@ end
     @test occursin("only one", sprint(showerror, err2))
 
     # invalid equatorial_symmetry → ArgumentError (before solve)
-    @test_throws ArgumentError Cross.find_critical_Ra_biglobal(
+    @test_throws ArgumentError Magrathea.find_critical_Ra_biglobal(
         E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr,
         basic_state=bs, equatorial_symmetry=:nope)
 end
@@ -382,7 +382,7 @@ end
     # builder returns a non-BasicState → wrapper error fires inside the first
     # bracket sample, BEFORE find_growth_rate / SLEPc is ever reached
     err_type = try
-        Cross.find_critical_Ra_biglobal(
+        Magrathea.find_critical_Ra_biglobal(
             E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr,
             basic_state_builder=(Ra -> "not a basic state"),
             Ra_guess=1e4, verbose=false)
@@ -394,7 +394,7 @@ end
 
     # builder that throws its own sentinel error → propagates ahead of any solve
     err_sentinel = try
-        Cross.find_critical_Ra_biglobal(
+        Magrathea.find_critical_Ra_biglobal(
             E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr,
             basic_state_builder=(Ra -> throw(_BuilderSentinel())),
             Ra_guess=1e4, verbose=false)
@@ -406,7 +406,7 @@ end
     # surfaces the SLEPc-extension-absent error (covers the rayleigh_kwargs +
     # promotion lines up to the throw).
     bs, _ = create_conduction_basic_state(χ, Nr)
-    @test _throws_slepc_absent(() -> Cross.find_critical_Ra_biglobal(
+    @test _throws_slepc_absent(() -> Magrathea.find_critical_Ra_biglobal(
         E=1e-3, Pr=1.0, χ=χ, m=0, lmax=8, Nr=Nr,
         basic_state=bs, Ra_guess=1e4, Ra_bracket=(1e3, 1e5), verbose=false))
 end
@@ -482,7 +482,7 @@ end
 
     @test _throws_slepc_absent(() -> solve(OnsetProblem(op); nev=2, backend=:slepc))
 
-    bs = Cross.basic_state(op; mode=:conduction)
+    bs = Magrathea.basic_state(op; mode=:conduction)
     @test _throws_slepc_absent(() ->
         solve(BiglobalProblem(op, bs); nev=2, backend=:slepc))
 end

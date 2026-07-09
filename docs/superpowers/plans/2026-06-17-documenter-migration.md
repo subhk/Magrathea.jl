@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace Cross.jl's MkDocs (Material) documentation with a Documenter.jl site styled to match BiGSTARS.jl.
+**Goal:** Replace Magrathea.jl's MkDocs (Material) documentation with a Documenter.jl site styled to match BiGSTARS.jl.
 
-**Architecture:** Standard Julia `docs/` Documenter setup (`make.jl` + `Project.toml`, content under `docs/src/`, `deploydocs` to `gh-pages`). Visual parity via a ported `cross.css` (= BiGSTARS' `bigstars.css` with the palette-variable prefix renamed) and a hero/card/learning-path landing page built with ` ```@raw html `. API docs via curated `@docs` blocks over Cross's docstrings.
+**Architecture:** Standard Julia `docs/` Documenter setup (`make.jl` + `Project.toml`, content under `docs/src/`, `deploydocs` to `gh-pages`). Visual parity via a ported `magrathea.css` (= BiGSTARS' `bigstars.css` with the palette-variable prefix renamed) and a hero/card/learning-path landing page built with ` ```@raw html `. API docs via curated `@docs` blocks over Magrathea's docstrings.
 
 **Tech Stack:** Julia 1.12, Documenter.jl, KaTeX (Documenter built-in), GitHub Pages.
 
@@ -52,16 +52,16 @@ git mv docs/analysis docs/theory docs/assets docs/src/
 
 ```julia
 using Documenter
-using Cross
+using Magrathea
 
 makedocs(
-    sitename = "Cross.jl",
+    sitename = "Magrathea.jl",
     authors  = "Subhajit Kar",
-    modules  = [Cross],
+    modules  = [Magrathea],
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
-        canonical  = "https://subhk.github.io/Cross.jl/stable",
-        assets     = ["assets/cross.css"],
+        canonical  = "https://subhk.github.io/Magrathea.jl/stable",
+        assets     = ["assets/magrathea.css"],
         collapselevel = 2,
         sidebar_sitename = false,
     ),
@@ -100,7 +100,7 @@ makedocs(
 )
 
 deploydocs(
-    repo = "github.com/subhk/Cross.jl",
+    repo = "github.com/subhk/Magrathea.jl",
     devbranch = "main",
     push_preview = false,
 )
@@ -113,7 +113,7 @@ Run:
 JULIA=/Users/subha/.julia/juliaup/julia-1.12.6+0.aarch64.apple.darwin14/Julia-1.12.app/Contents/Resources/julia/bin/julia
 "$JULIA" --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
 ```
-Expected: resolves Documenter + Cross, no error.
+Expected: resolves Documenter + Magrathea, no error.
 
 - [ ] **Step 5: Build and verify it is green**
 
@@ -129,45 +129,45 @@ git commit -m "docs: scaffold Documenter build, move content to docs/src"
 
 ---
 
-## Task 2: Port `bigstars.css` → `cross.css`
+## Task 2: Port `bigstars.css` → `magrathea.css`
 
 **Files:**
-- Create: `docs/src/assets/cross.css`
+- Create: `docs/src/assets/magrathea.css`
 
-- [ ] **Step 1: Create `docs/src/assets/cross.css`** — this is BiGSTARS' `bigstars.css` verbatim with every `bigstars` token renamed to `cross` (palette values unchanged; they already match Cross's `extra.css`):
+- [ ] **Step 1: Create `docs/src/assets/magrathea.css`** — this is BiGSTARS' `bigstars.css` verbatim with every `bigstars` token renamed to `magrathea` (palette values unchanged; they already match Magrathea's `extra.css`):
 
 ```css
-/* Cross.jl documentation polish.
+/* Magrathea.jl documentation polish.
    Layers on top of Documenter's default themes (ported from BiGSTARS bigstars.css). */
 
 :root {
-  --cross-navy: #10233f;
-  --cross-blue: #226f9f;
-  --cross-teal: #18a39b;
-  --cross-gold: #d59a26;
-  --cross-ink: #142033;
-  --cross-muted: #5c6c80;
-  --cross-panel: #f7fafc;
-  --cross-border: rgba(34, 111, 159, 0.18);
-  --cross-shadow: 0 18px 45px rgba(16, 35, 63, 0.12);
+  --magrathea-navy: #10233f;
+  --magrathea-blue: #226f9f;
+  --magrathea-teal: #18a39b;
+  --magrathea-gold: #d59a26;
+  --magrathea-ink: #142033;
+  --magrathea-muted: #5c6c80;
+  --magrathea-panel: #f7fafc;
+  --magrathea-border: rgba(34, 111, 159, 0.18);
+  --magrathea-shadow: 0 18px 45px rgba(16, 35, 63, 0.12);
 }
 
 html.theme--documenter-dark,
 html.theme--catppuccin-mocha,
 html.theme--catppuccin-macchiato,
 html.theme--catppuccin-frappe {
-  --cross-navy: #dbeafe;
-  --cross-blue: #6cc8ff;
-  --cross-teal: #5eead4;
-  --cross-gold: #f8d477;
-  --cross-ink: #e9f2ff;
-  --cross-muted: #b7c5d8;
-  --cross-panel: rgba(255, 255, 255, 0.06);
-  --cross-border: rgba(117, 211, 255, 0.22);
-  --cross-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
+  --magrathea-navy: #dbeafe;
+  --magrathea-blue: #6cc8ff;
+  --magrathea-teal: #5eead4;
+  --magrathea-gold: #f8d477;
+  --magrathea-ink: #e9f2ff;
+  --magrathea-muted: #b7c5d8;
+  --magrathea-panel: rgba(255, 255, 255, 0.06);
+  --magrathea-border: rgba(117, 211, 255, 0.22);
+  --magrathea-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
 }
 
-.docs-sidebar { border-right: 1px solid var(--cross-border); }
+.docs-sidebar { border-right: 1px solid var(--magrathea-border); }
 .docs-package-name { letter-spacing: 0.02em; }
 .docs-menu .tocitem { border-radius: 9px; }
 .docs-menu .is-active > .tocitem,
@@ -177,90 +177,90 @@ html.theme--catppuccin-frappe {
 
 #documenter-page h1,
 #documenter-page h2,
-#documenter-page h3 { color: var(--cross-ink); letter-spacing: -0.015em; }
-#documenter-page h2 { border-bottom: 1px solid var(--cross-border); padding-bottom: 0.28rem; }
+#documenter-page h3 { color: var(--magrathea-ink); letter-spacing: -0.015em; }
+#documenter-page h2 { border-bottom: 1px solid var(--magrathea-border); padding-bottom: 0.28rem; }
 #documenter-page p,
 #documenter-page li { line-height: 1.72; }
 #documenter-page code { border-radius: 6px; }
 #documenter-page pre {
-  border: 1px solid var(--cross-border);
+  border: 1px solid var(--magrathea-border);
   border-radius: 14px;
   box-shadow: 0 10px 24px rgba(16, 35, 63, 0.08);
 }
 
-.cross-hero {
+.magrathea-hero {
   position: relative; overflow: hidden; margin: 0.6rem 0 2rem; padding: 2.2rem;
-  border: 1px solid var(--cross-border); border-radius: 24px;
+  border: 1px solid var(--magrathea-border); border-radius: 24px;
   background:
     radial-gradient(circle at 14% 18%, rgba(24, 163, 155, 0.26), transparent 28%),
     radial-gradient(circle at 86% 12%, rgba(213, 154, 38, 0.24), transparent 30%),
     linear-gradient(135deg, rgba(34, 111, 159, 0.14), rgba(24, 163, 155, 0.08) 52%, rgba(213, 154, 38, 0.08));
-  box-shadow: var(--cross-shadow);
+  box-shadow: var(--magrathea-shadow);
 }
-.cross-hero::after {
+.magrathea-hero::after {
   content: ""; position: absolute; right: -6rem; bottom: -7rem; width: 18rem; height: 18rem;
   border: 1px solid rgba(34, 111, 159, 0.22); border-radius: 50%;
   background: repeating-linear-gradient(35deg, rgba(34,111,159,0.12), rgba(34,111,159,0.12) 2px, transparent 2px, transparent 12px);
   pointer-events: none;
 }
-.cross-eyebrow {
-  margin-bottom: 0.7rem; color: var(--cross-blue); font-size: 0.78rem; font-weight: 800;
+.magrathea-eyebrow {
+  margin-bottom: 0.7rem; color: var(--magrathea-blue); font-size: 0.78rem; font-weight: 800;
   letter-spacing: 0.14em; text-transform: uppercase;
 }
-.cross-hero h1 { margin: 0; max-width: 760px; color: var(--cross-ink); font-size: clamp(2rem, 5vw, 3.8rem); line-height: 1.04; }
-.cross-hero p { position: relative; max-width: 720px; margin-top: 1rem; color: var(--cross-muted); font-size: 1.08rem; }
+.magrathea-hero h1 { margin: 0; max-width: 760px; color: var(--magrathea-ink); font-size: clamp(2rem, 5vw, 3.8rem); line-height: 1.04; }
+.magrathea-hero p { position: relative; max-width: 720px; margin-top: 1rem; color: var(--magrathea-muted); font-size: 1.08rem; }
 
-.cross-actions, .cross-card-grid, .cross-path { display: grid; gap: 1rem; }
-.cross-actions { grid-template-columns: repeat(auto-fit, minmax(180px, max-content)); margin-top: 1.35rem; }
-.cross-button {
+.magrathea-actions, .magrathea-card-grid, .magrathea-path { display: grid; gap: 1rem; }
+.magrathea-actions { grid-template-columns: repeat(auto-fit, minmax(180px, max-content)); margin-top: 1.35rem; }
+.magrathea-button {
   display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem;
-  padding: 0.75rem 1rem; border-radius: 999px; border: 1px solid var(--cross-border);
+  padding: 0.75rem 1rem; border-radius: 999px; border: 1px solid var(--magrathea-border);
   font-weight: 800; text-decoration: none !important;
 }
-.cross-button.primary {
+.magrathea-button.primary {
   color: white !important;
-  background: linear-gradient(135deg, var(--cross-blue), var(--cross-teal));
+  background: linear-gradient(135deg, var(--magrathea-blue), var(--magrathea-teal));
   box-shadow: 0 10px 25px rgba(34, 111, 159, 0.26);
 }
-.cross-button.secondary { color: var(--cross-blue) !important; background: rgba(255, 255, 255, 0.58); }
+.magrathea-button.secondary { color: var(--magrathea-blue) !important; background: rgba(255, 255, 255, 0.58); }
 
-.cross-card-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 1.4rem 0 2rem; }
-.cross-card {
-  padding: 1.1rem; border: 1px solid var(--cross-border); border-radius: 18px;
-  background: var(--cross-panel); box-shadow: 0 10px 24px rgba(16, 35, 63, 0.06);
+.magrathea-card-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 1.4rem 0 2rem; }
+.magrathea-card {
+  padding: 1.1rem; border: 1px solid var(--magrathea-border); border-radius: 18px;
+  background: var(--magrathea-panel); box-shadow: 0 10px 24px rgba(16, 35, 63, 0.06);
 }
-.cross-card strong { display: block; margin-bottom: 0.35rem; color: var(--cross-ink); font-size: 1.02rem; }
-.cross-card p { margin: 0; color: var(--cross-muted); font-size: 0.95rem; }
+.magrathea-card strong { display: block; margin-bottom: 0.35rem; color: var(--magrathea-ink); font-size: 1.02rem; }
+.magrathea-card p { margin: 0; color: var(--magrathea-muted); font-size: 0.95rem; }
 
-.cross-path { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); counter-reset: docs-path; margin: 1.1rem 0 2rem; }
-.cross-step {
-  position: relative; padding: 1rem 1rem 1rem 3.2rem; border: 1px solid var(--cross-border);
-  border-radius: 16px; background: linear-gradient(180deg, var(--cross-panel), transparent);
+.magrathea-path { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); counter-reset: docs-path; margin: 1.1rem 0 2rem; }
+.magrathea-step {
+  position: relative; padding: 1rem 1rem 1rem 3.2rem; border: 1px solid var(--magrathea-border);
+  border-radius: 16px; background: linear-gradient(180deg, var(--magrathea-panel), transparent);
 }
-.cross-step::before {
+.magrathea-step::before {
   counter-increment: docs-path; content: counter(docs-path); position: absolute; top: 1rem; left: 1rem;
   display: grid; width: 1.7rem; height: 1.7rem; place-items: center; border-radius: 50%;
-  color: white; background: var(--cross-blue); font-weight: 800;
+  color: white; background: var(--magrathea-blue); font-weight: 800;
 }
-.cross-step a { font-weight: 800; }
-.cross-step p { margin: 0.25rem 0 0; color: var(--cross-muted); font-size: 0.94rem; }
+.magrathea-step a { font-weight: 800; }
+.magrathea-step p { margin: 0.25rem 0 0; color: var(--magrathea-muted); font-size: 0.94rem; }
 
 @media (max-width: 640px) {
-  .cross-hero { padding: 1.4rem; border-radius: 18px; }
-  .cross-actions { grid-template-columns: 1fr; }
+  .magrathea-hero { padding: 1.4rem; border-radius: 18px; }
+  .magrathea-actions { grid-template-columns: 1fr; }
 }
 ```
 
 - [ ] **Step 2: Build and verify the asset is bundled**
 
-Run: `"$JULIA" --project=docs docs/make.jl && ls docs/build/assets/cross.css`
-Expected: green build; `docs/build/assets/cross.css` exists.
+Run: `"$JULIA" --project=docs docs/make.jl && ls docs/build/assets/magrathea.css`
+Expected: green build; `docs/build/assets/magrathea.css` exists.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/src/assets/cross.css
-git commit -m "docs: port BiGSTARS bigstars.css to cross.css"
+git add docs/src/assets/magrathea.css
+git commit -m "docs: port BiGSTARS bigstars.css to magrathea.css"
 ```
 
 ---
@@ -270,50 +270,50 @@ git commit -m "docs: port BiGSTARS bigstars.css to cross.css"
 **Files:**
 - Modify: `docs/src/index.md` (replace the head with hero + cards + path; keep the existing prose body below)
 
-- [ ] **Step 1: Replace the top of `docs/src/index.md`** with the hero/cards/path (Cross content), mirroring BiGSTARS' index. Put this ABOVE the existing overview prose:
+- [ ] **Step 1: Replace the top of `docs/src/index.md`** with the hero/cards/path (Magrathea content), mirroring BiGSTARS' index. Put this ABOVE the existing overview prose:
 
 ````markdown
-# Cross.jl Documentation
+# Magrathea.jl Documentation
 
 ```@raw html
-<div class="cross-hero">
-  <div class="cross-eyebrow">Linear stability in rotating spherical shells</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Linear stability in rotating spherical shells</div>
   <h1>Spectral eigenvalue problems for rotating convection &amp; MHD.</h1>
   <p>
-    Cross.jl uses the Olver&ndash;Townsend ultraspherical method to build ultra-sparse,
+    Magrathea.jl uses the Olver&ndash;Townsend ultraspherical method to build ultra-sparse,
     spurious-free generalized eigenvalue problems for onset, biglobal, and triglobal
     stability of rotating (magneto)convection in spherical shells.
   </p>
-  <div class="cross-actions">
-    <a class="cross-button primary" href="getting_started.html">Get started</a>
-    <a class="cross-button secondary" href="examples.html">See examples</a>
+  <div class="magrathea-actions">
+    <a class="magrathea-button primary" href="getting_started.html">Get started</a>
+    <a class="magrathea-button secondary" href="examples.html">See examples</a>
   </div>
 </div>
 ```
 
 ```@raw html
-<div class="cross-card-grid">
-  <div class="cross-card">
+<div class="magrathea-card-grid">
+  <div class="magrathea-card">
     <strong>Onset convection</strong>
     <p>Conductive background, single azimuthal wavenumber; find critical Rayleigh numbers.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Biglobal (axisymmetric mean flow)</strong>
     <p>Thermal-wind / meridional basic states with an axisymmetric background.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Triglobal (non-axisymmetric)</strong>
     <p>Mode-coupled stability for non-axisymmetric basic states across azimuthal wavenumbers.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>MHD extension</strong>
     <p>Magnetoconvection and kinematic-dynamo problems with no_field, axial, and dipole fields.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Spurious-free Galerkin</strong>
     <p>Banded BC-recombined discretization removes the tau spurious-mode swarm; matches collocation to ~1e-12.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Unified solver API</strong>
     <p>One <code>solve(problem)</code> entry point across all problem types, returning a <code>StabilityResult</code>.</p>
   </div>
@@ -323,20 +323,20 @@ git commit -m "docs: port BiGSTARS bigstars.css to cross.css"
 ## What To Read First
 
 ```@raw html
-<div class="cross-path">
-  <div class="cross-step">
+<div class="magrathea-path">
+  <div class="magrathea-step">
     <a href="getting_started.html">Installation</a>
-    <p>Install Cross.jl and verify your setup.</p>
+    <p>Install Magrathea.jl and verify your setup.</p>
   </div>
-  <div class="cross-step">
+  <div class="magrathea-step">
     <a href="problem_setup.html">First Problem</a>
     <p>Define an OnsetProblem and solve for leading eigenvalues.</p>
   </div>
-  <div class="cross-step">
+  <div class="magrathea-step">
     <a href="analysis/index.html">Analysis Modes</a>
     <p>Pick onset, biglobal, or triglobal for your background state.</p>
   </div>
-  <div class="cross-step">
+  <div class="magrathea-step">
     <a href="reference.html">API Reference</a>
     <p>Full parameter, problem, and solver reference.</p>
   </div>
@@ -365,13 +365,13 @@ git commit -m "docs: BiGSTARS-style hero/cards/path landing page"
 **Files:**
 - Modify: `docs/src/reference.md`
 
-- [ ] **Step 1: Replace `docs/src/reference.md`** with curated `@docs` blocks grouped by theme. Use the exported names from `src/Cross.jl`'s `export` block. (Any name whose docstring is missing will surface as a `:missing_docs` warning, tolerated for now by `warnonly`; drop those names or add docstrings in Task 7.)
+- [ ] **Step 1: Replace `docs/src/reference.md`** with curated `@docs` blocks grouped by theme. Use the exported names from `src/Magrathea.jl`'s `export` block. (Any name whose docstring is missing will surface as a `:missing_docs` warning, tolerated for now by `warnonly`; drop those names or add docstrings in Task 7.)
 
 ````markdown
 # API Reference
 
 ```@meta
-CurrentModule = Cross
+CurrentModule = Magrathea
 ```
 
 ## Parameters
@@ -427,7 +427,7 @@ assemble_matrices
 ```
 ````
 
-(If a listed name is not actually exported/defined, the build prints `Error: ... @docs ... no docs found`; with `warnonly=[:docs_block]` it stays green — remove that name. Verify against `src/Cross.jl` while editing.)
+(If a listed name is not actually exported/defined, the build prints `Error: ... @docs ... no docs found`; with `warnonly=[:docs_block]` it stays green — remove that name. Verify against `src/Magrathea.jl` while editing.)
 
 - [ ] **Step 2: Build and check the API renders**
 
@@ -598,6 +598,6 @@ git commit -m "docs: resolve doc warnings, enforce strict build"
 
 ## Self-review notes (for the implementer)
 
-- Spec coverage: Task 1 (build/CI scaffold + structure), Task 2 (cross.css), Task 3 (landing), Task 4 (API @docs), Task 5 (content conversion), Task 6 (CI + orphan pages + MkDocs removal), Task 7 (success criteria: strict green build). All spec sections covered.
+- Spec coverage: Task 1 (build/CI scaffold + structure), Task 2 (magrathea.css), Task 3 (landing), Task 4 (API @docs), Task 5 (content conversion), Task 6 (CI + orphan pages + MkDocs removal), Task 7 (success criteria: strict green build). All spec sections covered.
 - The `warnonly` escape hatch keeps every intermediate build green (bite-sized commits) and is removed in Task 7 — the final gate is a strict build.
-- If `Pkg.develop(PackageSpec(path=pwd()))` is undesirable in CI, the equivalent is a `docs/Project.toml` listing Cross via a relative `[sources]`/`Pkg.develop` step — the workflow in Task 6 Step 3 already does this at build time.
+- If `Pkg.develop(PackageSpec(path=pwd()))` is undesirable in CI, the equivalent is a `docs/Project.toml` listing Magrathea via a relative `[sources]`/`Pkg.develop` step — the workflow in Task 6 Step 3 already does this at build time.

@@ -8,7 +8,7 @@
 # This enables tri-global instability analysis where perturbations couple
 # across multiple azimuthal modes m.
 
-using Cross
+using Magrathea
 using Printf
 using Plots
 

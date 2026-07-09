@@ -1,9 +1,9 @@
 using Test
-using Cross
+using Magrathea
 
 @testset "Legacy banner API is removed" begin
-    @test !isdefined(Cross, :CROSS_BANNER)
-    @test !isdefined(Cross, :print_cross_header)
+    @test !isdefined(Magrathea, :CROSS_BANNER)
+    @test !isdefined(Magrathea, :print_cross_header)
 end
 
 @testset "OnsetParams show" begin

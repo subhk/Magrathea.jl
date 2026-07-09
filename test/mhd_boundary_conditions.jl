@@ -1,6 +1,6 @@
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 function _magnetic_bc_dummy_op(; bci_magnetic=1, bco_magnetic=0, forcing_frequency=1.0)
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1.0, ricb=0.35,
@@ -27,11 +27,11 @@ end
     A = spzeros(ComplexF64, n, n)
     B = spzeros(ComplexF64, n, n)
 
-    Cross.apply_magnetic_boundary_conditions!(A, B, op, :g)
+    Magrathea.apply_magnetic_boundary_conditions!(A, B, op, :g)
 
     inner_row = 2 * n_per_mode
     g_block = (n_per_mode + 1):(2 * n_per_mode)
-    expected = ComplexF64.(Cross._chebyshev_boundary_values(N, :inner))
+    expected = ComplexF64.(Magrathea._chebyshev_boundary_values(N, :inner))
 
     @test Vector(A[inner_row, g_block]) ≈ expected
     @test nnz(B[inner_row, :]) == 0

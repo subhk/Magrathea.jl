@@ -407,7 +407,7 @@ Implements op.buoyancy(l, 'u', '', 0).
 
 This couples the temperature field to the poloidal velocity equation.
 
-Following Kore and Cross.jl:
+Following Kore and Magrathea.jl:
 - beyonce = -Ra_internal * E² / Pr (the negative sign is crucial!)
 - Ra_internal = Ra / gap³ for gap-based Rayleigh number conversion
 - L = l(l+1)
@@ -675,7 +675,7 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
         col_base = (k - 1) * n_per_mode
 
         # -----------------------------------------------------------------
-        # B matrix: Time derivative operator (negative per Cross.jl convention)
+        # B matrix: Time derivative operator (negative per Magrathea.jl convention)
         # A matrix: RHS operators (Coriolis, viscous, buoyancy)
         # -----------------------------------------------------------------
 
@@ -723,7 +723,7 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
         col_base = (nb_top + k - 1) * n_per_mode
 
         # -----------------------------------------------------------------
-        # B matrix: Time derivative operator (negative per Cross.jl convention)
+        # B matrix: Time derivative operator (negative per Magrathea.jl convention)
         # A matrix: RHS operators (Coriolis, viscous)
         # -----------------------------------------------------------------
 

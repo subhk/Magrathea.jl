@@ -1,5 +1,5 @@
 using Test
-using Cross
+using Magrathea
 
 @testset "StabilityResult construction" begin
     eigenvalues = [complex(0.1, 2.0), complex(-0.3, 1.5), complex(0.5, -1.0)]

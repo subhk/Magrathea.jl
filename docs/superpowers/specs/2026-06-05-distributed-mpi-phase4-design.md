@@ -81,7 +81,7 @@ Key facts enabling distribution:
 ### Extension (PETSc/MPI, cluster-only)
 
 - **Distributed onset assembly:** `_create_dist_mat(n)` → ownership → `_assemble_onset_coo(op; owned_julia_rows=(rstart+1):rend)` → `_fill_dist_mat!` (Phase-2 helpers) for `A` and `B`. **No BC application on the distributed matrix** — `_assemble_onset_coo` is pre-BC, and the boundary rows it contains are projected out by `S` (interior selector) in the reduction. (Unlike MHD tau, where BC rows survive into the solved matrix.)
-- **Distributed P / S:** build `reduction = Cross._constraint_reduction_from_subblocks(op)` (replicated but cheap — only sub-block nullspaces, no full `A`); `S, P = Cross._constraint_projection_matrices(reduction, interior_dofs)`; distribute via the rectangular `_to_petsc_dist` (Phase 3). (P/S construction is replicated-but-cheap; the per-block nullspaces could be split across ranks in a later refinement, but the sub-blocks are tiny so replicated construction is acceptable and is NOT a full-`A` materialization.)
+- **Distributed P / S:** build `reduction = Magrathea._constraint_reduction_from_subblocks(op)` (replicated but cheap — only sub-block nullspaces, no full `A`); `S, P = Magrathea._constraint_projection_matrices(reduction, interior_dofs)`; distribute via the rectangular `_to_petsc_dist` (Phase 3). (P/S construction is replicated-but-cheap; the per-block nullspaces could be split across ranks in a later refinement, but the sub-blocks are tiny so replicated construction is acceptable and is NOT a full-`A` materialization.)
 - **Reduce + solve:** Phase-3 `_reduce_dist(Adist, Sdist, Pdist)` / `_eps_solve_and_gather`; rank-0 `P·reduced` reconstruction. Update `_slepc_constrained_solve` (from Phase 3) to use the distributed assembly + sub-block reduction instead of the replicated full-`A` path.
 
 ## Data flow
@@ -120,7 +120,7 @@ reduce; EPS solve; rank-0 reconstruction. No rank holds the full `A`/`B`.
 - `src/Stability/linear.jl` — `_onset_diag_block`/`_onset_offdiag_block`/`_onset_B_diag_block`;
   `_assemble_onset_coo`; `assemble_matrices` thin wrapper; `_constraint_subblock`;
   `_constraint_reduction_from_subblocks`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` — update `_slepc_constrained_solve` to the
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` — update `_slepc_constrained_solve` to the
   distributed-assembly + sub-block-reduction flow (reuse Phase-2/3 helpers).
 - `test/distributed_onset.jl` (new) — the serial tests above; wired into `runtests.jl`.
 

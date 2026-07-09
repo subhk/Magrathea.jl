@@ -1,15 +1,15 @@
 using Test
-using Cross
+using Magrathea
 using LinearAlgebra
 
 # Assemble the 1-D Galerkin pencil for an A-operator (sum of (power,deriv) terms,
 # order q) against an identity mass, with trial recombination R.
 function _galerkin_1d(::Type{T}, a_terms, q, R, N, ri, ro) where {T}
     M = N + 1 - q
-    A_band = sum(Cross.banded_radial_term(T, p, d, q, N, ri, ro) for (p, d) in a_terms)
-    B_band = Cross._convert_up(T, 0, q, N)                  # identity lifted to C^(q)
-    A = Cross.galerkin_block(A_band, R, M)
-    B = Cross.galerkin_block(B_band, R, M)
+    A_band = sum(Magrathea.banded_radial_term(T, p, d, q, N, ri, ro) for (p, d) in a_terms)
+    B_band = Magrathea._convert_up(T, 0, q, N)                  # identity lifted to C^(q)
+    A = Magrathea.galerkin_block(A_band, R, M)
+    B = Magrathea.galerkin_block(B_band, R, M)
     return A, B
 end
 
@@ -24,9 +24,9 @@ end
     # discards anyway, so they never enter the assembled pencil.
     for (power, deriv) in [(0,1),(1,0),(2,0),(2,1),(2,2),(3,1),(4,2),(1,1)]
         dmax = N - power - deriv
-        banded = Matrix(Cross.banded_radial_term(T, power, deriv, deriv, N, ri, ro))  # C^(deriv)
-        lifted = Matrix(Cross._convert_up(T, 0, deriv, N) *
-                        Cross.sparse_radial_operator(power, deriv, N, ri, ro))        # C^0 -> C^(deriv)
+        banded = Matrix(Magrathea.banded_radial_term(T, power, deriv, deriv, N, ri, ro))  # C^(deriv)
+        lifted = Matrix(Magrathea._convert_up(T, 0, deriv, N) *
+                        Magrathea.sparse_radial_operator(power, deriv, N, ri, ro))        # C^0 -> C^(deriv)
         @test isapprox(banded[:, 1:dmax+1], lifted[:, 1:dmax+1]; atol=1e-8, rtol=1e-8)
     end
 end
@@ -34,7 +34,7 @@ end
 @testset "Galerkin 1-D Dirichlet Laplacian: analytic spectrum, no spurious" begin
     T = Float64; ri = 0.35; ro = 1.0; L = ro - ri
     for N in (24, 32, 48)
-        R = Cross.recomb_dirichlet(T, N)
+        R = Magrathea.recomb_dirichlet(T, N)
         A, B = _galerkin_1d(T, [(0, 2)], 2, R, N, ri, ro)   # u'' = λ u
         vals = sort(filter(isfinite, real.(eigen(A, B).values)))
         @test maximum(vals) < 1e-6                          # no positive spurious
@@ -47,7 +47,7 @@ end
 @testset "Galerkin 1-D Neumann Laplacian: analytic spectrum" begin
     T = Float64; ri = 0.35; ro = 1.0; L = ro - ri
     N = 40
-    R = Cross.recomb_neumann(T, N)
+    R = Magrathea.recomb_neumann(T, N)
     A, B = _galerkin_1d(T, [(0, 2)], 2, R, N, ri, ro)
     vals = sort(filter(isfinite, real.(eigen(A, B).values)))
     @test maximum(vals) < 1e-6
@@ -60,7 +60,7 @@ end
     T = Float64; ri = 0.35; ro = 1.0; L = ro - ri
     β = (4.730040744862704, 7.853204624095838, 10.995607838001671)
     for N in (32, 48)
-        R = Cross.recomb_clamped(T, N)
+        R = Magrathea.recomb_clamped(T, N)
         A, B = _galerkin_1d(T, [(0, 4)], 4, R, N, ri, ro)   # u'''' = λ u
         vals = sort(filter(isfinite, real.(eigen(A, B).values)))
         @test minimum(vals) > -1e-3                          # positive definite
@@ -71,20 +71,20 @@ end
 
 @testset "Stress-free recombinations: nullity + BCs (independent of library helpers)" begin
     T = Float64; ri = 0.35; ro = 1.0; N = 32; K = N + 1
-    scale = Cross._radial_scale(ri, ro)
-    Rp = Cross.recomb_poloidal_stressfree(T, N, ri, ro)
-    Rt = Cross.recomb_toroidal_stressfree(T, N, ri, ro)
+    scale = Magrathea._radial_scale(ri, ro)
+    Rp = Magrathea.recomb_poloidal_stressfree(T, N, ri, ro)
+    Rt = Magrathea.recomb_toroidal_stressfree(T, N, ri, ro)
     @test size(Rp) == (K, N - 3)        # q=4 (u=0, r·u''=0 both ends)
     @test size(Rt) == (K, N - 1)        # q=2 (-r·v'+v=0 both ends)
 
-    # First-principles boundary evaluators (no Cross._chebyshev_boundary_* helpers):
+    # First-principles boundary evaluators (no Magrathea._chebyshev_boundary_* helpers):
     #   T_n(1)=1, T_n(-1)=(-1)^n ; T_n'(1)=n^2, T_n'(-1)=(-1)^(n+1) n^2 ;
     #   T_n''(1)=n^2(n^2-1)/3, T_n''(-1)=(-1)^n n^2(n^2-1)/3
     val_o = T[1 for n in 0:N];            val_i = T[(-1)^n for n in 0:N]
     der_o = T[n^2 for n in 0:N];          der_i = T[(-1)^(n+1) * n^2 for n in 0:N]
     sec_o = T[n^2*(n^2-1)/3 for n in 0:N]; sec_i = T[(-1)^n * n^2*(n^2-1)/3 for n in 0:N]
-    rb_o = Cross._boundary_radius(ri, ro, :outer)
-    rb_i = Cross._boundary_radius(ri, ro, :inner)
+    rb_o = Magrathea._boundary_radius(ri, ro, :outer)
+    rb_i = Magrathea._boundary_radius(ri, ro, :inner)
 
     # Poloidal stress-free: u=0 and u''=0 at both boundaries.
     @test maximum(abs.(val_o' * Rp)) < 1e-8
@@ -101,13 +101,13 @@ end
 
 @testset "Magnetic poloidal insulating recombination (ℓ-dependent Robin)" begin
     T = Float64; ri = 0.35; ro = 1.0; N = 32
-    scale = Cross._radial_scale(ri, ro)
-    rb_o = Cross._boundary_radius(ri, ro, :outer); rb_i = Cross._boundary_radius(ri, ro, :inner)
+    scale = Magrathea._radial_scale(ri, ro)
+    rb_o = Magrathea._boundary_radius(ri, ro, :outer); rb_i = Magrathea._boundary_radius(ri, ro, :inner)
     # first-principles boundary evaluators (no library helpers)
     val_o = T[1 for n in 0:N];  val_i = T[(-1)^n for n in 0:N]
     cd_o  = T[n^2 for n in 0:N]; cd_i = T[(-1)^(n+1) * n^2 for n in 0:N]
     for ℓ in (1, 4, 8)
-        R = Cross.recomb_magnetic_poloidal(T, N, ℓ, ri, ro)
+        R = Magrathea.recomb_magnetic_poloidal(T, N, ℓ, ri, ro)
         @test size(R) == (N + 1, N - 1)
         f_out = (ℓ + 1) .* val_o .+ rb_o .* scale .* cd_o   # (ℓ+1)f + ro·f' = 0
         f_in  = ℓ .* val_i .- rb_i .* scale .* cd_i          # ℓ·f − ri·f' = 0
