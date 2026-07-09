@@ -29,7 +29,7 @@ jobs:
       PETSC_REF: v3.22.4
       SLEPC_REF: v3.22.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install MPI + build tools
         run: |
@@ -38,7 +38,7 @@ jobs:
 
       - name: Cache complex PETSc + SLEPc
         id: petsc-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/petsc
@@ -67,7 +67,7 @@ jobs:
         # Persist the build even when a later step fails (actions/cache only saves
         # its post-step on job success), so iterations don't rebuild PETSc each time.
         if: always() && steps.petsc-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ${{ github.workspace }}/petsc
@@ -79,7 +79,7 @@ jobs:
           ls -la "$PETSC_DIR/$PETSC_ARCH/lib/libpetsc.so"
           ls -la "$SLEPC_DIR/$PETSC_ARCH/lib/libslepc.so"
 
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: '1.12'
 
@@ -96,7 +96,7 @@ jobs:
       - uses: julia-actions/julia-processcoverage@v1
 
       - name: Upload SLEPc coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
