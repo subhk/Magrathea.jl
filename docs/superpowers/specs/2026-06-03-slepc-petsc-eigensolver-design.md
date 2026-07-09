@@ -6,7 +6,7 @@ Status: approved (design); implementation pending
 ## Goal
 
 Add SLEPc (via `SlepcWrap.jl` + `PetscWrap.jl`) as an alternative backend for the
-generalized eigenvalue problem `A x = σ B x` solved throughout Cross.jl, selectable
+generalized eigenvalue problem `A x = σ B x` solved throughout Magrathea.jl, selectable
 per solve. KrylovKit remains the default and is unchanged.
 
 ## Constraints discovered (feasibility probe)
@@ -19,11 +19,11 @@ per solve. KrylovKit remains the default and is unchanged.
   runtime-tested here. The SLEPc solve will be exercised only on a machine with a
   PETSc/SLEPc build.
 - Therefore PETSc/SLEPc/MPI **cannot** be hard dependencies (would break
-  `using Cross` for every user without PETSc). They must be optional **weak
+  `using Magrathea` for every user without PETSc). They must be optional **weak
   dependencies** behind a package extension — the same mechanism already used for
-  `Makie` (`CrossMakieExt`) and `RecipesBase` (`CrossRecipesBaseExt`).
+  `Makie` (`MagratheaMakieExt`) and `RecipesBase` (`MagratheaRecipesBaseExt`).
 - PETSc must be built with **complex scalars** (`--with-scalar-type=complex`):
-  Cross.jl's `A`, `B` pencils are `Complex`.
+  Magrathea.jl's `A`, `B` pencils are `Complex`.
 
 ## Chosen approach: additive backend hook + weak-dependency extension
 
@@ -77,7 +77,7 @@ the extension only when `backend = :slepc`.
    in `src/solve.jl` — thread `backend` down to the relevant solver call. Default
    keeps current behavior.
 
-### Extension `ext/CrossSlepcExt/CrossSlepcExt.jl`
+### Extension `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`
 
 Triggered by weakdeps `[PetscWrap, SlepcWrap]` (and `MPI`). On load, registers its
 solver with the core hook. Implements `solve_generalized_eigen_slepc(A, B; nev,
@@ -138,7 +138,7 @@ KrylovKit path; only the inner solve differs.
 
 - `Project.toml`:
   - `[weakdeps]`: `PetscWrap`, `SlepcWrap`, `MPI`.
-  - `[extensions]`: `CrossSlepcExt = ["PetscWrap", "SlepcWrap"]` (MPI is a transitive
+  - `[extensions]`: `MagratheaSlepcExt = ["PetscWrap", "SlepcWrap"]` (MPI is a transitive
     dep of both; include explicitly if the extension uses it directly).
   - `[compat]`: pin PetscWrap/SlepcWrap/MPI to the resolved versions.
 - No change to `[deps]` — core load path stays PETSc-free.

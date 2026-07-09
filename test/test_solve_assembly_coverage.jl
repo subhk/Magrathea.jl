@@ -1,7 +1,7 @@
 using Test
 using LinearAlgebra
 using SparseArrays
-using Cross
+using Magrathea
 
 # These tests drive the full ASSEMBLY path of every `solve(...)` dispatch and the
 # critical-parameter searches. The sole eigensolver backend is `:slepc`, which
@@ -21,7 +21,7 @@ using Cross
     end
 
     @testset "BiglobalProblem (axisymmetric mean flow)" begin
-        bs = Cross.basic_state(op; mode=:conduction)
+        bs = Magrathea.basic_state(op; mode=:conduction)
         @test_throws Exception solve(BiglobalProblem(op, bs); nev=2)
     end
 
@@ -49,14 +49,14 @@ using Cross
 end
 
 @testset "critical-parameter searches assemble then throw at SLEPc" begin
-    @test_throws Exception Cross.find_critical_Ra_onset(
+    @test_throws Exception Magrathea.find_critical_Ra_onset(
         E=1e-3, Pr=1.0, χ=0.35, m=2, lmax=6, Nr=12)
-    @test_throws Exception Cross.find_global_critical_onset(
+    @test_throws Exception Magrathea.find_global_critical_onset(
         E=1e-3, Pr=1.0, χ=0.35, lmax=6, Nr=12, m_range=1:2)
 end
 
 @testset "low-level eigensolver gate" begin
     A = sparse(1.0I, 4, 4); B = sparse(1.0I, 4, 4)
-    @test_throws ArgumentError Cross.solve_eigenvalue_problem(A, B; nev=1, backend=:bogus)
-    @test_throws Exception Cross.solve_eigenvalue_problem(A, B; nev=1, backend=:slepc)
+    @test_throws ArgumentError Magrathea.solve_eigenvalue_problem(A, B; nev=1, backend=:bogus)
+    @test_throws Exception Magrathea.solve_eigenvalue_problem(A, B; nev=1, backend=:slepc)
 end

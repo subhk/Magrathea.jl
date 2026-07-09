@@ -1,5 +1,5 @@
 using Test
-using Cross
+using Magrathea
 
 @testset "ChebyshevDiffn polynomial derivatives" begin
     n = 8

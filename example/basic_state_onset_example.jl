@@ -10,7 +10,7 @@
 # This extends the standard onset problem from a quiescent conduction state
 # to a state with differential rotation.
 
-using Cross
+using Magrathea
 using Printf
 
 println("="^70)

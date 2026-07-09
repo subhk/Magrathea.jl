@@ -9,7 +9,7 @@
 # The solver finds eigenvalues of the coupled system where different m modes
 # interact through the non-axisymmetric basic state flow.
 
-using Cross
+using Magrathea
 using Printf
 
 println("="^70)

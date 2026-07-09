@@ -1,7 +1,7 @@
 name: SLEPc Coverage
 
 # Separate from the main CI: builds a complex-scalar PETSc + SLEPc, loads the
-# CrossSlepcExt extension, and runs real eigensolves so the SLEPc solver paths
+# MagratheaSlepcExt extension, and runs real eigensolves so the SLEPc solver paths
 # (src/Stability/{solver,onset,biglobal,triglobal}.jl, src/solve.jl) get covered.
 # Kept isolated so a PETSc build failure never blocks the main test matrix.
 
@@ -11,7 +11,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/slepc-coverage.yml"
-      - "ext/CrossSlepcExt/**"
+      - "ext/MagratheaSlepcExt/**"
       - "src/Stability/solver.jl"
       - "src/Stability/triglobal.jl"
       - "src/Stability/onset.jl"
@@ -85,7 +85,7 @@ jobs:
 
       - name: Configure Julia MPI + PetscWrap/SlepcWrap, run real-solve coverage
         env:
-          CROSS_SLEPC_TEST: '1'
+          MAGRATHEA_SLEPC_TEST: '1'
           JULIA_NUM_THREADS: '1'
         run: |
           julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.add(["MPIPreferences","MPI","PetscWrap","SlepcWrap"])'

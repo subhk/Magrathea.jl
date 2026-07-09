@@ -18,9 +18,9 @@ MHD matrix assembly.
 Must be included after MHD/types.jl and MHD/operator_functions.jl.
 """
 
-# This file is included in Cross via MHD/MHD.jl
+# This file is included in Magrathea via MHD/MHD.jl
 # All operator functions (operator_u, operator_coriolis_*, etc.) and is_dipole_case
-# are available in the Cross module namespace.
+# are available in the Magrathea module namespace.
 
 # -----------------------------------------------------------------------------
 # Inline operator construction for MHDStabilityOperator

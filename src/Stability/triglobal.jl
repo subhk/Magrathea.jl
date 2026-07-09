@@ -12,10 +12,10 @@
 #  m-blocks are coupled through the basic state.
 # =============================================================================
 
-# Dependencies provided by Cross module:
+# Dependencies provided by Magrathea module:
 # Parameters, LinearAlgebra, SparseArrays, Printf, WignerSymbols
 # LinearStabilityOperator, OnsetParams, BasicState, assemble_matrices
-# are available in the Cross namespace
+# are available in the Magrathea namespace
 
 """
     TriglobalParams{T<:Real}

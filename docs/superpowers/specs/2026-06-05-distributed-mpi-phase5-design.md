@@ -57,13 +57,13 @@ eigensolve.
 
 - **`_SLEPC_TRIGLOBAL_SOLVER` hook** (core Ref + `_solve_triglobal_slepc(problem; …)` that errors if extension absent), registered by the extension.
 - **`_slepc_triglobal_solve(problem; nev, sigma, which, tol, maxiter)`**:
-  1. Build `single_mode_ops = Cross.build_single_mode_operators(problem)` and
-     `coupling_ops = Cross.build_mode_coupling_operators(problem, single_mode_ops, false)`
+  1. Build `single_mode_ops = Magrathea.build_single_mode_operators(problem)` and
+     `coupling_ops = Magrathea.build_mode_coupling_operators(problem, single_mode_ops, false)`
      — **replicated** (built once per rank; per-m ops are small relative to the coupled
      pencil, and coupling needs both endpoints).
   2. `n_total = problem.total_dofs`; `Amat, rs, re = _create_dist_mat(n_total)`,
      `Bmat,_,_ = _create_dist_mat(n_total)`; `R = (rs+1):re`.
-  3. `coo = Cross._assemble_block_coo(problem, single_mode_ops, coupling_ops; owned_julia_rows=R)`;
+  3. `coo = Magrathea._assemble_block_coo(problem, single_mode_ops, coupling_ops; owned_julia_rows=R)`;
      `_fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rs, re)`, same for `Bmat`
      — this is the distributed part: each rank inserts only its owned pencil rows; the
      full `n_total × n_total` pencil is never materialized.
@@ -116,7 +116,7 @@ distributed EPS solve; rank-0 eigenvectors → `StabilityResult`.
 - `src/Stability/triglobal.jl` — owned filter on `_append_block_entries!`;
   `_assemble_block_coo`; `assemble_block_matrices` wrapper; `build_single_mode_operator`;
   `_SLEPC_TRIGLOBAL_SOLVER` is declared in `src/Stability/solver.jl` with `_solve_triglobal_slepc`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` — `_slepc_triglobal_solve` + register hook.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` — `_slepc_triglobal_solve` + register hook.
 - `src/Stability/triglobal.jl` (solve path) — rewire `:slepc` to the hook.
 - `test/distributed_triglobal.jl` (new) — serial tests; wired into `runtests.jl`.
 

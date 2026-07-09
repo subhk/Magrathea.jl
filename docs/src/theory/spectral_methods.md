@@ -1,14 +1,14 @@
 # Spectral Methods
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Theory</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Theory</div>
   <h1>Sparse spectral discretization.</h1>
-  <p>The Chebyshev and ultraspherical spectral methods Cross.jl uses for high accuracy at high sparsity.</p>
+  <p>The Chebyshev and ultraspherical spectral methods Magrathea.jl uses for high accuracy at high sparsity.</p>
 </div>
 
 ## Overview
 
-Cross.jl combines two spectral approaches:
+Magrathea.jl combines two spectral approaches:
 
 1. **Spherical Harmonics** for angular directions (``\theta, \phi``)
 2. **Chebyshev/Ultraspherical Polynomials** for radial direction (``r``)
@@ -40,7 +40,7 @@ And orthogonality:
 
 ### Collocation Points
 
-Cross.jl uses Chebyshev-Gauss-Lobatto points:
+Magrathea.jl uses Chebyshev-Gauss-Lobatto points:
 
 ```math
 x_j = \cos\left(\frac{\pi j}{N-1}\right), \quad j = 0, 1, \ldots, N-1
@@ -99,7 +99,7 @@ Higher derivatives are computed by matrix multiplication: ``D_2 = D_1 \times D_1
 
 ## Ultraspherical Spectral Method
 
-The key innovation in Cross.jl is using the Olver-Townsend ultraspherical method for sparse operator construction.
+The key innovation in Magrathea.jl is using the Olver-Townsend ultraspherical method for sparse operator construction.
 
 ### Gegenbauer Polynomials
 
@@ -161,7 +161,7 @@ Also tridiagonal!
 
 ### Radial Operator Construction
 
-For operators like ``r^p \frac{d^n}{dr^n}``, Cross.jl:
+For operators like ``r^p \frac{d^n}{dr^n}``, Magrathea.jl:
 
 1. Converts Chebyshev coefficients through the ultraspherical chain
 2. Applies multiplication matrices for ``r^p``
@@ -218,7 +218,7 @@ Where ``P_\ell^m`` are associated Legendre functions.
 
 ### Tau Method
 
-Cross.jl uses the Tau method for boundary conditions:
+Magrathea.jl uses the Tau method for boundary conditions:
 
 1. Replace the last few rows of the operator matrix with BC constraints
 2. The replaced rows correspond to highest polynomial degrees
@@ -308,7 +308,7 @@ For a problem with ``\ell_{max} = 60``, ``N_r = 64``, ``m = 10``:
 
 ### Manufactured Solutions
 
-Cross.jl includes tests using manufactured solutions:
+Magrathea.jl includes tests using manufactured solutions:
 
 1. Choose a known solution ``u_{exact}(r)``
 2. Compute ``f = \mathcal{L}[u_{exact}]`` analytically

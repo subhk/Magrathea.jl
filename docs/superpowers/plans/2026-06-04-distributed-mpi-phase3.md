@@ -23,8 +23,8 @@
 - `src/Stability/linear.jl` (modify) — add `_constraint_projection_matrices`.
 - `src/Stability/solver.jl` (modify) — `_SLEPC_CONSTRAINED_SOLVER` Ref + `_solve_constrained_slepc(op;…)` hook.
 - `src/solve.jl` (modify) — route `solve(::OnsetProblem/::BiglobalProblem; backend=:slepc)` to the hook.
-- `ext/CrossSlepcExt/raw_petsc.jl` (modify) — `_mat_mat_mult`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` (modify) — `_reduce_dist`, `_solve_constrained_slepc`, register hook.
+- `ext/MagratheaSlepcExt/raw_petsc.jl` (modify) — `_mat_mat_mult`.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` (modify) — `_reduce_dist`, `_solve_constrained_slepc`, register hook.
 - `test/distributed_reduction.jl` (create) — serial tests; wired into `runtests.jl`.
 
 ---
@@ -39,15 +39,15 @@
 using Test
 using LinearAlgebra
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "S·A·P reproduces the constrained reduction" begin
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
     op = LinearStabilityOperator(params)
     A_full, B_full, idofs, bdofs = assemble_matrices(op)
-    A_red, B_red, reduction = Cross._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)
+    A_red, B_red, reduction = Magrathea._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)
 
-    S, P = Cross._constraint_projection_matrices(reduction, idofs)
+    S, P = Magrathea._constraint_projection_matrices(reduction, idofs)
 
     @test size(P) == (reduction.n_full, reduction.n_reduced)
     @test size(S) == (reduction.n_reduced, reduction.n_full)
@@ -105,7 +105,7 @@ end
 
 ## Task 2: Extension — distributed `MatMatMult` reduce + onset/biglobal rewire (NOT runnable here)
 
-**Files:** Modify `ext/CrossSlepcExt/raw_petsc.jl`, `ext/CrossSlepcExt/CrossSlepcExt.jl`, `src/Stability/solver.jl`, `src/solve.jl`.
+**Files:** Modify `ext/MagratheaSlepcExt/raw_petsc.jl`, `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`, `src/Stability/solver.jl`, `src/solve.jl`.
 
 > Cannot run here. Verify: `Meta.parseall`, symbol-audit vs installed PetscWrap 0.1.5, `CORE_OK`, full default suite green.
 
@@ -115,12 +115,12 @@ const _SLEPC_CONSTRAINED_SOLVER = Ref{Union{Nothing,Function}}(nothing)
 
 function _solve_constrained_slepc(op; kwargs...)
     f = _SLEPC_CONSTRAINED_SOLVER[]
-    f === nothing && error("backend=:slepc (distributed constrained reduction) requires `using PetscWrap, SlepcWrap` and Cross.slepc_init!().")
+    f === nothing && error("backend=:slepc (distributed constrained reduction) requires `using PetscWrap, SlepcWrap` and Magrathea.slepc_init!().")
     return f(op; kwargs...)
 end
 ```
 
-- [ ] **Step 2: `_mat_mat_mult` in `ext/CrossSlepcExt/raw_petsc.jl`**
+- [ ] **Step 2: `_mat_mat_mult` in `ext/MagratheaSlepcExt/raw_petsc.jl`**
 ```julia
 const MAT_INITIAL_MATRIX = Cint(0)   # PETSc MatReuse
 
@@ -137,7 +137,7 @@ end
 ```
 AUDIT: confirm `PetscWrap.PetscReal` exists and `PetscMat`'s constructor/field is `.ptr::Ref{CMat}` with a `.comm` (it does — mirrors `PetscVec`). Confirm `MatReuse`/`PETSC_DEFAULT` values against the installed PETSc headers.
 
-- [ ] **Step 3: `_reduce_dist` + `_solve_constrained_slepc` in `CrossSlepcExt.jl`**
+- [ ] **Step 3: `_reduce_dist` + `_solve_constrained_slepc` in `MagratheaSlepcExt.jl`**
 ```julia
 """Distributed S·A·P reduction (destroys the SA intermediate)."""
 function _reduce_dist(Amat, Smat, Pmat)
@@ -148,13 +148,13 @@ function _reduce_dist(Amat, Smat, Pmat)
 end
 
 function _slepc_constrained_solve(op; nev::Int, sigma, which::Symbol, tol::Float64, maxiter::Int)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
     # 1. replicated full assembly + reduction (as in the serial path)
-    A_full, B_full, idofs, bdofs = Cross.assemble_matrices(op)
+    A_full, B_full, idofs, bdofs = Magrathea.assemble_matrices(op)
     A_red_ref, B_red_ref, reduction =
-        Cross._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)  # for `reduction`/P
-    S, P = Cross._constraint_projection_matrices(reduction, idofs)
+        Magrathea._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)  # for `reduction`/P
+    S, P = Magrathea._constraint_projection_matrices(reduction, idofs)
     nred = reduction.n_reduced
     nfull = reduction.n_full
     # 2. distribute full A, B, S, P (reuse Phase-0 replicated insert)
@@ -178,17 +178,17 @@ end
 ```
 NOTE on `_to_petsc_dist` for non-square `S`/`P`: Phase-0 `_to_petsc_dist(M, n)` assumes `n×n`. `S` is `nred×nfull` and `P` is `nfull×nred` (rectangular). Generalize `_to_petsc_dist` to `_to_petsc_dist(M, nrows, ncols)` (set sizes `(PETSC_DECIDE, PETSC_DECIDE, nrows, ncols)`, preallocate via the rectangular analog of `_petsc_owned_nnz` — the diagonal-band split still uses the row range; for rectangular MPIAIJ PETSc's `MatMPIAIJSetPreallocation` still takes per-owned-row d/o counts where the "diagonal block" columns are this rank's column ownership). For simplicity and since these matrices are built once, you MAY instead preallocate generously (`MatMPIAIJSetPreallocation(mat, PI(maxnnz), C_NULL, PI(maxnnz), C_NULL)`) or set `MatSetOption(MAT_NEW_NONZERO_ALLOCATION_ERR, false)` and skip exact preallocation. Pick the simplest correct option and report it; exact rectangular preallocation is a perf detail, not correctness.
 
-- [ ] **Step 4: register hook** — in `__init__`, add `Cross._SLEPC_CONSTRAINED_SOLVER[] = _slepc_constrained_solve`.
+- [ ] **Step 4: register hook** — in `__init__`, add `Magrathea._SLEPC_CONSTRAINED_SOLVER[] = _slepc_constrained_solve`.
 
-- [ ] **Step 5: rewire `solve(::OnsetProblem/::BiglobalProblem; backend=:slepc)`** in `src/solve.jl`. Read how each currently reaches the solver (Onset → `solve_onset_problem` → `solve_eigenvalue_problem(op; backend=:slepc)`; Biglobal → `solve_biglobal_problem`). When `backend === :slepc`, call `eigenvalues, eigenvectors, info = Cross._solve_constrained_slepc(op; nev, sigma, which, tol, maxiter)` and use them in the `StabilityResult` wrapping (operator=op, info=info). Keep `:krylovkit` untouched. Determine the cleanest interception point (likely in `solve_onset_problem`/`solve_biglobal_problem`, where `op` is available) and report exactly what you changed.
+- [ ] **Step 5: rewire `solve(::OnsetProblem/::BiglobalProblem; backend=:slepc)`** in `src/solve.jl`. Read how each currently reaches the solver (Onset → `solve_onset_problem` → `solve_eigenvalue_problem(op; backend=:slepc)`; Biglobal → `solve_biglobal_problem`). When `backend === :slepc`, call `eigenvalues, eigenvectors, info = Magrathea._solve_constrained_slepc(op; nev, sigma, which, tol, maxiter)` and use them in the `StabilityResult` wrapping (operator=op, info=info). Keep `:krylovkit` untouched. Determine the cleanest interception point (likely in `solve_onset_problem`/`solve_biglobal_problem`, where `op` is available) and report exactly what you changed.
 
 - [ ] **Step 6: Parse + symbol-audit + CORE_OK + full suite**
-  - `$JL -e 'for f in ("ext/CrossSlepcExt/raw_petsc.jl","ext/CrossSlepcExt/CrossSlepcExt.jl"); Meta.parseall(read(f,String)); end; println("PARSE_OK")'` → PARSE_OK.
+  - `$JL -e 'for f in ("ext/MagratheaSlepcExt/raw_petsc.jl","ext/MagratheaSlepcExt/MagratheaSlepcExt.jl"); Meta.parseall(read(f,String)); end; println("PARSE_OK")'` → PARSE_OK.
   - audit `MatMatMult`, `PetscReal`, `MatDestroy`, the rectangular `_to_petsc_dist` against installed source.
-  - `$JL --project=. -e 'using Cross; println("CORE_OK ", Cross._SLEPC_CONSTRAINED_SOLVER[]===nothing)'` (sandbox off) → `CORE_OK true`.
+  - `$JL --project=. -e 'using Magrathea; println("CORE_OK ", Magrathea._SLEPC_CONSTRAINED_SOLVER[]===nothing)'` (sandbox off) → `CORE_OK true`.
   - `$JL --project=. test/runtests.jl 2>&1 | grep -iE "Error During Test|did not pass"; echo done` → only `done` (the `:krylovkit` onset/biglobal default must be unaffected).
 
-- [ ] **Step 7: Commit (ASK USER FIRST)** — `git add ext/CrossSlepcExt/ src/Stability/solver.jl src/solve.jl` / `git commit -m "feat(mpi): distributed S·A·P constrained reduction via MatMatMult"`
+- [ ] **Step 7: Commit (ASK USER FIRST)** — `git add ext/MagratheaSlepcExt/ src/Stability/solver.jl src/solve.jl` / `git commit -m "feat(mpi): distributed S·A·P constrained reduction via MatMatMult"`
 
 ---
 

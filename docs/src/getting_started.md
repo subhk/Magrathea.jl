@@ -1,15 +1,15 @@
 # Getting Started
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Install &amp; first run</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Install &amp; first run</div>
   <h1>From a fresh clone to your first eigenvalue.</h1>
   <p>
-    Install Cross.jl on Linux, macOS, or Windows (WSL), then assemble and solve a
+    Install Magrathea.jl on Linux, macOS, or Windows (WSL), then assemble and solve a
     rotating-convection onset problem &mdash; follow the steps in order.
   </p>
-  <div class="cross-actions">
-    <a class="cross-button primary" href="../problem_setup/">First problem</a>
-    <a class="cross-button secondary" href="../examples/">Examples</a>
+  <div class="magrathea-actions">
+    <a class="magrathea-button primary" href="../problem_setup/">First problem</a>
+    <a class="magrathea-button secondary" href="../examples/">Examples</a>
   </div>
 </div>
 
@@ -17,7 +17,7 @@
 
 ### Required
 
-- **Julia 1.10 or newer** - Cross.jl is developed and tested against Julia 1.10.x and 1.11.x
+- **Julia 1.10 or newer** - Magrathea.jl is developed and tested against Julia 1.10.x and 1.11.x
 - **Git** - For cloning and pulling updates
 
 ### Optional but Recommended
@@ -31,8 +31,8 @@
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/subhk/Cross.jl.git
-cd Cross.jl
+git clone https://github.com/subhk/Magrathea.jl.git
+cd Magrathea.jl
 ```
 
 ### Step 2: Instantiate the Julia Environment
@@ -95,9 +95,9 @@ m    Re(λ₁)          Im(λ₁)          iterations
 After installation, the project has the following structure:
 
 ```
-Cross.jl/
+Magrathea.jl/
 ├── src/                      # Source code
-│   ├── Cross.jl              # Main module entry point
+│   ├── Magrathea.jl              # Main module entry point
 │   ├── validation.jl         # Input validation  [v2.0]
 │   ├── types.jl              # Problem/result types, estimate_size  [v2.0]
 │   ├── solve.jl              # Unified solve() API  [v2.0]
@@ -120,7 +120,7 @@ Cross.jl/
 ```
 
 !!! note "Public API"
-    Cross.jl uses `OnsetParams`, typed problem wrappers such as `OnsetProblem`, `solve`, and `estimate_size` as the public stability-analysis interface.
+    Magrathea.jl uses `OnsetParams`, typed problem wrappers such as `OnsetProblem`, `solve`, and `estimate_size` as the public stability-analysis interface.
 
 ## Julia Configuration
 
@@ -142,12 +142,12 @@ This enables [Revise.jl](https://github.com/timholy/Revise.jl) to pick up change
 
 ### Environment Variables
 
-Cross.jl recognizes several environment variables:
+Magrathea.jl recognizes several environment variables:
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
-| `CROSS_VERBOSE` | Enable verbose output | `"1"` |
-| `CROSS_THETA_POINTS` | Default meridional resolution | `"96"` |
+| `MAGRATHEA_VERBOSE` | Enable verbose output | `"1"` |
+| `MAGRATHEA_THETA_POINTS` | Default meridional resolution | `"96"` |
 
 ## Building Documentation Locally
 
@@ -175,7 +175,7 @@ Open `docs/build/index.html` in your browser to see the rendered site.
 Let's compute the growth rate for a rotating convection problem:
 
 ```julia
-using Cross
+using Magrathea
 
 # 1. Define parameters
 params = OnsetParams(E=1e-3, Pr=1.0, Ra=1e5, χ=0.35,
@@ -248,7 +248,7 @@ v"1.10.0"
 
 ## Next Steps
 
-Now that Cross.jl is installed and working, proceed to:
+Now that Magrathea.jl is installed and working, proceed to:
 
 1. **[Setting Up Your First Problem](problem_setup.md)** - Learn to configure and solve onset problems
 2. **[Basic States](basic_states.md)** - Create custom background temperature and flow profiles

@@ -1,17 +1,17 @@
 # Codebase Structure
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">For developers</div>
-  <h1>How the Cross.jl source is organized.</h1>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">For developers</div>
+  <h1>How the Magrathea.jl source is organized.</h1>
   <p>An overview of the source-code layout and architecture to help you navigate and extend the codebase.</p>
 </div>
 
 ## Directory Layout
 
 ```
-Cross.jl/
+Magrathea.jl/
 ├── src/                              # Source code
-│   ├── Cross.jl                      # Main module — includes submodules, exports public API
+│   ├── Magrathea.jl                      # Main module — includes submodules, exports public API
 │   ├── validation.jl                 # v2.0: Input validation with errors and warnings
 │   ├── types.jl                      # v2.0: StabilityResult, problem types, estimate_size
 │   ├── solve.jl                      # v2.0: Unified solve() API dispatching on problem type
@@ -54,9 +54,9 @@ Cross.jl/
 │       └── galerkin_assembly.jl    # Tau-free Galerkin MHD assembly
 │
 ├── ext/
-│   ├── CrossRecipesBaseExt/          # Plots.jl recipes (weak dep: RecipesBase)
-│   ├── CrossMakieExt/                # Makie visualization (weak dep: Makie)
-│   └── CrossSlepcExt/                # SLEPc/PETSc distributed eigensolver (weak deps: PetscWrap, SlepcWrap)
+│   ├── MagratheaRecipesBaseExt/          # Plots.jl recipes (weak dep: RecipesBase)
+│   ├── MagratheaMakieExt/                # Makie visualization (weak dep: Makie)
+│   └── MagratheaSlepcExt/                # SLEPc/PETSc distributed eigensolver (weak deps: PetscWrap, SlepcWrap)
 │
 ├── test/                             # Test suite
 ├── example/                          # Example scripts
@@ -66,12 +66,12 @@ Cross.jl/
 
 ## Core Architecture
 
-### Module Entry Point (`Cross.jl`)
+### Module Entry Point (`Magrathea.jl`)
 
 The main module file orchestrates all submodules and exports the public API:
 
 ```julia
-module Cross
+module Magrathea
     # Dependencies
     using LinearAlgebra, SparseArrays, JLD2, Printf, Random
     using Parameters
@@ -96,7 +96,7 @@ end
 
 ### Three Analysis Modes
 
-Cross.jl provides three distinct analysis modes for different physical scenarios:
+Magrathea.jl provides three distinct analysis modes for different physical scenarios:
 
 | Mode | File | Basic State | Use Case |
 |------|------|-------------|----------|
@@ -263,7 +263,7 @@ end
 - `assemble_matrices(op)` - Build A and B matrices
 
 #### `Stability/solver.jl`
-Generalized-eigenvalue solving (`A x = σ B x`) through a pluggable backend interface. The default backend runs in-process; an optional distributed SLEPc/PETSc backend (`backend=:slepc`) is provided by the `CrossSlepcExt` extension, loaded with `using PetscWrap, SlepcWrap`.
+Generalized-eigenvalue solving (`A x = σ B x`) through a pluggable backend interface. The default backend runs in-process; an optional distributed SLEPc/PETSc backend (`backend=:slepc`) is provided by the `MagratheaSlepcExt` extension, loaded with `using PetscWrap, SlepcWrap`.
 
 **Key Functions:**
 - `solve_eigenvalue_problem(op; nev, which)` - Compute eigenvalues
@@ -373,9 +373,9 @@ Tau-free ultraspherical-Galerkin assembly of the MHD eigenproblem. Boundary cond
 
 Optional functionality is provided through Julia's extension mechanism (weak dependencies):
 
-- **`CrossRecipesBaseExt/`** - Plots.jl recipes, loaded automatically when `RecipesBase` is available
-- **`CrossMakieExt/`** - Interactive Makie visualization, loaded automatically when a Makie backend is available
-- **`CrossSlepcExt/`** - Distributed SLEPc/PETSc eigensolver backend, loaded with `using PetscWrap, SlepcWrap` (enables `backend=:slepc`)
+- **`MagratheaRecipesBaseExt/`** - Plots.jl recipes, loaded automatically when `RecipesBase` is available
+- **`MagratheaMakieExt/`** - Interactive Makie visualization, loaded automatically when a Makie backend is available
+- **`MagratheaSlepcExt/`** - Distributed SLEPc/PETSc eigensolver backend, loaded with `using PetscWrap, SlepcWrap` (enables `backend=:slepc`)
 
 ## Data Flow
 
@@ -479,7 +479,7 @@ test/
 Run tests with:
 ```julia
 using Pkg
-Pkg.test("Cross")
+Pkg.test("Magrathea")
 ```
 
 ## Dependencies
@@ -496,9 +496,9 @@ Pkg.test("Cross")
 | `WignerSymbols` | direct | Gaunt coefficients for spherical harmonic coupling |
 | `SpecialFunctions` | direct | Special mathematical functions |
 | `LinearMaps` | direct | Linear operator abstractions |
-| `RecipesBase` | weak | Plots.jl plot recipes (`CrossRecipesBaseExt`) |
-| `Makie` | weak | Interactive visualization (`CrossMakieExt`) |
-| `PetscWrap`, `SlepcWrap` | weak | Distributed SLEPc/PETSc eigensolver (`CrossSlepcExt`) |
+| `RecipesBase` | weak | Plots.jl plot recipes (`MagratheaRecipesBaseExt`) |
+| `Makie` | weak | Interactive visualization (`MagratheaMakieExt`) |
+| `PetscWrap`, `SlepcWrap` | weak | Distributed SLEPc/PETSc eigensolver (`MagratheaSlepcExt`) |
 | `BenchmarkTools` | test | Performance benchmarking (test extra) |
 
 ## Extension Points
@@ -515,7 +515,7 @@ Pkg.test("Cross")
 2. Define parameter struct with required fields
 3. Implement matrix assembly functions
 4. Add operators to the A/B matrices in assembly
-5. Include the submodule entry point in `Cross.jl` and export as needed
+5. Include the submodule entry point in `Magrathea.jl` and export as needed
 
 ### Custom Boundary Conditions
 
@@ -528,7 +528,7 @@ Pkg.test("Cross")
 
 ### Overview
 
-This document describes the magnetohydrodynamic (MHD) implementation in Cross.jl, which extends the hydrodynamic convection onset solver to include magnetic field interactions.
+This document describes the magnetohydrodynamic (MHD) implementation in Magrathea.jl, which extends the hydrodynamic convection onset solver to include magnetic field interactions.
 
 **Status:** ⚠️ EXPERIMENTAL - Full implementation following Kore structure
 
@@ -737,7 +737,7 @@ assemble_mhd_matrices(op)  # Returns (A, B, interior_dofs, info)
 ### Basic Dynamo Stability
 
 ```julia
-using Cross
+using Magrathea
 
 # Define parameters
 params = MHDParams(
@@ -760,7 +760,7 @@ params = MHDParams(
 op = MHDStabilityOperator(params)
 A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
-# Solve eigenvalue problem (solve_eigenvalue_problem is provided by Cross)
+# Solve eigenvalue problem (solve_eigenvalue_problem is provided by Magrathea)
 A_int = A[interior_dofs, interior_dofs]
 B_int = B[interior_dofs, interior_dofs]
 eigenvalues, _, _ = solve_eigenvalue_problem(A_int, B_int)
@@ -940,6 +940,6 @@ Future work: Extend to anelastic equations for more realistic planetary conditio
 
 This MHD implementation follows the Kore structure and uses the corrected spectral multiplication and factorial scaling from the bug fixes (2025-10-26).
 
-For questions or contributions, refer to the main Cross.jl documentation.
+For questions or contributions, refer to the main Magrathea.jl documentation.
 
 **Status:** Experimental implementation complete, validation in progress.

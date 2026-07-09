@@ -1,6 +1,6 @@
-module CrossSlepcExt
+module MagratheaSlepcExt
 
-using Cross
+using Magrathea
 using SparseArrays
 using PetscWrap
 using SlepcWrap
@@ -37,7 +37,7 @@ function _to_petsc_dist(M::SparseMatrixCSC, n::Int)
     MatSetSizes(mat, PETSC_DECIDE, PETSC_DECIDE, n, n)
     MatSetFromOptions(mat)
     rstart, rend = MatGetOwnershipRange(mat)            # 0-based, half-open
-    d, o = Cross._petsc_owned_nnz(M, Int(rstart), Int(rend))
+    d, o = Magrathea._petsc_owned_nnz(M, Int(rstart), Int(rend))
     PI = PetscWrap.PetscInt
     MatMPIAIJSetPreallocation(mat, PI(0), PI.(d), PI(0), PI.(o))
     rows = rowvals(M); vals = nonzeros(M)
@@ -84,14 +84,14 @@ end
 """
 Distributed SLEPc solve of `A x = σ B x` over `MPI.COMM_WORLD`. Replicated Julia
 assembly (each rank holds full `A`/`B`, inserts only owned rows). MUMPS shift-invert
-comes from the option string set in `slepc_init!`. Returns the Cross contract
+comes from the option string set in `slepc_init!`. Returns the Magrathea contract
 `(eigenvalues, eigenvectors, info)`: eigenvalues on all ranks; eigenvectors full
 `n×nev` on rank 0, empty `n×0` on workers. Requires a complex-scalar PETSc build.
 """
 function _slepc_solve(A::SparseMatrixCSC, B::SparseMatrixCSC;
                       nev::Int, sigma, which::Symbol, selection::Symbol,
                       tol::Float64, maxiter::Int, verbosity::Int=0)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real &&
         error("PETSc/SLEPc must be built with complex scalars (--with-scalar-type=complex)")
     size(A) == size(B) || throw(DimensionMismatch("A and B must match"))
@@ -110,7 +110,7 @@ Shared EPS shift-invert solve + rank-0 eigenvector gather, operating on already-
 distributed PETSc matrices `Amat`, `Bmat` (`n×n`). Owns the EPS lifecycle and destroys
 `Amat`/`Bmat` before returning (NOT SlepcFinalize — that is the caller's explicit
 lifecycle). Used by both `_slepc_solve` (replicated sparse path) and `_slepc_mhd_solve`
-(distributed MHD path). Returns the Cross contract `(eigenvalues, eigenvectors, info)`:
+(distributed MHD path). Returns the Magrathea contract `(eigenvalues, eigenvectors, info)`:
 eigenvalues identical on all ranks; eigenvectors full `n×nout` on rank 0, empty `n×0`
 on workers.
 """
@@ -188,7 +188,7 @@ counts (`_owned_coo_nnz`) are computed from the SAME triplet stream, so they mat
 exactly what is inserted."""
 function _fill_dist_mat!(mat, rows, cols, vals, rstart::Int, rend::Int)
     PI = PetscWrap.PetscInt
-    d, o = Cross._owned_coo_nnz(rows, cols, rstart, rend)
+    d, o = Magrathea._owned_coo_nnz(rows, cols, rstart, rend)
     MatMPIAIJSetPreallocation(mat, PI(0), PI.(d), PI(0), PI.(o))
     @inbounds for k in eachindex(rows)
         r0 = rows[k] - 1
@@ -256,7 +256,7 @@ end
 mirroring the serial overwrites for this rank's OWNED rows only.
 
 Strategy (value-exact, zero formula duplication): assemble the full *replicated*
-serial sparse pencil with BCs already applied via `Cross.assemble_mhd_matrices(op)`
+serial sparse pencil with BCs already applied via `Magrathea.assemble_mhd_matrices(op)`
 — this runs the identical, audited serial BC code. For every BC row the serial code
 zeroed `A[row,:]`/`B[row,:]` and wrote a new A row (the B row stays all-zero). We
 therefore (1) zero the same rows in both distributed Mats and (2) re-insert exactly
@@ -271,7 +271,7 @@ BC application; the heavy distributed object is still the PETSc Mat/EPS factoriz
 """
 function _apply_dist_bcs!(Amat, Bmat, op, rstart::Int, rend::Int)
     # Replicated serial assembly WITH boundary conditions applied (exact serial code).
-    Aser, _Bser, _idofs, _info = Cross.assemble_mhd_matrices(op)
+    Aser, _Bser, _idofs, _info = Magrathea.assemble_mhd_matrices(op)
 
     bc_rows = _mhd_bc_rows(op)                       # 1-based, identical all ranks
 
@@ -312,16 +312,16 @@ end
 """Distributed MHD-aware SLEPc solve directly from an `MHDStabilityOperator`. Builds
 distributed PETSc A/B from the COO triplets (owned rows only), applies the tau BCs on
 the distributed Mats, then runs the shared EPS shift-invert solve + rank-0 gather.
-Returns the Cross contract `(eigenvalues, eigenvectors, info)`. Requires a complex
-PETSc build and a prior `Cross.slepc_init!()`."""
+Returns the Magrathea contract `(eigenvalues, eigenvectors, info)`. Requires a complex
+PETSc build and a prior `Magrathea.slepc_init!()`."""
 function _slepc_mhd_solve(op; nev::Int, sigma, which::Symbol, tol::Float64, maxiter::Int)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real &&
         error("PETSc/SLEPc must be built with complex scalars (--with-scalar-type=complex)")
     n = op.matrix_size
     Amat, rstart, rend = _create_dist_mat(n)
     Bmat, _, _ = _create_dist_mat(n)
-    coo = Cross._assemble_mhd_coo(op; owned_julia_rows=(rstart + 1):rend)
+    coo = Magrathea._assemble_mhd_coo(op; owned_julia_rows=(rstart + 1):rend)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rstart, rend)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rstart, rend)
     _apply_dist_bcs!(Amat, Bmat, op, rstart, rend)
@@ -345,26 +345,26 @@ end
 """Distributed constrained-reduction SLEPc solve from a `LinearStabilityOperator`.
 
 Builds the constraint reduction `S` (`n_reduced×n_full`) / `P` (`n_full×n_reduced`)
-WITHOUT ever forming the full `A` (via `Cross._constraint_reduction_from_subblocks`
-plus `Cross._constraint_projection_matrices`), assembles the tau pencil `(A, B)`
+WITHOUT ever forming the full `A` (via `Magrathea._constraint_reduction_from_subblocks`
+plus `Magrathea._constraint_projection_matrices`), assembles the tau pencil `(A, B)`
 directly into distributed PETSc Mats from owned-row COO triplets
-(`Cross._assemble_onset_coo`), distributes the sparse `S`/`P` as PETSc Mats, forms the
+(`Magrathea._assemble_onset_coo`), distributes the sparse `S`/`P` as PETSc Mats, forms the
 reduced pencil `Ared = S·A·P`, `Bred = S·B·P` via `MatMatMult`, then runs the shared
 EPS shift-invert solve + rank-0 gather on the small reduced pencil. Reduced
 eigenvectors are mapped back to full DOF coordinates with `P` on rank 0. Returns the
-Cross contract `(eigenvalues, eigenvectors, info)`. Requires a complex PETSc build and
-a prior `Cross.slepc_init!()`."""
+Magrathea contract `(eigenvalues, eigenvectors, info)`. Requires a complex PETSc build and
+a prior `Magrathea.slepc_init!()`."""
 function _slepc_constrained_solve(op; nev::Int, sigma, which::Symbol, tol::Float64, maxiter::Int)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
-    red = Cross._constraint_reduction_from_subblocks(op)        # no full A
-    idofs = Cross._onset_interior_dofs(op)
-    S, P = Cross._constraint_projection_matrices(red, idofs)
+    red = Magrathea._constraint_reduction_from_subblocks(op)        # no full A
+    idofs = Magrathea._onset_interior_dofs(op)
+    S, P = Magrathea._constraint_projection_matrices(red, idofs)
     nfull = red.n_full; nred = red.n_reduced
     # distributed owned-row assembly of A, B
     Amat, rs, re = _create_dist_mat(nfull)
     Bmat, _, _ = _create_dist_mat(nfull)
-    coo = Cross._assemble_onset_coo(op; owned_julia_rows=(rs+1):re)
+    coo = Magrathea._assemble_onset_coo(op; owned_julia_rows=(rs+1):re)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rs, re)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rs, re)
     # distribute S, P; reduce; solve; reconstruct on rank 0
@@ -388,20 +388,20 @@ end
 """Distributed triglobal SLEPc solve from a `CoupledModeProblem`. Builds the
 single-mode and mode-coupling operators (verbose=false), assembles the block-coupled
 pencil `(A, B)` directly into distributed PETSc Mats from owned-row COO triplets
-(`Cross._assemble_block_coo` with `owned_julia_rows`), then runs the shared EPS
+(`Magrathea._assemble_block_coo` with `owned_julia_rows`), then runs the shared EPS
 shift-invert solve + rank-0 gather. Uses a small imaginary shift (`σ_target + 1e-6 i`)
 to avoid singularity from boundary-condition rows, mirroring the serial triglobal
 Krylov path. Returns `(eigenvalues, eigenvectors)` (eigenvectors full `n×nout` on rank
 0, empty `n×0` on workers). Requires a complex PETSc build and a prior
-`Cross.slepc_init!()`."""
+`Magrathea.slepc_init!()`."""
 function _slepc_triglobal_solve(problem; σ_target, nev::Int, tol::Float64, maxiter::Int)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
-    single = Cross.build_single_mode_operators(problem, false)
-    coupling = Cross.build_mode_coupling_operators(problem, single, false)
+    single = Magrathea.build_single_mode_operators(problem, false)
+    coupling = Magrathea.build_mode_coupling_operators(problem, single, false)
     n = problem.total_dofs
     Amat, rs, re = _create_dist_mat(n); Bmat, _, _ = _create_dist_mat(n)
-    coo = Cross._assemble_block_coo(problem, single, coupling; owned_julia_rows=(rs+1):re)
+    coo = Magrathea._assemble_block_coo(problem, single, coupling; owned_julia_rows=(rs+1):re)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rs, re)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rs, re)
     shift = ComplexF64(σ_target, 1e-6)
@@ -411,12 +411,12 @@ function _slepc_triglobal_solve(problem; σ_target, nev::Int, tol::Float64, maxi
 end
 
 function __init__()
-    Cross._SLEPC_SOLVER[]             = _slepc_solve
-    Cross._SLEPC_MHD_SOLVER[]         = _slepc_mhd_solve
-    Cross._SLEPC_CONSTRAINED_SOLVER[] = _slepc_constrained_solve
-    Cross._SLEPC_TRIGLOBAL_SOLVER[]   = _slepc_triglobal_solve
-    Cross._SLEPC_INIT[]               = _slepc_init!
-    Cross._SLEPC_FINALIZE[]           = _slepc_finalize!
+    Magrathea._SLEPC_SOLVER[]             = _slepc_solve
+    Magrathea._SLEPC_MHD_SOLVER[]         = _slepc_mhd_solve
+    Magrathea._SLEPC_CONSTRAINED_SOLVER[] = _slepc_constrained_solve
+    Magrathea._SLEPC_TRIGLOBAL_SOLVER[]   = _slepc_triglobal_solve
+    Magrathea._SLEPC_INIT[]               = _slepc_init!
+    Magrathea._SLEPC_FINALIZE[]           = _slepc_finalize!
     return nothing
 end
 

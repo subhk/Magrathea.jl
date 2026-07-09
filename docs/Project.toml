@@ -1,5 +1,5 @@
 [deps]
-Cross = "b261f30d-6c96-4f96-8f67-071dc8a02665"
+Magrathea = "b5134ede-7642-4071-804d-4ebd12280027"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 
 [compat]

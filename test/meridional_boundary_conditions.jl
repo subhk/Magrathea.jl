@@ -1,6 +1,6 @@
 using Test
 using LinearAlgebra
-using Cross
+using Magrathea
 
 @testset "Meridional circulation enforces only the inner radial BC" begin
     # The (ẑ·∇) meridional operator is FIRST-ORDER in radius ⇒ exactly ONE radial

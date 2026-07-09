@@ -1,7 +1,7 @@
 # Setting Up Your First Problem
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">First problem</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">First problem</div>
   <h1>Assemble, solve, and read a stability problem.</h1>
   <p>
     Build a linear stability operator for a rotating spherical shell, find the
@@ -23,7 +23,7 @@ By the end of this guide you will:
 Use `OnsetParams` directly. `estimate_size` lets you check the problem size before committing to a solve:
 
 ```julia
-using Cross
+using Magrathea
 
 params = OnsetParams(
     E = 3e-6,              # Ekman number
@@ -263,7 +263,7 @@ println("Critical mode: m = $m_crit, Ra_c = $(results[m_crit].Ra_c)")
 #!/usr/bin/env julia
 # complete_onset_analysis.jl
 
-using Cross
+using Magrathea
 using JLD2
 using Printf
 

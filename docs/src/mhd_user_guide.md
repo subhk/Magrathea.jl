@@ -1,6 +1,6 @@
 # MHD Module User Guide
 
-**Cross.jl MHD Implementation - Comprehensive Usage Documentation**
+**Magrathea.jl MHD Implementation - Comprehensive Usage Documentation**
 
 ---
 
@@ -19,7 +19,7 @@
 
 ## Introduction
 
-The MHD module in Cross.jl solves the **magnetohydrodynamic eigenvalue problem** for rotating spherical shells. This is used to study:
+The MHD module in Magrathea.jl solves the **magnetohydrodynamic eigenvalue problem** for rotating spherical shells. This is used to study:
 
 - **Convection onset** in planetary cores
 - **Dynamo instabilities** with background magnetic fields
@@ -54,7 +54,7 @@ Where:
 ### Basic Hydrodynamic Onset (No Magnetic Field)
 
 ```julia
-using Cross
+using Magrathea
 using LinearAlgebra, SparseArrays
 
 # Define parameters (Christensen & Wicht 2015, Table 1)
@@ -219,7 +219,7 @@ params = MHDParams(..., bci=1, bco=1)  # No-slip both boundaries
 **When to use:**
 - Free surfaces (liquid-gas interfaces)
 - Simplified models
-- **Note:** Cross.jl uses Boussinesq approximation (no density stratification)
+- **Note:** Magrathea.jl uses Boussinesq approximation (no density stratification)
 
 **Example:**
 ```julia
@@ -599,7 +599,7 @@ end
 **Possible causes:**
 1. Different parameter definitions (check E, Pr, Pm carefully)
 2. Different boundary conditions
-3. Cross.jl uses Boussinesq (no anelastic corrections)
+3. Magrathea.jl uses Boussinesq (no anelastic corrections)
 4. Resolution too low (increase lmax or N)
 
 **Verification:**
@@ -666,11 +666,11 @@ end
 - Kore documentation: https://github.com/..."
 
 **Issues:**
-- Report bugs: https://github.com/anthropics/cross.jl/issues
+- Report bugs: https://github.com/subhk/Magrathea.jl/issues
 - Ask questions: Create discussion on GitHub
 
 ---
 
 **Last updated:** October 26, 2025
-**Cross.jl version:** Development
-**Author:** Cross.jl Development Team
+**Magrathea.jl version:** Development
+**Author:** Magrathea.jl Development Team

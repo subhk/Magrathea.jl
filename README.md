@@ -1,10 +1,12 @@
-# Cross.jl
+# Magrathea.jl
 
-[![CI](https://github.com/subhk/Cross.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/subhk/Cross.jl/actions/workflows/ci.yml)
-[![Documentation](https://github.com/subhk/Cross.jl/actions/workflows/docs.yml/badge.svg)](https://subhk.github.io/Cross.jl/)
-[![codecov](https://codecov.io/gh/subhk/Cross.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/subhk/Cross.jl)
+[![CI](https://github.com/subhk/Magrathea.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/subhk/Magrathea.jl/actions/workflows/ci.yml)
+[![Documentation](https://github.com/subhk/Magrathea.jl/actions/workflows/docs.yml/badge.svg)](https://subhk.github.io/Magrathea.jl/)
+[![codecov](https://codecov.io/gh/subhk/Magrathea.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/subhk/Magrathea.jl)
 
-**Cross.jl** is a Julia package for studying linear stability analysis of **C**onvcetion in **ro**tating **s**pherical **s**hell. It provides spectral methods to solve eigenvalue problems arising in geophysical and astrophysical fluid dynamics.
+**Magrathea.jl** is a Julia package for linear stability analysis of convection in rotating spherical shells. It provides spectral methods to solve eigenvalue problems arising in geophysical and astrophysical fluid dynamics.
+
+Named for the planet-building world in *The Hitchhiker's Guide to the Galaxy* — this package constructs planetary interiors, one rotating magnetized shell at a time.
 
 ## Features
 
@@ -17,11 +19,11 @@
 
 ## Installation
 
-Cross.jl is not in the General registry; install from GitHub:
+Magrathea.jl is not in the General registry; install from GitHub:
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/subhk/Cross.jl")
+Pkg.add(url="https://github.com/subhk/Magrathea.jl")
 ```
 
 Requires Julia 1.10 or newer.
@@ -31,7 +33,7 @@ Requires Julia 1.10 or newer.
 Onset of rotating convection — find the leading eigenvalues at fixed parameters:
 
 ```julia
-using Cross
+using Magrathea
 
 # Ekman, Prandtl, Rayleigh, radius ratio, azimuthal wavenumber, truncations
 params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35, m=4, lmax=30, Nr=64)
@@ -76,7 +78,7 @@ result = solve(BiglobalProblem(params, bs))
 Magnetoconvection with an axial background field (insulating magnetic boundaries, the default, route through the spurious-free Galerkin solver):
 
 ```julia
-using Cross
+using Magrathea
 
 params = MHDParams(E=4.225e-4, Pr=1.0, Pm=1.0, Ra=55.905, ricb=0.35,
                    m=4, lmax=8, N=32,

@@ -1,22 +1,22 @@
 using Test
-using Cross
+using Magrathea
 
 @testset "perturbation field reconstruction" begin
     @testset "generic functions exist and are exported" begin
-        @test isdefined(Cross, :perturbation_velocity)
-        @test isdefined(Cross, :perturbation_temperature)
-        @test isdefined(Cross, :perturbation_magnetic)
-        @test Cross.perturbation_velocity isa Function
-        @test Cross.perturbation_temperature isa Function
-        @test Cross.perturbation_magnetic isa Function
+        @test isdefined(Magrathea, :perturbation_velocity)
+        @test isdefined(Magrathea, :perturbation_temperature)
+        @test isdefined(Magrathea, :perturbation_magnetic)
+        @test Magrathea.perturbation_velocity isa Function
+        @test Magrathea.perturbation_temperature isa Function
+        @test Magrathea.perturbation_magnetic isa Function
     end
 
     @testset "hydro perturbation_velocity delegates to eigenvector_to_velocity" begin
         params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
-        op = Cross.LinearStabilityOperator(params)
+        op = Magrathea.LinearStabilityOperator(params)
         evec = randn(ComplexF64, op.total_dof)
 
-        ur1, uθ1, uφ1, _ = Cross.eigenvector_to_velocity(evec, op)
+        ur1, uθ1, uφ1, _ = Magrathea.eigenvector_to_velocity(evec, op)
         ur2, uθ2, uφ2, _ = perturbation_velocity(evec, op)
 
         @test ur2 == ur1
@@ -26,7 +26,7 @@ using Cross
 
     @testset "hydro perturbation_temperature single planted mode" begin
         params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
-        op = Cross.LinearStabilityOperator(params)
+        op = Magrathea.LinearStabilityOperator(params)
         Nr = params.Nr
 
         # Plant a single temperature degree (the first in l_sets[:Θ]); zero elsewhere.
@@ -51,34 +51,34 @@ using Cross
     @testset "MHD reconstruct primitives" begin
         params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.3,
                            ricb=0.35, m=2, lmax=6, N=16,
-                           B0_type=Cross.axial, B0_amplitude=1.0)
-        op = Cross.MHDStabilityOperator(params)
-        ndof = Cross._mhd_reconstruction_dof(op)
+                           B0_type=Magrathea.axial, B0_amplitude=1.0)
+        op = Magrathea.MHDStabilityOperator(params)
+        ndof = Magrathea._mhd_reconstruction_dof(op)
         @test ndof == (length(op.ll_u)+length(op.ll_v)+length(op.ll_f)+
                        length(op.ll_g)+length(op.ll_h)) * (params.N + 1)
 
         # full vector passthrough
         full = randn(ComplexF64, ndof)
-        @test Cross._mhd_full_vector(full, op, nothing) == full
+        @test Magrathea._mhd_full_vector(full, op, nothing) == full
 
         # interior scatter: zeros on non-interior rows
         interior = collect(1:2:ndof)
         evec_int = randn(ComplexF64, length(interior))
-        scattered = Cross._mhd_full_vector(evec_int, op, interior)
+        scattered = Magrathea._mhd_full_vector(evec_int, op, interior)
         @test length(scattered) == ndof
         @test scattered[interior] == evec_int
         @test all(scattered[setdiff(1:ndof, interior)] .== 0)
 
         # block slice
-        idx_map = Cross._mhd_index_map(op)
+        idx_map = Magrathea._mhd_index_map(op)
         l0 = op.ll_f[1]
-        blk = Cross._mhd_field_block(full, idx_map, :f, l0)
+        blk = Magrathea._mhd_field_block(full, idx_map, :f, l0)
         @test blk == full[idx_map[(l0, :f)]]
         @test length(blk) == params.N + 1
 
         # radial eval: c = [0, 1] -> T_1(x) = x -> linear in r on [ricb, 1]
         rg = range(params.ricb, 1.0, length=5) |> collect
-        vals = Cross._mhd_radial_eval(ComplexF64[0, 1], params.ricb, rg)
+        vals = Magrathea._mhd_radial_eval(ComplexF64[0, 1], params.ricb, rg)
         xs = @. 2 * (rg - params.ricb) / (1 - params.ricb) - 1
         @test real.(vals) ≈ xs atol=1e-12
     end
@@ -86,10 +86,10 @@ using Cross
     @testset "MHD perturbation_temperature single planted mode" begin
         params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.3,
                            ricb=0.35, m=2, lmax=6, N=16,
-                           B0_type=Cross.axial, B0_amplitude=1.0)
-        op = Cross.MHDStabilityOperator(params)
-        idx_map = Cross._mhd_index_map(op)
-        ndof = Cross._mhd_reconstruction_dof(op)
+                           B0_type=Magrathea.axial, B0_amplitude=1.0)
+        op = Magrathea.MHDStabilityOperator(params)
+        idx_map = Magrathea._mhd_index_map(op)
+        ndof = Magrathea._mhd_reconstruction_dof(op)
 
         # Plant constant Chebyshev mode (coeff[1]=1 ⇒ T_0 ≡ 1) in the first h degree.
         full = zeros(ComplexF64, ndof)
@@ -109,10 +109,10 @@ using Cross
     @testset "MHD magnetic/velocity curl: toroidal-only gives zero radial" begin
         params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.3,
                            ricb=0.35, m=2, lmax=6, N=16,
-                           B0_type=Cross.axial, B0_amplitude=1.0)
-        op = Cross.MHDStabilityOperator(params)
-        idx_map = Cross._mhd_index_map(op)
-        ndof = Cross._mhd_reconstruction_dof(op)
+                           B0_type=Magrathea.axial, B0_amplitude=1.0)
+        op = Magrathea.MHDStabilityOperator(params)
+        idx_map = Magrathea._mhd_index_map(op)
+        ndof = Magrathea._mhd_reconstruction_dof(op)
 
         # Pure toroidal magnetic (only :g populated) -> B_r must vanish.
         full = zeros(ComplexF64, ndof)
@@ -139,7 +139,7 @@ using Cross
 
     @testset "hydro perturbation_magnetic errors clearly" begin
         params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
-        op = Cross.LinearStabilityOperator(params)
+        op = Magrathea.LinearStabilityOperator(params)
         evec = zeros(ComplexF64, op.total_dof)
         @test_throws ErrorException perturbation_magnetic(evec, op)
     end
@@ -147,9 +147,9 @@ using Cross
     @testset "MHD reconstruction end-to-end shapes" begin
         params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.3,
                            ricb=0.35, m=2, lmax=6, N=16,
-                           B0_type=Cross.axial, B0_amplitude=1.0)
-        op = Cross.MHDStabilityOperator(params)
-        ndof = Cross._mhd_reconstruction_dof(op)
+                           B0_type=Magrathea.axial, B0_amplitude=1.0)
+        op = Magrathea.MHDStabilityOperator(params)
+        ndof = Magrathea._mhd_reconstruction_dof(op)
         evec = randn(ComplexF64, ndof)
 
         ur, uθ, uφ, rg, g = perturbation_velocity(evec, op)
@@ -168,7 +168,7 @@ using Cross
         # (evec, op) methods. Build a synthetic StabilityResult to avoid
         # requiring SLEPc.
         params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
-        op = Cross.LinearStabilityOperator(params)
+        op = Magrathea.LinearStabilityOperator(params)
         nev = 2
         evecs = randn(ComplexF64, op.total_dof, nev)
         evals = ComplexF64[complex(-0.1, 0.5), complex(-0.2, 0.3)]

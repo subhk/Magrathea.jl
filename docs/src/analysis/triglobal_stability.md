@@ -216,7 +216,7 @@ This is automatically enforced when constructing `BasicState3D` from physical da
 In v2.0 you build an `OnsetParams`, construct a 3-D basic state with `basic_state(params; mode=…)`, wrap both in a `TriglobalProblem`, and call `solve`. Call `estimate_size` before large triglobal solves:
 
 ```julia
-using Cross
+using Magrathea
 
 params = OnsetParams(E=1e-5, Pr=1.0, Ra=1.5e7, χ=0.35, m=0, lmax=40, Nr=48)
 
@@ -242,7 +242,7 @@ result = solve(TriglobalProblem(params, bs3d, -5:5); nev=6)
 
 ### The Full Geostrophic Basic State
 
-For non-axisymmetric basic states, Cross.jl computes the **complete velocity field** including:
+For non-axisymmetric basic states, Magrathea.jl computes the **complete velocity field** including:
 
 1. **Zonal flow** ``\bar{u}_\phi`` from thermal wind balance (∂T/∂θ forcing)
 2. **Meridional circulation** ``\bar{u}_\theta``, ``\bar{u}_r`` from the φ-component of thermal wind (∂T/∂φ forcing)
@@ -262,7 +262,7 @@ For non-axisymmetric cases, use `basic_state_selfconsistent` which:
 - Handles mode coupling exactly
 
 ```julia
-using Cross
+using Magrathea
 
 # Chebyshev setup
 Nr = 64
@@ -290,7 +290,7 @@ println("Radial modes: ", keys(bs3d.ur_coeffs))
 For quick estimates or small amplitudes, use the standard solver:
 
 ```julia
-using Cross
+using Magrathea
 
 # Chebyshev setup
 Nr = 64
@@ -364,7 +364,7 @@ using Interpolations
 # Load spectral coefficients from external code
 @load "simulation_3d.jld2" T_lm u_lm r_sim
 
-# Interpolate to Cross.jl grid
+# Interpolate to Magrathea.jl grid
 for (ℓ, m) in keys(T_lm)
     itp = LinearInterpolation(r_sim, T_lm[(ℓ, m)])
     theta_coeffs[(ℓ, m)] = itp.(cd.x)
@@ -377,7 +377,7 @@ end
 ### Step 1: Create 3D Basic State
 
 ```julia
-using Cross
+using Magrathea
 
 # Parameters
 E = 1e-5
@@ -664,7 +664,7 @@ boundary_modes = Dict((2, 2) => 0.1)  # Only non-zero modes
 #
 # Triglobal stability analysis with non-axisymmetric basic state
 
-using Cross
+using Magrathea
 using Printf
 using JLD2
 

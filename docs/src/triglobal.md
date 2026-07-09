@@ -1,7 +1,7 @@
 # Tri-Global Instability Analysis
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Mode coupling</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Mode coupling</div>
   <h1>3-D instabilities across coupled azimuthal wavenumbers.</h1>
   <p>
     Tri-global analysis captures coupling between azimuthal wavenumbers when the base
@@ -51,7 +51,7 @@ These are computed from Wigner 3j symbols using the `WignerSymbols.jl` package.
 ### Step 1: Create a 3-D Basic State
 
 ```julia
-using Cross
+using Magrathea
 
 # Chebyshev differentiation
 cd = ChebyshevDiffn(64, [0.35, 1.0], 4)
@@ -283,7 +283,7 @@ boundary_modes = Dict((2, 2) => 0.1)
 #!/usr/bin/env julia
 # triglobal_analysis.jl
 
-using Cross
+using Magrathea
 using Printf
 
 # === Parameters ===

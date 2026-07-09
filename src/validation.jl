@@ -1,5 +1,5 @@
 # ============================================================================
-# Input validation for Cross.jl parameter types
+# Input validation for Magrathea.jl parameter types
 #
 # These checks run during public problem construction, so they should keep error
 # messages explicit while avoiding avoidable work in common successful paths.

@@ -2,7 +2,7 @@ using Test
 using LinearAlgebra
 using SparseArrays
 using Logging
-using Cross
+using Magrathea
 
 @testset "Public wrapper type stability" begin
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
@@ -16,7 +16,7 @@ using Cross
     @inferred get_params(problem)
     @inferred LinearStabilityOperator(params)
     @inferred assemble_matrices(op)
-    @inferred Cross._check_memory(problem, "OnsetProblem")
+    @inferred Magrathea._check_memory(problem, "OnsetProblem")
 end
 
 @testset "Leading mode avoids vector copy" begin
@@ -32,9 +32,9 @@ end
 end
 
 @testset "Sparse radial operator avoids dense RHS materialization" begin
-    Cross.sparse_radial_operator(4, 4, 256, 0.35, 1.0)
+    Magrathea.sparse_radial_operator(4, 4, 256, 0.35, 1.0)
     GC.gc()
-    bytes = @allocated Cross.sparse_radial_operator(4, 4, 256, 0.35, 1.0)
+    bytes = @allocated Magrathea.sparse_radial_operator(4, 4, 256, 0.35, 1.0)
 
     @test bytes < 9_600_000
 end
@@ -43,13 +43,13 @@ end
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=8, Nr=256)
 
     warm_op = LinearStabilityOperator(params)
-    Cross.radial_matrix(warm_op, 2, 2)
+    Magrathea.radial_matrix(warm_op, 2, 2)
 
     op = LinearStabilityOperator(params)
     GC.gc()
-    miss_bytes = @allocated Cross.radial_matrix(op, 2, 2)
+    miss_bytes = @allocated Magrathea.radial_matrix(op, 2, 2)
     GC.gc()
-    hit_bytes = @allocated Cross.radial_matrix(op, 2, 2)
+    hit_bytes = @allocated Magrathea.radial_matrix(op, 2, 2)
 
     @test miss_bytes < 1_400_000
     @test hit_bytes == 0
@@ -60,9 +60,9 @@ end
     op = LinearStabilityOperator(params)
     A, B, interior_dofs, boundary_dofs = assemble_matrices(op)
 
-    Cross._constrained_reduced_matrices(A, B, op, interior_dofs, boundary_dofs)
+    Magrathea._constrained_reduced_matrices(A, B, op, interior_dofs, boundary_dofs)
     GC.gc()
-    bytes = @allocated Cross._constrained_reduced_matrices(
+    bytes = @allocated Magrathea._constrained_reduced_matrices(
         A, B, op, interior_dofs, boundary_dofs)
 
     @test bytes < 60_000_000
@@ -83,9 +83,9 @@ end
         B0_amplitude = 1.0
     )
 
-    Cross.sparse_background_operator(4, 0, 4, params)
+    Magrathea.sparse_background_operator(4, 0, 4, params)
     GC.gc()
-    bytes = @allocated Cross.sparse_background_operator(4, 0, 4, params)
+    bytes = @allocated Magrathea.sparse_background_operator(4, 0, 4, params)
 
     @test bytes < 18_600_000
 end
@@ -119,7 +119,7 @@ end
         basic_state = bs
     )
     op = LinearStabilityOperator(params)
-    bs_ops = Cross.build_basic_state_operators(bs, op, params.m)
+    bs_ops = Magrathea.build_basic_state_operators(bs, op, params.m)
     block_dicts = (
         bs_ops.advection_blocks,
         bs_ops.shear_radial_blocks,
@@ -135,7 +135,7 @@ end
     @test !isempty(blocks)
     @test all(eltype(block) == ComplexF32 for block in blocks)
 
-    cache = Cross._build_azimuthal_coupling_cache(1, 4, 4, T)
+    cache = Magrathea._build_azimuthal_coupling_cache(1, 4, 4, T)
     @test typeof(cache.weight) === T
     @test eltype(cache.y_m) === T
     @test eltype(cache.y_0) === T
@@ -147,7 +147,7 @@ end
 @testset "Onset scan result dictionary keeps integer keys" begin
     failing_factory = (E, χ, Pr, m) -> error("synthetic failure")
 
-    _, _, _, results = Cross.find_onset_parameters(
+    _, _, _, results = Magrathea.find_onset_parameters(
         failing_factory, 1e-3, 0.35, 1.0, [1, 2])
 
     @test keytype(typeof(results)) === Int
@@ -159,11 +159,11 @@ end
     failing_builder = Ra -> error("synthetic failure")
     failing_factory = (E, χ, Pr, m) -> error("synthetic failure")
 
-    @test_throws ErrorException Cross.find_critical_rayleigh(
+    @test_throws ErrorException Magrathea.find_critical_rayleigh(
         failing_builder, T(1e-3), T(0.35), 1;
         Ra_min = T(1), Ra_max = T(2), tol = T(1e-3), growth_tol = T(1e-3))
 
-    _, _, _, results = Cross.find_onset_parameters(
+    _, _, _, results = Magrathea.find_onset_parameters(
         failing_factory, T(1e-3), T(0.35), one(T), [1])
 
     @test keytype(typeof(results)) === Int
@@ -206,10 +206,10 @@ end
     @test eltype(mhd_op.r0_D0_u) === T
     @test eltype(mhd_op.r0_D0_f) === T
     @test valtype(typeof(mhd_op.background_ops)) === SparseMatrixCSC{T, Int}
-    @test eltype(Cross.sparse_background_operator(4, 0, 4, mhd_params)) === T
+    @test eltype(Magrathea.sparse_background_operator(4, 0, 4, mhd_params)) === T
 
-    induction_block = Cross.operator_induction_poloidal_from_v(mhd_op, 2, 1, -1)
-    lorentz_block = Cross.operator_lorentz_poloidal_offdiag(mhd_op, 2, 1, -1, mhd_params.Le)
+    induction_block = Magrathea.operator_induction_poloidal_from_v(mhd_op, 2, 1, -1)
+    lorentz_block = Magrathea.operator_lorentz_poloidal_offdiag(mhd_op, 2, 1, -1, mhd_params.Le)
     @test eltype(induction_block) === ComplexF32
     @test eltype(lorentz_block) === ComplexF32
 
@@ -232,9 +232,9 @@ end
         B0_amplitude = one(T)
     )
     axial_op = MHDStabilityOperator(axial_params)
-    axial_btor_block = Cross.operator_lorentz_poloidal_offdiag(
+    axial_btor_block = Magrathea.operator_lorentz_poloidal_offdiag(
         axial_op, 2, 1, -1, axial_params.Le)
-    axial_bpol_block = Cross.operator_lorentz_poloidal_from_bpol(
+    axial_bpol_block = Magrathea.operator_lorentz_poloidal_from_bpol(
         axial_op, 3, 1, -2, axial_params.Le)
     @test eltype(axial_btor_block) === ComplexF32
     @test eltype(axial_bpol_block) === ComplexF32
@@ -254,22 +254,22 @@ end
     op = LinearStabilityOperator(params)
     eigenvector = randn(ComplexF32, op.total_dof)
 
-    ur, uθ, uφ, grid = Cross.eigenvector_to_velocity(eigenvector, op)
+    ur, uθ, uφ, grid = Magrathea.eigenvector_to_velocity(eigenvector, op)
     @test eltype(ur) === ComplexF32
     @test eltype(uθ) === ComplexF32
     @test eltype(uφ) === ComplexF32
-    @test grid isa Cross.MeridionalGrid{T}
+    @test grid isa Magrathea.MeridionalGrid{T}
 
-    @inferred Cross.eigenvector_to_velocity(eigenvector, op)
-    @inferred Cross.eigenvector_to_velocity(eigenvector, op; grid=grid)
+    @inferred Magrathea.eigenvector_to_velocity(eigenvector, op)
+    @inferred Magrathea.eigenvector_to_velocity(eigenvector, op; grid=grid)
 
     Nr_alloc = 64
     Nθ_alloc = 128
     cd_alloc = ChebyshevDiffn(Nr_alloc, Float64[0.35, 1.0], 1)
-    grid_alloc = Cross.build_meridional_grid(Nθ_alloc, 2, 16; T=Float64)
+    grid_alloc = Magrathea.build_meridional_grid(Nθ_alloc, 2, 16; T=Float64)
     P_alloc = randn(ComplexF64, Nr_alloc, Nθ_alloc)
     T_alloc = randn(ComplexF64, Nr_alloc, Nθ_alloc)
-    Cross.potentials_to_velocity(P_alloc, T_alloc;
+    Magrathea.potentials_to_velocity(P_alloc, T_alloc;
                                  Dr=cd_alloc.D1,
                                  Dθ=grid_alloc.Dθ,
                                  Lθ=grid_alloc.Lθ,
@@ -277,7 +277,7 @@ end
                                  sintheta=grid_alloc.sinθ,
                                  m=2)
     GC.gc()
-    velocity_bytes = @allocated Cross.potentials_to_velocity(
+    velocity_bytes = @allocated Magrathea.potentials_to_velocity(
         P_alloc, T_alloc;
         Dr=cd_alloc.D1,
         Dθ=grid_alloc.Dθ,
@@ -288,33 +288,33 @@ end
     @test velocity_bytes < 1_400_000
 
     P_coeffs = Dict(ℓ => randn(ComplexF32, params.Nr) for ℓ in op.l_sets[:P])
-    Cross.spectral_to_physical(P_coeffs, grid, params.Nr)
+    Magrathea.spectral_to_physical(P_coeffs, grid, params.Nr)
     GC.gc()
-    bytes = @allocated Cross.spectral_to_physical(P_coeffs, grid, params.Nr)
+    bytes = @allocated Magrathea.spectral_to_physical(P_coeffs, grid, params.Nr)
 
     @test bytes < 200_000
 
     empty_coeffs = Dict{Int, Vector{ComplexF32}}()
-    empty_field = Cross.spectral_to_physical(empty_coeffs, grid, params.Nr)
+    empty_field = Magrathea.spectral_to_physical(empty_coeffs, grid, params.Nr)
     @test eltype(empty_field) === ComplexF32
 
     r = Float32.(range(0.35, 1; length=8))
     θ = Float32.(range(0.1, 3.0; length=10))
     ur_grid = randn(ComplexF32, length(r), length(θ))
     uθ_grid = randn(ComplexF32, length(r), length(θ))
-    ψ = Cross.meridional_streamfunction(ur_grid, uθ_grid, r, θ, 0)
+    ψ = Magrathea.meridional_streamfunction(ur_grid, uθ_grid, r, θ, 0)
     @test eltype(ψ) === ComplexF32
 end
 
 @testset "Triglobal reconstruction helpers preserve Float32 grids" begin
     T = Float32
     typed_grid = try
-        Cross._build_chebyshev_grid(8, T(0.35), one(T))
+        Magrathea._build_chebyshev_grid(8, T(0.35), one(T))
     catch err
         err
     end
     mixed_grid = try
-        Cross._build_chebyshev_grid(8, T(0.35), 1.0)
+        Magrathea._build_chebyshev_grid(8, T(0.35), 1.0)
     catch err
         err
     end
@@ -354,9 +354,9 @@ end
         duphi_dr_coeffs = copy(coeffs)
     )
 
-    Cross.axisymmetric_basic_state(bs3d)
+    Magrathea.axisymmetric_basic_state(bs3d)
     GC.gc()
-    bytes = @allocated Cross.axisymmetric_basic_state(bs3d)
+    bytes = @allocated Magrathea.axisymmetric_basic_state(bs3d)
 
     @test bytes < 160_000
 end
@@ -365,35 +365,35 @@ end
     r = collect(range(0.35, 1.0; length=512))
     expected = copy(r)
 
-    @test Cross._grid_mismatch(r, expected) == 0.0
+    @test Magrathea._grid_mismatch(r, expected) == 0.0
     GC.gc()
-    bytes = @allocated Cross._grid_mismatch(r, expected)
+    bytes = @allocated Magrathea._grid_mismatch(r, expected)
 
     @test bytes < 256
 
     expected[end] += 1e-3
-    @test Cross._grid_mismatch(r, expected) ≈ 1e-3
+    @test Magrathea._grid_mismatch(r, expected) ≈ 1e-3
 end
 
 @testset "Typed sparse helpers avoid Float64 empty and boundary temporaries" begin
     T = Float32
     empty_terms = Tuple{T, SparseMatrixCSC{T, Int}}[]
-    empty_block = Cross.combine_terms(empty_terms)
+    empty_block = Magrathea.combine_terms(empty_terms)
 
     @test eltype(empty_block) === T
 
     boundary_values = try
-        Cross._chebyshev_boundary_values(8, :outer, T)
+        Magrathea._chebyshev_boundary_values(8, :outer, T)
     catch err
         err
     end
     boundary_derivative = try
-        Cross._chebyshev_boundary_derivative(8, :inner, T)
+        Magrathea._chebyshev_boundary_derivative(8, :inner, T)
     catch err
         err
     end
     boundary_second = try
-        Cross._chebyshev_boundary_second_derivative(8, :inner, T)
+        Magrathea._chebyshev_boundary_second_derivative(8, :inner, T)
     catch err
         err
     end
@@ -421,13 +421,13 @@ end
 
     uphi_coeffs = Dict{Int, Vector{T}}()
     duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    Cross.solve_thermal_wind_balance!(
+    Magrathea.solve_thermal_wind_balance!(
         uphi_coeffs, duphi_dr_coeffs, theta_coeffs, cd, T(0.35), one(T), T(100), one(T))
 
     GC.gc()
     uphi_coeffs = Dict{Int, Vector{T}}()
     duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    bytes = @allocated Cross.solve_thermal_wind_balance!(
+    bytes = @allocated Magrathea.solve_thermal_wind_balance!(
         uphi_coeffs, duphi_dr_coeffs, theta_coeffs, cd, T(0.35), one(T), T(100), one(T))
 
     @test bytes < 2_000_000
@@ -442,7 +442,7 @@ end
 
     uphi_coeffs = Dict{Int, Vector{T}}()
     duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    Cross.solve_thermal_wind_coupled!(
+    Magrathea.solve_thermal_wind_coupled!(
         uphi_coeffs, duphi_dr_coeffs, theta_coeffs, 1, cd,
         T(0.35), one(T), T(100), one(T);
         E = T(1e-3), lmax = 4)
@@ -450,7 +450,7 @@ end
     GC.gc()
     uphi_coeffs = Dict{Int, Vector{T}}()
     duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    bytes = @allocated Cross.solve_thermal_wind_coupled!(
+    bytes = @allocated Magrathea.solve_thermal_wind_coupled!(
         uphi_coeffs, duphi_dr_coeffs, theta_coeffs, 1, cd,
         T(0.35), one(T), T(100), one(T);
         E = T(1e-3), lmax = 4)
@@ -462,9 +462,9 @@ end
 end
 
 @testset "Triglobal unweighted coupling avoids quadrature node allocation" begin
-    Cross.compute_sh_coupling_unweighted(3, 1, 2, 0, 3, 1)
+    Magrathea.compute_sh_coupling_unweighted(3, 1, 2, 0, 3, 1)
     GC.gc()
-    bytes = @allocated Cross.compute_sh_coupling_unweighted(3, 1, 2, 0, 3, 1)
+    bytes = @allocated Magrathea.compute_sh_coupling_unweighted(3, 1, 2, 0, 3, 1)
 
     @test bytes < 512
 end
@@ -484,7 +484,7 @@ end
         utheta_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
         dur_dr_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
         dutheta_dr_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
-        Cross.solve_meridional_coupled!(
+        Magrathea.solve_meridional_coupled!(
             ur_coeffs, utheta_coeffs, dur_dr_coeffs, dutheta_dr_coeffs,
             theta_coeffs, uphi_coeffs, cd.x, cd.D1, cd.D2,
             T(0.35), one(T), T(100), T(1e-3), one(T), m, lmax)
@@ -504,15 +504,15 @@ end
 end
 
 @testset "Ultraspherical multiplication helpers preserve Float32 intermediates" begin
-    c = Cross.csl([0, 1, 2], Float32(1), 3, 2)
+    c = Magrathea.csl([0, 1, 2], Float32(1), 3, 2)
     @test eltype(c) === Float32
 
     a0 = zeros(Float32, 32)
     a0[1] = 1
     a0[3] = 0.25f0
-    Cross.multiplication_matrix(a0, Float32(1), 32)
+    Magrathea.multiplication_matrix(a0, Float32(1), 32)
     GC.gc()
-    bytes = @allocated Cross.multiplication_matrix(a0, Float32(1), 32)
+    bytes = @allocated Magrathea.multiplication_matrix(a0, Float32(1), 32)
 
     @test bytes < 160_000
 end
@@ -521,9 +521,9 @@ end
     a0 = zeros(Float32, 128)
     a0[1] = 1
     a0[3] = 0.25f0
-    Cross.multiplication_matrix(a0, Float32(1), 128)
+    Magrathea.multiplication_matrix(a0, Float32(1), 128)
     GC.gc()
-    bytes = @allocated Cross.multiplication_matrix(a0, Float32(1), 128)
+    bytes = @allocated Magrathea.multiplication_matrix(a0, Float32(1), 128)
 
     @test bytes < 580_000
 end
@@ -558,7 +558,7 @@ end
     )
     op = LinearStabilityOperator(params)
     run_build() = with_logger(NullLogger()) do
-        Cross.build_basic_state_operators(bs, op, params.m)
+        Magrathea.build_basic_state_operators(bs, op, params.m)
     end
 
     run_build()
@@ -572,7 +572,7 @@ end
     T = Float64
     cd = ChebyshevDiffn(24, T[0.35, 1.0], 4)
     bc = Y22(T(0.02))
-    Cross.basic_state_selfconsistent(
+    Magrathea.basic_state_selfconsistent(
         cd, T(0.35), T(1e-3), T(100), one(T);
         temperature_bc = bc,
         lmax_bs = 4,
@@ -581,7 +581,7 @@ end
     )
 
     GC.gc()
-    bytes = @allocated Cross.basic_state_selfconsistent(
+    bytes = @allocated Magrathea.basic_state_selfconsistent(
         cd, T(0.35), T(1e-3), T(100), one(T);
         temperature_bc = bc,
         lmax_bs = 4,
@@ -616,10 +616,10 @@ end
     D2 = Matrix(cd.D2)
     forcing = fill(T(0.01), Nr)
 
-    Cross.solve_poisson_mode(4, 2, r, D2, D1, T(0.35), one(T), forcing)
+    Magrathea.solve_poisson_mode(4, 2, r, D2, D1, T(0.35), one(T), forcing)
 
     GC.gc()
-    bytes = @allocated Cross.solve_poisson_mode(4, 2, r, D2, D1, T(0.35), one(T), forcing)
+    bytes = @allocated Magrathea.solve_poisson_mode(4, 2, r, D2, D1, T(0.35), one(T), forcing)
 
     @test bytes < 800_000
 end

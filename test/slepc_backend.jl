@@ -1,15 +1,15 @@
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "SLEPc backend dispatch (core, no PETSc)" begin
     A = sparse(ComplexF64[2 0 0; 0 3 0; 0 0 4])
     B = sparse(ComplexF64[1 0 0; 0 1 0; 0 0 1])
 
-    @test_throws ArgumentError Cross.solve_eigenvalue_problem(A, B; nev=1, backend=:nope)
+    @test_throws ArgumentError Magrathea.solve_eigenvalue_problem(A, B; nev=1, backend=:nope)
 
     err = try
-        Cross.solve_eigenvalue_problem(A, B; nev=1, backend=:slepc)
+        Magrathea.solve_eigenvalue_problem(A, B; nev=1, backend=:slepc)
         nothing
     catch e
         e
@@ -21,7 +21,7 @@ using Cross
     # :slepc is now the default (and sole) backend, so the no-PETSc default path
     # raises the same actionable SLEPc-extension error.
     err_default = try
-        Cross.solve_eigenvalue_problem(A, B; nev=1, sigma=0.0)
+        Magrathea.solve_eigenvalue_problem(A, B; nev=1, sigma=0.0)
         nothing
     catch e
         e
@@ -34,7 +34,7 @@ end
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
     op = LinearStabilityOperator(params)
     err = try
-        Cross.solve_eigenvalue_problem(op; nev=1, backend=:slepc)
+        Magrathea.solve_eigenvalue_problem(op; nev=1, backend=:slepc)
         nothing
     catch e; e end
     @test err isa ErrorException && occursin("SlepcWrap", sprint(showerror, err))
@@ -49,13 +49,13 @@ end
 
 @testset "_petsc_owned_nnz splits diagonal/off-diagonal blocks" begin
     M = sparse([1,1,2,3,3,4], [1,3,2,1,4,4], ComplexF64[1,1,1,1,1,1], 4, 4)
-    d, o = Cross._petsc_owned_nnz(M, 0, 2)
+    d, o = Magrathea._petsc_owned_nnz(M, 0, 2)
     @test d == [1, 1] && o == [1, 0]
-    d2, o2 = Cross._petsc_owned_nnz(M, 2, 4)
+    d2, o2 = Magrathea._petsc_owned_nnz(M, 2, 4)
     @test d2 == [1, 1] && o2 == [1, 0]
-    d3, o3 = Cross._petsc_owned_nnz(M, 0, 4)
+    d3, o3 = Magrathea._petsc_owned_nnz(M, 0, 4)
     @test o3 == [0, 0, 0, 0] && d3 == [2, 1, 2, 1]
-    d4, o4 = Cross._petsc_owned_nnz(M, 2, 2)
+    d4, o4 = Magrathea._petsc_owned_nnz(M, 2, 2)
     @test isempty(d4) && isempty(o4)
 end
 
@@ -67,15 +67,15 @@ end
     out = size(vecs0, 2) == 0 ? vecs0 : vecs0[:, perm]   # guarded form used at divert sites
     @test size(out) == (10, 0)
     empty_vv = Vector{Vector{ComplexF64}}()
-    M = Cross._eigvecs_to_matrix(vals, empty_vv, Float64)
+    M = Magrathea._eigvecs_to_matrix(vals, empty_vv, Float64)
     @test isempty(M)   # 0×nev — degenerate, but no crash and no bogus columns
 end
 
 @testset "slepc_init!/finalize! error without extension" begin
-    @test_throws ErrorException Cross.slepc_init!()
-    e = try Cross.slepc_init!(); catch err; err end
+    @test_throws ErrorException Magrathea.slepc_init!()
+    e = try Magrathea.slepc_init!(); catch err; err end
     @test occursin("SlepcWrap", sprint(showerror, e))
-    @test_throws ErrorException Cross.slepc_finalize!()
+    @test_throws ErrorException Magrathea.slepc_finalize!()
 end
 
 @testset "Distributed SLEPc lifecycle + solve (requires PETSc+MUMPS under MPI)" begin
@@ -84,16 +84,16 @@ end
         @test true  # explicit: skipped, not silently absent
     else
         @eval using PetscWrap, SlepcWrap
-        Cross.slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
+        Magrathea.slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
                           "-st_pc_factor_mat_solver_type mumps -eps_target_magnitude")
         p = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
                       m=1, lmax=3, N=12, B0_type=dipole, B0_amplitude=1.0)
         op = MHDStabilityOperator(p)
         A, B, _, _ = assemble_mhd_matrices(op)
-        vS, _, _ = Cross.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:slepc)
+        vS, _, _ = Magrathea.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:slepc)
         # eigenvalues valid on all ranks
         @test eltype(vS) <: Complex
         @test length(vS) >= 1
-        Cross.slepc_finalize!()
+        Magrathea.slepc_finalize!()
     end
 end

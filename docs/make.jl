@@ -1,14 +1,14 @@
 using Documenter
-using Cross
+using Magrathea
 
 makedocs(
-    sitename = "Cross.jl",
+    sitename = "Magrathea.jl",
     authors  = "Subhajit Kar",
-    modules  = [Cross],
+    modules  = [Magrathea],
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
-        canonical  = "https://subhk.github.io/Cross.jl/stable",
-        assets     = ["assets/cross.css"],
+        canonical  = "https://subhk.github.io/Magrathea.jl/stable",
+        assets     = ["assets/magrathea.css"],
         collapselevel = 2,
         sidebar_sitename = false,
     ),
@@ -48,7 +48,7 @@ makedocs(
 )
 
 deploydocs(
-    repo = "github.com/subhk/Cross.jl",
+    repo = "github.com/subhk/Magrathea.jl",
     devbranch = "main",
     push_preview = false,
 )

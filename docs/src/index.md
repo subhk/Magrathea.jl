@@ -1,44 +1,44 @@
-# Cross.jl Documentation
+# Magrathea.jl Documentation
 
 ```@raw html
-<div class="cross-hero">
-  <div class="cross-eyebrow">Linear stability in rotating spherical shells</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Linear stability in rotating spherical shells</div>
   <h1>Spectral eigenvalue problems for rotating convection &amp; MHD.</h1>
   <p>
-    Cross.jl uses the Olver&ndash;Townsend ultraspherical method to build ultra-sparse,
+    Magrathea.jl uses the Olver&ndash;Townsend ultraspherical method to build ultra-sparse,
     spurious-free generalized eigenvalue problems for onset, biglobal, and triglobal
     stability of rotating (magneto)convection in spherical shells.
   </p>
-  <div class="cross-actions">
-    <a class="cross-button primary" href="getting_started.html">Get started</a>
-    <a class="cross-button secondary" href="examples.html">See examples</a>
+  <div class="magrathea-actions">
+    <a class="magrathea-button primary" href="getting_started.html">Get started</a>
+    <a class="magrathea-button secondary" href="examples.html">See examples</a>
   </div>
 </div>
 ```
 
 ```@raw html
-<div class="cross-card-grid">
-  <div class="cross-card">
+<div class="magrathea-card-grid">
+  <div class="magrathea-card">
     <strong>Onset convection</strong>
     <p>Conductive background, single azimuthal wavenumber; find critical Rayleigh numbers.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Biglobal (axisymmetric mean flow)</strong>
     <p>Thermal-wind / meridional basic states with an axisymmetric background.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Triglobal (non-axisymmetric)</strong>
     <p>Mode-coupled stability for non-axisymmetric basic states across azimuthal wavenumbers.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>MHD extension</strong>
     <p>Magnetoconvection and kinematic-dynamo problems with no_field, axial, and dipole fields.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Spurious-free Galerkin</strong>
     <p>Banded BC-recombined discretization removes the tau spurious-mode swarm; matches collocation to ~1e-12.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong>Unified solver API</strong>
     <p>One <code>solve(problem)</code> entry point across all problem types, returning a <code>StabilityResult</code>.</p>
   </div>
@@ -48,27 +48,27 @@
 ## What To Read First
 
 ```@raw html
-<div class="cross-path">
-  <div class="cross-step">
+<div class="magrathea-path">
+  <div class="magrathea-step">
     <a href="getting_started.html">Installation</a>
-    <p>Install Cross.jl and verify your setup.</p>
+    <p>Install Magrathea.jl and verify your setup.</p>
   </div>
-  <div class="cross-step">
+  <div class="magrathea-step">
     <a href="problem_setup.html">First Problem</a>
     <p>Define an OnsetProblem and solve for leading eigenvalues.</p>
   </div>
-  <div class="cross-step">
+  <div class="magrathea-step">
     <a href="analysis/index.html">Analysis Modes</a>
     <p>Pick onset, biglobal, or triglobal for your background state.</p>
   </div>
-  <div class="cross-step">
+  <div class="magrathea-step">
     <a href="reference.html">API Reference</a>
     <p>Full parameter, problem, and solver reference.</p>
   </div>
 </div>
 ```
 
-## What You Can Do With Cross.jl
+## What You Can Do With Magrathea.jl
 
 - **Convection Onset**: Evaluate the onset of convection in rotating spherical shells with flexible mechanical and thermal boundary conditions
 - **Critical Rayleigh Numbers**: Find critical parameters using automated bracket search algorithms
@@ -80,7 +80,7 @@
 ## Quick Start
 
 ```julia
-using Cross
+using Magrathea
 
 # Define parameters
 params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35,
@@ -103,11 +103,11 @@ plot(result)
 
 ## Architecture Overview
 
-Cross.jl is organized into modular components for flexibility and extensibility. See [Codebase Structure](codebase_structure.md) for full details.
+Magrathea.jl is organized into modular components for flexibility and extensibility. See [Codebase Structure](codebase_structure.md) for full details.
 
 | Module | Purpose | Key Types |
 |--------|---------|-----------|
-| `Cross.jl` | Package entry point | Exports public API |
+| `Magrathea.jl` | Package entry point | Exports public API |
 | `Spectral/chebyshev.jl` | Radial discretization | `ChebyshevDiffn` |
 | `Stability/linear.jl` | Core stability analysis | `OnsetParams`, `LinearStabilityOperator` |
 | `BasicStates/basic_state.jl` | Basic state construction | `BasicState`, `BasicState3D` |
@@ -119,7 +119,7 @@ Cross.jl is organized into modular components for flexibility and extensibility.
 
 ## Physical Problem
 
-Cross.jl solves the linearized equations for rotating convection in a spherical shell:
+Magrathea.jl solves the linearized equations for rotating convection in a spherical shell:
 
 ```math
 \frac{\partial \mathbf{u}}{\partial t} + 2\boldsymbol{\Omega} \times \mathbf{u} = -\nabla p + E\nabla^2\mathbf{u} + \frac{Ra \cdot E^2}{Pr} \Theta \hat{\mathbf{r}}
@@ -202,13 +202,13 @@ This translates to:
 
 ## Citation
 
-If you use Cross.jl in your research, please cite:
+If you use Magrathea.jl in your research, please cite:
 
 ```bibtex
-@software{cross_jl,
+@software{magrathea_jl,
   author = {Kar, Subhajit},
-  title = {Cross.jl: Spectral Methods for Rotating Convection},
-  url = {https://github.com/subhk/Cross.jl},
+  title = {Magrathea.jl: Spectral Methods for Rotating Convection},
+  url = {https://github.com/subhk/Magrathea.jl},
   version = {2.0.0},
   year = {2025}
 }
@@ -216,11 +216,11 @@ If you use Cross.jl in your research, please cite:
 
 ## License
 
-Cross.jl is released under the MIT License.
+Magrathea.jl is released under the MIT License.
 
 ## Acknowledgments
 
-Cross.jl builds upon the mathematical foundations established by:
+Magrathea.jl builds upon the mathematical foundations established by:
 
 - Olver & Townsend (2013) - Ultraspherical spectral methods
 - Christensen & Wicht (2015) - Numerical dynamo simulations

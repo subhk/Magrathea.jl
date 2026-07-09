@@ -4,7 +4,7 @@
 
 **Goal:** Add SLEPc (via `SlepcWrap.jl`+`PetscWrap.jl`) as a `backend=:slepc` option for the generalized eigenproblem `A x = σ B x`, behind an optional package extension, leaving KrylovKit the unchanged default.
 
-**Architecture:** Additive. Core `Cross` gains a `Ref` hook + `_dispatch_eigen` switch; every solve site gets a `backend` kwarg (default `:krylovkit`, byte-for-byte unchanged) that diverts the same `(A,B)` to a weak-dependency extension `CrossSlepcExt` when `:slepc`. The extension is the only place PETSc/SLEPc/MPI symbols appear.
+**Architecture:** Additive. Core `Magrathea` gains a `Ref` hook + `_dispatch_eigen` switch; every solve site gets a `backend` kwarg (default `:krylovkit`, byte-for-byte unchanged) that diverts the same `(A,B)` to a weak-dependency extension `MagratheaSlepcExt` when `:slepc`. The extension is the only place PETSc/SLEPc/MPI symbols appear.
 
 **Tech Stack:** Julia 1.12, package extensions (weakdeps), PetscWrap.jl, SlepcWrap.jl, MPI.jl, KrylovKit (existing).
 
@@ -28,7 +28,7 @@
 - `src/Stability/linear.jl` (modify) — `backend` kwarg on `solve_eigenvalue_problem(op)` and `_krylov_eigensolve_optimized`; divert reduced pencil.
 - `src/Stability/triglobal.jl` (modify) — `backend` kwarg on `solve_block_eigenvalue_problem` + its caller; divert assembled pencil.
 - `src/solve.jl` (modify) — `backend` kwarg on each `solve(::*Problem)`; galerkin `eigen` path diverts when `:slepc`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` (create) — the SLEPc solver; registers itself into the hook on load.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` (create) — the SLEPc solver; registers itself into the hook on load.
 - `Project.toml` (modify) — `[weakdeps]`, `[extensions]`, `[compat]`.
 - `test/slepc_backend.jl` (create) — runs-here tests (stub error, unknown backend, default unchanged) + a `PETSC_DIR`-guarded equivalence test.
 - `test/runtests.jl` (modify) — `include("slepc_backend.jl")`.
@@ -46,18 +46,18 @@
 ```julia
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "SLEPc backend dispatch (core, no PETSc)" begin
     A = sparse(ComplexF64[2 0 0; 0 3 0; 0 0 4])
     B = sparse(ComplexF64[1 0 0; 0 1 0; 0 0 1])
 
     # Unknown backend → ArgumentError
-    @test_throws ArgumentError Cross.solve_eigenvalue_problem(A, B; nev=1, backend=:nope)
+    @test_throws ArgumentError Magrathea.solve_eigenvalue_problem(A, B; nev=1, backend=:nope)
 
     # :slepc without the extension loaded → actionable error naming the packages
     err = try
-        Cross.solve_eigenvalue_problem(A, B; nev=1, backend=:slepc)
+        Magrathea.solve_eigenvalue_problem(A, B; nev=1, backend=:slepc)
         nothing
     catch e
         e
@@ -67,7 +67,7 @@ using Cross
     @test occursin("SlepcWrap", sprint(showerror, err))
 
     # Default backend still solves (unchanged KrylovKit path)
-    vals, vecs, info = Cross.solve_eigenvalue_problem(A, B; nev=1, sigma=0.0)
+    vals, vecs, info = Magrathea.solve_eigenvalue_problem(A, B; nev=1, sigma=0.0)
     @test eltype(vals) <: Complex
     @test info["solver"] == :krylovkit
 end
@@ -83,12 +83,12 @@ Expected: FAIL — `:slepc` does not yet throw the right error / `backend` kwarg
 ```julia
 # ---------------------------------------------------------------------------
 # Pluggable eigensolver backends. The SLEPc backend lives in an optional package
-# extension (CrossSlepcExt) and registers itself here on load; core never
-# references PETSc/SLEPc symbols, keeping `using Cross` PETSc-free.
+# extension (MagratheaSlepcExt) and registers itself here on load; core never
+# references PETSc/SLEPc symbols, keeping `using Magrathea` PETSc-free.
 # ---------------------------------------------------------------------------
 const _SLEPC_SOLVER = Ref{Union{Nothing,Function}}(nothing)
 
-"""Solve `A x = σ B x` with SLEPc. Requires the CrossSlepcExt extension (load
+"""Solve `A x = σ B x` with SLEPc. Requires the MagratheaSlepcExt extension (load
 `PetscWrap` and `SlepcWrap`, with a complex-scalar PETSc build)."""
 function _solve_generalized_eigen_slepc(A::SparseMatrixCSC, B::SparseMatrixCSC; kwargs...)
     solver = _SLEPC_SOLVER[]
@@ -197,7 +197,7 @@ Expected: all PASS (KrylovKit default untouched).
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
     op = LinearStabilityOperator(params)
     err = try
-        Cross.solve_eigenvalue_problem(op; nev=1, backend=:slepc)
+        Magrathea.solve_eigenvalue_problem(op; nev=1, backend=:slepc)
         nothing
     catch e; e end
     @test err isa ErrorException && occursin("SlepcWrap", sprint(showerror, err))
@@ -272,7 +272,7 @@ git commit -m "feat(triglobal): route block eigensolve through backend dispatch"
 
 ```julia
         if backend === :slepc
-            vals_s, vecs_s, _ = Cross._solve_generalized_eigen_slepc(
+            vals_s, vecs_s, _ = Magrathea._solve_generalized_eigen_slepc(
                 sparse(A_gal), sparse(B_gal); nev=nev,
                 sigma = sigma === nothing ? zero(Complex{T}) : Complex{T}(sigma),
                 which=:LR, selection=:maxreal, tol=1e-10, maxiter=1000, verbosity=0)
@@ -327,7 +327,7 @@ git commit -m "feat(solve): thread backend kwarg through public solves + galerki
 
 **Files:**
 - Modify: `Project.toml`
-- Create: `ext/CrossSlepcExt/CrossSlepcExt.jl` (skeleton that registers the hook)
+- Create: `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` (skeleton that registers the hook)
 
 - [ ] **Step 1: Edit `Project.toml`** — add to `[weakdeps]` (alongside RecipesBase, Makie):
 
@@ -339,7 +339,7 @@ SlepcWrap = "c3679e3b-785e-4ccc-b734-b7685cbb935e"
 Add to `[extensions]`:
 
 ```toml
-CrossSlepcExt = ["PetscWrap", "SlepcWrap"]
+MagratheaSlepcExt = ["PetscWrap", "SlepcWrap"]
 ```
 
 Add to `[compat]` (use the versions resolved in the temp-env probe; confirm with `$JL --project=. -e 'using Pkg; Pkg.status()'` after adding):
@@ -350,23 +350,23 @@ PetscWrap = "0.2"
 SlepcWrap = "0.2"
 ```
 
-- [ ] **Step 2: Create `ext/CrossSlepcExt/CrossSlepcExt.jl` skeleton**
+- [ ] **Step 2: Create `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` skeleton**
 
 ```julia
-module CrossSlepcExt
+module MagratheaSlepcExt
 
-using Cross
+using Magrathea
 using SparseArrays
 using PetscWrap
 using SlepcWrap
 
 # Real solver added in Task 6. For now register a placeholder so the wiring is testable.
 function _slepc_solve(A::SparseMatrixCSC, B::SparseMatrixCSC; kwargs...)
-    error("CrossSlepcExt._slepc_solve not yet implemented")
+    error("MagratheaSlepcExt._slepc_solve not yet implemented")
 end
 
 function __init__()
-    Cross._SLEPC_SOLVER[] = _slepc_solve
+    Magrathea._SLEPC_SOLVER[] = _slepc_solve
     return nothing
 end
 
@@ -375,7 +375,7 @@ end # module
 
 - [ ] **Step 3: Verify core still precompiles WITHOUT the extension** (no PETSc needed)
 
-Run: `$JL --project=. -e 'using Cross; println("CORE_OK")'`
+Run: `$JL --project=. -e 'using Magrathea; println("CORE_OK")'`
 Expected: prints `CORE_OK` (extension not triggered because PetscWrap/SlepcWrap aren't loaded; core unaffected).
 
 - [ ] **Step 4: Verify the full default suite still passes**
@@ -386,8 +386,8 @@ Expected: no real failures.
 - [ ] **Step 5: Commit** (ASK USER FIRST)
 
 ```bash
-git add Project.toml ext/CrossSlepcExt/CrossSlepcExt.jl
-git commit -m "feat: register CrossSlepcExt weak-dependency extension skeleton"
+git add Project.toml ext/MagratheaSlepcExt/MagratheaSlepcExt.jl
+git commit -m "feat: register MagratheaSlepcExt weak-dependency extension skeleton"
 ```
 
 ---
@@ -395,7 +395,7 @@ git commit -m "feat: register CrossSlepcExt weak-dependency extension skeleton"
 ## Task 6: SLEPc solver implementation (extension body) — NOT runnable here
 
 **Files:**
-- Modify: `ext/CrossSlepcExt/CrossSlepcExt.jl`
+- Modify: `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`
 
 > **Constraint:** This cannot be precompiled/run in the dev environment (no PETSc). The
 > code below follows the SlepcWrap **legacy** API verified from
@@ -406,7 +406,7 @@ git commit -m "feat: register CrossSlepcExt weak-dependency extension skeleton"
 
 ```julia
 """
-Solve `A x = σ B x` with SLEPc shift-invert. Returns the Cross contract
+Solve `A x = σ B x` with SLEPc shift-invert. Returns the Magrathea contract
 `(eigenvalues::Vector{ComplexF64}, eigenvectors::Matrix{ComplexF64}, info::Dict)`.
 Serial (single MPI rank); requires a complex-scalar PETSc/SLEPc build.
 """
@@ -495,13 +495,13 @@ end
 - [ ] **Step 2: (On the PETSc machine) verify it loads and registers**
 
 Run (with `PETSC_DIR`/`SLEPC_DIR` set, complex build):
-`$JL --project=. -e 'using Cross, PetscWrap, SlepcWrap; println(Cross._SLEPC_SOLVER[] !== nothing)'`
+`$JL --project=. -e 'using Magrathea, PetscWrap, SlepcWrap; println(Magrathea._SLEPC_SOLVER[] !== nothing)'`
 Expected: `true`. If any symbol (`EPSSetWhichEigenpairs`, `EPS_TARGET_MAGNITUDE`, `VecGetArray`, …) is missing, adjust to the installed SlepcWrap/PetscWrap names (check that package's `src/eps.jl` / `src/Vec.jl`).
 
 - [ ] **Step 3: Commit** (ASK USER FIRST)
 
 ```bash
-git add ext/CrossSlepcExt/CrossSlepcExt.jl
+git add ext/MagratheaSlepcExt/MagratheaSlepcExt.jl
 git commit -m "feat(slepc): implement SLEPc shift-invert generalized eigensolver"
 ```
 
@@ -524,8 +524,8 @@ git commit -m "feat(slepc): implement SLEPc shift-invert generalized eigensolver
                       m=1, lmax=3, N=12, B0_type=dipole, B0_amplitude=1.0)
         op = MHDStabilityOperator(p)
         A, B, _, _ = assemble_mhd_matrices(op)
-        vK, _, _ = Cross.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:krylovkit)
-        vS, _, _ = Cross.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:slepc)
+        vK, _, _ = Magrathea.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:krylovkit)
+        vS, _, _ = Magrathea.solve_eigenvalue_problem(A, B; nev=4, sigma=0.0, backend=:slepc)
         @test isapprox(sort(real.(vK))[1:2], sort(real.(vS))[1:2]; rtol=1e-4)
     end
 end
@@ -542,7 +542,7 @@ include("slepc_backend.jl")
 Run: `$JL --project=. test/runtests.jl 2>&1 | grep -iE "Error During|did not pass|skipping SLEPc"; echo done`
 Expected: no failures; the "skipping SLEPc" info line appears.
 
-- [ ] **Step 4: Document** — add a short "SLEPc backend (optional)" section to the README/docs: install a complex-scalar PETSc+SLEPc, set `PETSC_DIR`/`PETSC_ARCH`/`SLEPC_DIR`, `]add PetscWrap SlepcWrap`, then `using Cross, PetscWrap, SlepcWrap` and pass `backend=:slepc` to `solve`/`solve_eigenvalue_problem`. Note serial-only, complex-build requirement.
+- [ ] **Step 4: Document** — add a short "SLEPc backend (optional)" section to the README/docs: install a complex-scalar PETSc+SLEPc, set `PETSC_DIR`/`PETSC_ARCH`/`SLEPC_DIR`, `]add PetscWrap SlepcWrap`, then `using Magrathea, PetscWrap, SlepcWrap` and pass `backend=:slepc` to `solve`/`solve_eigenvalue_problem`. Note serial-only, complex-build requirement.
 
 - [ ] **Step 5: Commit** (ASK USER FIRST)
 

@@ -1,10 +1,10 @@
-module CrossMakieExt
+module MagratheaMakieExt
 
-using Cross
+using Magrathea
 using Makie
 
 # Interactive eigenvalue spectrum
-function Cross.eigenspectrum(r::Cross.StabilityResult; figure_kwargs...)
+function Magrathea.eigenspectrum(r::Magrathea.StabilityResult; figure_kwargs...)
     fig = Figure(; figure_kwargs...)
     ax = Axis(fig[1,1],
         xlabel="σᵣ (growth rate)",
@@ -41,8 +41,8 @@ function _ext_get_layout(result)
         l_sets = op.l_sets
         r_grid = op.r
     else
-        # Use the exported compute_l_sets from Cross — no duplication
-        l_sets = Cross.compute_l_sets(params)
+        # Use the exported compute_l_sets from Magrathea — no duplication
+        l_sets = Magrathea.compute_l_sets(params)
         r_grid = _ext_radial_grid(Nr, ri, ro)
     end
 
@@ -117,7 +117,7 @@ end
 #  plot_radial — amplitude of each l-mode vs radius
 # ---------------------------------------------------------------------------
 
-function Cross.plot_radial(r::Cross.StabilityResult, mode_index::Int;
+function Magrathea.plot_radial(r::Magrathea.StabilityResult, mode_index::Int;
                             field::Symbol=:poloidal)
     evec = _ext_get_eigenvector(r, mode_index)
     if evec === nothing
@@ -156,7 +156,7 @@ end
 #  plot_meridional — contour plot on the (r, theta) plane
 # ---------------------------------------------------------------------------
 
-function Cross.plot_meridional(r::Cross.StabilityResult, mode_index::Int;
+function Magrathea.plot_meridional(r::Magrathea.StabilityResult, mode_index::Int;
                                 field::Symbol=:temperature, npoints::Int=100)
     evec = _ext_get_eigenvector(r, mode_index)
     if evec === nothing

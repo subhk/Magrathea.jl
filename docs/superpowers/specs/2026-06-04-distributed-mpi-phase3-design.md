@@ -65,7 +65,7 @@ the serial/KrylovKit path.
   registered by the extension, used by `solve(::OnsetProblem/::BiglobalProblem; backend=:slepc)`):
   1. assemble full `A_full, B_full` (replicated, as today) and the `ConstraintReduction`
      via the existing `_constraint_reduction`;
-  2. `S, P = Cross._constraint_projection_matrices(reduction, interior_dofs)`;
+  2. `S, P = Magrathea._constraint_projection_matrices(reduction, interior_dofs)`;
   3. distribute `A_full`/`B_full` (Phase-0 `_to_petsc_dist(sparse(·))`), `S`, `P`
      (`_to_petsc_dist`);
   4. `A_red = _reduce_dist(Adist, Sdist, Pdist)`, `B_red = _reduce_dist(Bdist, Sdist, Pdist)`;
@@ -94,11 +94,11 @@ distributed EPS solve → rank-0 reduced eigenvectors → `P·reduced` reconstru
 **Serial, here (correctness proof):**
 - `_constraint_projection_matrices` on a small onset operator:
   - `A_full,B_full,idofs,bdofs = assemble_matrices(op)`;
-  - `A_red_ref, B_red_ref, reduction = Cross._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)`
+  - `A_red_ref, B_red_ref, reduction = Magrathea._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)`
     — **reuse the returned `reduction`** (its nullspace bases) for `S,P`; do NOT call
     `_constraint_reduction` separately (`nullspace` is not unique, so a fresh call would
     yield different bases and break the equality);
-  - `S, P = Cross._constraint_projection_matrices(reduction, idofs)`;
+  - `S, P = Magrathea._constraint_projection_matrices(reduction, idofs)`;
   - assert `Matrix(S * A_full * P) ≈ A_red_ref` and `≈ B_red_ref` (tolerance `rtol=1e-10`);
   - shape checks: `size(P) == (reduction.n_full, reduction.n_reduced)`,
     `size(S) == (reduction.n_reduced, reduction.n_full)`, `S` has exactly
@@ -116,8 +116,8 @@ distributed EPS solve → rank-0 reduced eigenvectors → `P·reduced` reconstru
 - `src/Stability/solver.jl` — add `_SLEPC_CONSTRAINED_SOLVER` Ref + `_solve_constrained_slepc(op; …)` core hook (errors if extension absent).
 - `src/solve.jl` — route `solve(::OnsetProblem/::BiglobalProblem; backend=:slepc)` to the
   distributed constrained path (keep `:krylovkit` untouched).
-- `ext/CrossSlepcExt/raw_petsc.jl` — `_mat_mat_mult` ccall.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` — `_reduce_dist`, `_solve_constrained_slepc` impl,
+- `ext/MagratheaSlepcExt/raw_petsc.jl` — `_mat_mat_mult` ccall.
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` — `_reduce_dist`, `_solve_constrained_slepc` impl,
   register the hook; reuse `_to_petsc_dist`, `_eps_solve_and_gather`.
 - `test/distributed_reduction.jl` (new) — the serial S/P + equivalence tests; wired into
   `runtests.jl`.

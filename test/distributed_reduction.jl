@@ -1,15 +1,15 @@
 using Test
 using LinearAlgebra
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "S·A·P reproduces the constrained reduction" begin
     params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35, m=2, lmax=6, Nr=16)
     op = LinearStabilityOperator(params)
     A_full, B_full, idofs, bdofs = assemble_matrices(op)
-    A_red, B_red, reduction = Cross._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)
+    A_red, B_red, reduction = Magrathea._constrained_reduced_matrices(A_full, B_full, op, idofs, bdofs)
 
-    S, P = Cross._constraint_projection_matrices(reduction, idofs)
+    S, P = Magrathea._constraint_projection_matrices(reduction, idofs)
 
     @test size(P) == (reduction.n_full, reduction.n_reduced)
     @test size(S) == (reduction.n_reduced, reduction.n_full)

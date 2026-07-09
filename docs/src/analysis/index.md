@@ -1,7 +1,7 @@
 # Analysis Modes
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Three ways to analyze stability</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Three ways to analyze stability</div>
   <h1>Pick the mode that matches your background flow.</h1>
   <p>
     From classical onset with no mean flow, through axisymmetric biglobal analysis,
@@ -12,16 +12,16 @@
 
 ## Overview
 
-<div class="cross-card-grid">
-  <div class="cross-card">
+<div class="magrathea-card-grid">
+  <div class="magrathea-card">
     <strong><a href="onset_convection/">Onset convection</a></strong>
     <p>Conductive base state, no mean flow. Each azimuthal mode <em>m</em> is independent. Classical convection onset.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong><a href="biglobal_stability/">Biglobal</a></strong>
     <p>Axisymmetric (<em>m</em> = 0) mean flow &mdash; thermal wind, zonal jets. Perturbation modes stay decoupled.</p>
   </div>
-  <div class="cross-card">
+  <div class="magrathea-card">
     <strong><a href="triglobal_stability/">Triglobal</a></strong>
     <p>Non-axisymmetric mean flow. Modes couple via Gaunt coefficients. CMB heterogeneity, tidal forcing.</p>
   </div>
@@ -142,7 +142,7 @@ flowchart TD
 ### Onset Convection
 
 ```julia
-using Cross
+using Magrathea
 
 params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, m=10, lmax=60, Nr=64)
 result = solve(OnsetProblem(params); nev=6)
@@ -152,7 +152,7 @@ result.growth_rate
 ### Biglobal
 
 ```julia
-using Cross
+using Magrathea
 
 params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, m=10, lmax=60, Nr=64)
 bs = basic_state(params; mode=:meridional, amplitude=0.05)
@@ -162,7 +162,7 @@ result = solve(BiglobalProblem(params, bs); nev=6)
 ### Triglobal
 
 ```julia
-using Cross
+using Magrathea
 
 params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, lmax=40, Nr=48)
 bs3d = basic_state(params; mode=:nonaxisymmetric, mmax_bs=2)

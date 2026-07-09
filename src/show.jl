@@ -1,5 +1,5 @@
 # ============================================================================
-# Pretty-printing for Cross.jl public types
+# Pretty-printing for Magrathea.jl public types
 # ============================================================================
 
 import Base: show

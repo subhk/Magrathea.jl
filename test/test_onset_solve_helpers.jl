@@ -1,6 +1,6 @@
 using Test
 using Logging
-using Cross
+using Magrathea
 
 # =============================================================================
 # Coverage for non-eigensolve helpers in src/Stability/onset.jl and src/solve.jl
@@ -217,54 +217,54 @@ end
 # _triglobal_total_dof, _mhd_total_dof
 # -----------------------------------------------------------------------------
 @testset "_mem_gb" begin
-    @test Cross._mem_gb(1000) ≈ 2 * 1000^2 * 16 / (1024^3)
-    @test Cross._mem_gb(2000) > Cross._mem_gb(1000)
-    @test Cross._mem_gb(0) == 0.0
-    @test Cross._mem_gb(1) > 0.0
+    @test Magrathea._mem_gb(1000) ≈ 2 * 1000^2 * 16 / (1024^3)
+    @test Magrathea._mem_gb(2000) > Magrathea._mem_gb(1000)
+    @test Magrathea._mem_gb(0) == 0.0
+    @test Magrathea._mem_gb(1) > 0.0
 end
 
 @testset "_hd_total_dof" begin
     # :both symmetry → 3 equal field blocks of (lmax-m+1) × Nr
-    @test Cross._hd_total_dof(2, 10, 16, :both) == 3 * (10 - 2 + 1) * 16
-    @test Cross._hd_total_dof(0, 8, 16, :both) == 3 * (8 - 0 + 1) * 16
+    @test Magrathea._hd_total_dof(2, 10, 16, :both) == 3 * (10 - 2 + 1) * 16
+    @test Magrathea._hd_total_dof(0, 8, 16, :both) == 3 * (8 - 0 + 1) * 16
 
     # symmetric / antisymmetric truncations are positive and no larger than :both
-    both = Cross._hd_total_dof(2, 12, 20, :both)
-    sym  = Cross._hd_total_dof(2, 12, 20, :symmetric)
-    anti = Cross._hd_total_dof(2, 12, 20, :antisymmetric)
+    both = Magrathea._hd_total_dof(2, 12, 20, :both)
+    sym  = Magrathea._hd_total_dof(2, 12, 20, :symmetric)
+    anti = Magrathea._hd_total_dof(2, 12, 20, :antisymmetric)
     @test sym > 0
     @test anti > 0
     @test both >= sym
     @test both >= anti
 
     # monotonic in Nr and lmax
-    @test Cross._hd_total_dof(2, 10, 32, :both) > Cross._hd_total_dof(2, 10, 16, :both)
-    @test Cross._hd_total_dof(2, 20, 16, :both) > Cross._hd_total_dof(2, 10, 16, :both)
+    @test Magrathea._hd_total_dof(2, 10, 32, :both) > Magrathea._hd_total_dof(2, 10, 16, :both)
+    @test Magrathea._hd_total_dof(2, 20, 16, :both) > Magrathea._hd_total_dof(2, 10, 16, :both)
 end
 
 @testset "_triglobal_total_dof" begin
-    total, per_m = Cross._triglobal_total_dof(0:2, 8, 16)
+    total, per_m = Magrathea._triglobal_total_dof(0:2, 8, 16)
     @test total > 0
     @test per_m ≈ total / length(0:2)
 
     # default symmetry argument matches explicit :both
-    total_b, _ = Cross._triglobal_total_dof(0:2, 8, 16, :both)
+    total_b, _ = Magrathea._triglobal_total_dof(0:2, 8, 16, :both)
     @test total_b == total
 
     # more coupled modes ⇒ more total DOFs
-    total_more, _ = Cross._triglobal_total_dof(0:4, 8, 16)
+    total_more, _ = Magrathea._triglobal_total_dof(0:4, 8, 16)
     @test total_more > total
 
     # validation: empty range and |m| > lmax both throw
-    @test_throws ArgumentError Cross._triglobal_total_dof(2:1, 8, 16)
-    @test_throws ArgumentError Cross._triglobal_total_dof(0:10, 8, 16)
+    @test_throws ArgumentError Magrathea._triglobal_total_dof(2:1, 8, 16)
+    @test_throws ArgumentError Magrathea._triglobal_total_dof(0:10, 8, 16)
 end
 
 @testset "_mhd_total_dof" begin
     # no background field → no magnetic blocks
     mp = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=0.0, ricb=0.35,
                    m=1, lmax=4, N=16, B0_type=no_field)
-    total, n_pol, n_tor, n_f, n_g, n_per_mode = Cross._mhd_total_dof(mp)
+    total, n_pol, n_tor, n_f, n_g, n_per_mode = Magrathea._mhd_total_dof(mp)
     @test n_pol > 0
     @test n_tor > 0
     @test n_f == 0
@@ -278,7 +278,7 @@ end
     # (a background field requires Le > 0)
     mp_d = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=0.1, ricb=0.35,
                      m=1, lmax=4, N=16, B0_type=dipole, B0_amplitude=1.0)
-    td, np_d, nt_d, nf_d, ng_d, nperm_d = Cross._mhd_total_dof(mp_d)
+    td, np_d, nt_d, nf_d, ng_d, nperm_d = Magrathea._mhd_total_dof(mp_d)
     @test nf_d == nt_d
     @test ng_d == np_d
     @test td == (np_d + nt_d + nf_d + ng_d + np_d) * nperm_d
@@ -295,7 +295,7 @@ end
     @test onset isa OnsetProblem
     @test onset.params === op
 
-    bs = Cross.basic_state(op; mode=:conduction)
+    bs = Magrathea.basic_state(op; mode=:conduction)
     @test bs isa BasicState
     bp = BiglobalProblem(op, bs)
     @test bp isa BiglobalProblem
@@ -335,13 +335,13 @@ end
 # -----------------------------------------------------------------------------
 @testset "_check_memory returns nothing for modest problems" begin
     # all four dispatches run cleanly and emit no warning at this size
-    @test Cross._check_memory(_onset_problem, "OnsetProblem") === nothing
-    @test Cross._check_memory(_biglobal_problem, "BiglobalProblem") === nothing
-    @test Cross._check_memory(_triglobal_problem, "TriglobalProblem") === nothing
-    @test Cross._check_memory(_mhd_problem, "MHDProblem") === nothing
+    @test Magrathea._check_memory(_onset_problem, "OnsetProblem") === nothing
+    @test Magrathea._check_memory(_biglobal_problem, "BiglobalProblem") === nothing
+    @test Magrathea._check_memory(_triglobal_problem, "TriglobalProblem") === nothing
+    @test Magrathea._check_memory(_mhd_problem, "MHDProblem") === nothing
 
-    @test_logs min_level=Logging.Warn Cross._check_memory(_onset_problem, "OnsetProblem")
-    @test_logs min_level=Logging.Warn Cross._check_memory(_mhd_problem, "MHDProblem")
+    @test_logs min_level=Logging.Warn Magrathea._check_memory(_onset_problem, "OnsetProblem")
+    @test_logs min_level=Logging.Warn Magrathea._check_memory(_mhd_problem, "MHDProblem")
 end
 
 @testset "_check_memory warns above the 8 GB soft limit" begin
@@ -350,20 +350,20 @@ end
     #  problem is built outside the @test_logs that asserts the memory warning.)
     huge = OnsetProblem(OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35,
                                     m=2, lmax=250, Nr=64))
-    @test_logs (:warn, r"exceeds 8 GB") Cross._check_memory(huge, "OnsetProblem")
-    @test Cross._check_memory(huge, "OnsetProblem") === nothing
+    @test_logs (:warn, r"exceeds 8 GB") Magrathea._check_memory(huge, "OnsetProblem")
+    @test Magrathea._check_memory(huge, "OnsetProblem") === nothing
 end
 
 @testset "_warn_if_large" begin
     # modest problem: returns nothing, no warning
-    @test Cross._warn_if_large(_onset_problem, "OnsetProblem") === nothing
-    @test_logs min_level=Logging.Warn Cross._warn_if_large(_onset_problem, "OnsetProblem")
+    @test Magrathea._warn_if_large(_onset_problem, "OnsetProblem") === nothing
+    @test_logs min_level=Logging.Warn Magrathea._warn_if_large(_onset_problem, "OnsetProblem")
 
     # huge problem: forwards the memory warning
     huge = OnsetProblem(OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35,
                                     m=2, lmax=250, Nr=64))
-    @test_logs (:warn, r"exceeds 8 GB") Cross._warn_if_large(huge, "OnsetProblem")
+    @test_logs (:warn, r"exceeds 8 GB") Magrathea._warn_if_large(huge, "OnsetProblem")
 
     # estimation failure is swallowed (downgraded to @debug) and returns nothing
-    @test Cross._warn_if_large("not a problem", "Unsupported") === nothing
+    @test Magrathea._warn_if_large("not a problem", "Unsupported") === nothing
 end

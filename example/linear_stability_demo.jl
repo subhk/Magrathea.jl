@@ -8,7 +8,7 @@
 repo_root = normpath(joinpath(@__DIR__, ".."))
 push!(LOAD_PATH, repo_root)
 
-using Cross
+using Magrathea
 using Printf
 
 E = 1e-5
@@ -33,7 +33,7 @@ function parse_cli_args(args)
                   --theta-points=<int>           Number of meridional grid points (default 96)
                   --help                         Show this message
 
-                Note: Cross.jl now uses KrylovKit exclusively for eigenvalue solving.
+                Note: Magrathea.jl now uses KrylovKit exclusively for eigenvalue solving.
                 """)
             exit(0)
         elseif startswith(arg, "--solver=")
@@ -77,11 +77,11 @@ function solver_iterations(info)
 end
 
 # Note: solver and arpack_shift options are deprecated
-# Cross.jl now uses KrylovKit exclusively
+# Magrathea.jl now uses KrylovKit exclusively
 solver = :krylov  # For backwards compatibility
 arpack_shift = nothing  # No longer used
 
-meridional_points = get(cli_opts, :theta_points, parse(Int, get(ENV, "CROSS_THETA_POINTS", "96")))
+meridional_points = get(cli_opts, :theta_points, parse(Int, get(ENV, "MAGRATHEA_THETA_POINTS", "96")))
 
 println("m    Re(λ₁)          Im(λ₁)          iterations")
 println("------------------------------------------------")

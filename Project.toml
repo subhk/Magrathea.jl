@@ -1,5 +1,5 @@
-name = "Cross"
-uuid = "b261f30d-6c96-4f96-8f67-071dc8a02665"
+name = "Magrathea"
+uuid = "b5134ede-7642-4071-804d-4ebd12280027"
 version = "1.0.0"
 authors = ["Subhajit Kar <subhajitkar19@gmail.com>"]
 
@@ -22,9 +22,9 @@ RecipesBase = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"
 SlepcWrap = "c3679e3b-785e-4ccc-b734-b7685cbb935e"
 
 [extensions]
-CrossMakieExt = "Makie"
-CrossRecipesBaseExt = "RecipesBase"
-CrossSlepcExt = ["PetscWrap", "SlepcWrap"]
+MagratheaMakieExt = "Makie"
+MagratheaRecipesBaseExt = "RecipesBase"
+MagratheaSlepcExt = ["PetscWrap", "SlepcWrap"]
 
 [compat]
 BenchmarkTools = "1"

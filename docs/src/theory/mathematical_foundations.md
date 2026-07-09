@@ -1,8 +1,8 @@
 # Mathematical Foundations
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Theory</div>
-  <h1>The equations behind Cross.jl.</h1>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Theory</div>
+  <h1>The equations behind Magrathea.jl.</h1>
   <p>The mathematical framework: governing equations, non-dimensionalization, and the eigenvalue-problem formulation.</p>
 </div>
 
@@ -10,7 +10,7 @@
 
 ### Boussinesq Convection in Rotating Shells
 
-Cross.jl solves the linearized equations for thermal convection in a rotating spherical shell under the Boussinesq approximation. The dimensional equations are:
+Magrathea.jl solves the linearized equations for thermal convection in a rotating spherical shell under the Boussinesq approximation. The dimensional equations are:
 
 **Momentum (Navier-Stokes):**
 ```math
@@ -65,7 +65,7 @@ This yields the dimensionless parameters:
 | Radius ratio | ``\chi = r_i / r_o`` | Geometric parameter |
 
 !!! warning "Length-scale convention (read before benchmarking)"
-    Cross.jl mixes two length scales, which is the single most common source of
+    Magrathea.jl mixes two length scales, which is the single most common source of
     confusion when comparing against the literature:
 
     - The **Ekman number is outer-radius (``r_o``) based**: ``E = \nu/(\Omega r_o^2)``.
@@ -75,13 +75,13 @@ This yields the dimensionless parameters:
       ``r_o``-based value the operators need, ``Ra_{\text{int}} = Ra/(1-\chi)^3``.
 
     Much rotating-convection literature (e.g. Barik et al. 2023 and the **Kore**
-    code Cross.jl is ported from, the weakly-nonlinear onset analyses, the
+    code Magrathea.jl is ported from, the weakly-nonlinear onset analyses, the
     geodynamo benchmark) non-dimensionalizes **both** ``E`` and ``Ra`` by the shell
     thickness ``d``, defining ``Ek_d = \nu/(\Omega d^2) = E/(1-\chi)^2``.
 
     **To reproduce a ``d``-based literature value at radius ratio ``\chi``:**
 
-    | Their quantity | Pass to Cross.jl |
+    | Their quantity | Pass to Magrathea.jl |
     |----------------|------------------|
     | ``Ek_d`` (their Ekman) | `E = Ek_d * (1 - χ)^2` |
     | ``Ra_d`` (their Rayleigh) | `Ra = Ra_d` (already ``d``-based) |

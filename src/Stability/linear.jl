@@ -7,9 +7,9 @@
 #  boundary conditions (Dirichlet / stress-free).
 # =============================================================================
 
-# Dependencies provided by Cross module:
+# Dependencies provided by Magrathea module:
 # LinearAlgebra, LinearMaps, Parameters, Random
-# ChebyshevDiffn is available in the Cross namespace
+# ChebyshevDiffn is available in the Magrathea namespace
 
 const _fourπ = 4π
 
@@ -826,7 +826,7 @@ function solve_eigenvalue_problem(op::LinearStabilityOperator{T};
     backend === :slepc || throw(ArgumentError(
         "Unknown eigensolver backend $(backend); only :slepc is supported"))
 
-    return Cross._solve_constrained_slepc(op;
+    return Magrathea._solve_constrained_slepc(op;
         nev=nev, sigma=sigma, which=which, tol=tol, maxiter=maxiter)
 end
 
@@ -1064,4 +1064,4 @@ function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
     return Ra_c, ω_c, vec_c
 end
 
-# Exports are centralized in Cross.jl
+# Exports are centralized in Magrathea.jl

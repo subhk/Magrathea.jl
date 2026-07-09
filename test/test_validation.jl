@@ -1,5 +1,5 @@
 using Test
-using Cross
+using Magrathea
 
 @testset "Validation - hard errors via OnsetProblem" begin
     # Invalid radius ratio

@@ -1,7 +1,7 @@
 # Magnetohydrodynamic Extension
 
-<div class="cross-hero">
-  <div class="cross-eyebrow">Magnetohydrodynamics</div>
+<div class="magrathea-hero">
+  <div class="magrathea-eyebrow">Magnetohydrodynamics</div>
   <h1>Stability of rotating, conducting fluids in magnetic fields.</h1>
   <p>
     The MHD module studies the linear stability of conducting fluids under rotation,
@@ -12,7 +12,7 @@
 
 ## Overview
 
-The MHD submodule (`Cross.MHD`) extends the hydrodynamic solver with:
+The MHD submodule (`Magrathea.MHD`) extends the hydrodynamic solver with:
 
 - **Lorentz force**: Magnetic field effects on fluid motion
 - **Induction equation**: Velocity effects on magnetic field evolution
@@ -68,8 +68,8 @@ The MHD equations in a rotating spherical shell:
 ### Load the MHD Module
 
 ```julia
-# MHD types, operators, assembly and the eigensolver are all exported by Cross
-using Cross
+# MHD types, operators, assembly and the eigensolver are all exported by Magrathea
+using Magrathea
 using LinearAlgebra, SparseArrays
 ```
 
@@ -357,7 +357,7 @@ Check:
 1. Parameter definitions match exactly
 2. Boundary conditions are equivalent
 3. Resolution is sufficient (`lmax`, `N`)
-4. Cross.jl uses Boussinesq approximation (no anelastic)
+4. Magrathea.jl uses Boussinesq approximation (no anelastic)
 
 ## Performance Considerations
 
@@ -385,7 +385,7 @@ See `example/mhd_dynamo_example.jl` for a complete working script:
 #!/usr/bin/env julia
 # MHD Dynamo Stability Analysis
 
-using Cross
+using Magrathea
 
 using LinearAlgebra, SparseArrays, Printf
 

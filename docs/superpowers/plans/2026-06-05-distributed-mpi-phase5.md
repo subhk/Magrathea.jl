@@ -28,12 +28,12 @@
 ```julia
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 @testset "triglobal coupled-pencil COO partition-reassembles" begin
     # build a small coupled problem (mirror test/triglobal.jl fixture)
     <CONSTRUCT problem, single, coupling as in test/triglobal.jl ~line 333>
-    full = Cross._assemble_block_coo(problem, single, coupling)
+    full = Magrathea._assemble_block_coo(problem, single, coupling)
     n = full.n
     A_full = sparse(full.A_rows, full.A_cols, full.A_vals, n, n)
     B_full = sparse(full.B_rows, full.B_cols, full.B_vals, n, n)
@@ -41,7 +41,7 @@ using Cross
     Ar=Int[]; Ac=Int[]; Av=ComplexF64[]; Br=Int[]; Bc=Int[]; Bv=ComplexF64[]
     for i in 1:3
         R = (cuts[i]+1):cuts[i+1]
-        c = Cross._assemble_block_coo(problem, single, coupling; owned_julia_rows=R)
+        c = Magrathea._assemble_block_coo(problem, single, coupling; owned_julia_rows=R)
         @test all(r -> r in R, c.A_rows); @test all(r -> r in R, c.B_rows)
         append!(Ar,c.A_rows); append!(Ac,c.A_cols); append!(Av,c.A_vals)
         append!(Br,c.B_rows); append!(Bc,c.B_cols); append!(Bv,c.B_vals)
@@ -124,9 +124,9 @@ end
 ```julia
 @testset "build_single_mode_operator matches the all-builder" begin
     <CONSTRUCT the same `problem` as Task 1>
-    all_ops = Cross.build_single_mode_operators(problem, false)
+    all_ops = Magrathea.build_single_mode_operators(problem, false)
     for m in problem.m_range
-        one = Cross.build_single_mode_operator(problem, m)
+        one = Magrathea.build_single_mode_operator(problem, m)
         @test one.A ≈ all_ops[m].A
         @test one.B ≈ all_ops[m].B
     end
@@ -145,7 +145,7 @@ end
 
 ## Task 3: extension distributed triglobal solve + rewire (NOT runnable here)
 
-**Files:** Modify `src/Stability/solver.jl`, `src/Stability/triglobal.jl`, `ext/CrossSlepcExt/CrossSlepcExt.jl`.
+**Files:** Modify `src/Stability/solver.jl`, `src/Stability/triglobal.jl`, `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl`.
 
 > Cluster-only. Verify: `Meta.parseall`, `CORE_OK`, full default suite green.
 
@@ -155,21 +155,21 @@ const _SLEPC_TRIGLOBAL_SOLVER = Ref{Union{Nothing,Function}}(nothing)
 
 function _solve_triglobal_slepc(problem; kwargs...)
     f = _SLEPC_TRIGLOBAL_SOLVER[]
-    f === nothing && error("backend=:slepc (distributed triglobal) requires `using PetscWrap, SlepcWrap` and Cross.slepc_init!().")
+    f === nothing && error("backend=:slepc (distributed triglobal) requires `using PetscWrap, SlepcWrap` and Magrathea.slepc_init!().")
     return f(problem; kwargs...)
 end
 ```
 
-- [ ] **Step 2: extension `_slepc_triglobal_solve`** in `CrossSlepcExt.jl`:
+- [ ] **Step 2: extension `_slepc_triglobal_solve`** in `MagratheaSlepcExt.jl`:
 ```julia
 function _slepc_triglobal_solve(problem; σ_target, nev::Int, tol::Float64, maxiter::Int)
-    _INITIALIZED[] || error("call Cross.slepc_init!() once before a :slepc solve")
+    _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
-    single = Cross.build_single_mode_operators(problem, false)
-    coupling = Cross.build_mode_coupling_operators(problem, single, false)
+    single = Magrathea.build_single_mode_operators(problem, false)
+    coupling = Magrathea.build_mode_coupling_operators(problem, single, false)
     n = problem.total_dofs
     Amat, rs, re = _create_dist_mat(n); Bmat, _, _ = _create_dist_mat(n)
-    coo = Cross._assemble_block_coo(problem, single, coupling; owned_julia_rows=(rs+1):re)
+    coo = Magrathea._assemble_block_coo(problem, single, coupling; owned_julia_rows=(rs+1):re)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rs, re)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rs, re)
     T = real(eltype(coo.A_vals))
@@ -179,13 +179,13 @@ function _slepc_triglobal_solve(problem; σ_target, nev::Int, tol::Float64, maxi
     return vals, vecs        # 2-tuple, matching solve_block_eigenvalue_problem
 end
 ```
-Register in `__init__`: `Cross._SLEPC_TRIGLOBAL_SOLVER[] = _slepc_triglobal_solve`.
+Register in `__init__`: `Magrathea._SLEPC_TRIGLOBAL_SOLVER[] = _slepc_triglobal_solve`.
 
-- [ ] **Step 3: rewire `solve_triglobal_eigenvalue_problem`** (`src/Stability/triglobal.jl` ~1998). READ it: it builds `single_mode_ops`, `coupling_ops`, calls `assemble_block_matrices` then `solve_block_eigenvalue_problem(A,B,σ_target,nev,verbose; backend=backend)`. When `backend === :slepc`, replace the assemble+solve with `eigenvalues, eigenvectors = Cross._solve_triglobal_slepc(problem; σ_target=σ_target, nev=nev, tol=T(1e-8), maxiter=200)` (the distributed path builds its own ops, so skip the replicated `assemble_block_matrices` + `solve_block_eigenvalue_problem`). Keep `:krylovkit` path EXACTLY as is. (Also leave the existing `:slepc` divert inside `solve_block_eigenvalue_problem` — now unreachable for triglobal but harmless; or remove it. Report which.)
+- [ ] **Step 3: rewire `solve_triglobal_eigenvalue_problem`** (`src/Stability/triglobal.jl` ~1998). READ it: it builds `single_mode_ops`, `coupling_ops`, calls `assemble_block_matrices` then `solve_block_eigenvalue_problem(A,B,σ_target,nev,verbose; backend=backend)`. When `backend === :slepc`, replace the assemble+solve with `eigenvalues, eigenvectors = Magrathea._solve_triglobal_slepc(problem; σ_target=σ_target, nev=nev, tol=T(1e-8), maxiter=200)` (the distributed path builds its own ops, so skip the replicated `assemble_block_matrices` + `solve_block_eigenvalue_problem`). Keep `:krylovkit` path EXACTLY as is. (Also leave the existing `:slepc` divert inside `solve_block_eigenvalue_problem` — now unreachable for triglobal but harmless; or remove it. Report which.)
 
-- [ ] **Step 4: verify** — `PARSE_OK`; `$JL --project=. -e 'using Cross; println("CORE_OK ", Cross._SLEPC_TRIGLOBAL_SOLVER[]===nothing)'` → `CORE_OK true`; `$JL --project=. test/runtests.jl 2>&1 | grep -iE "Error During Test|did not pass"; echo done` → only `done` (the `:krylovkit` triglobal default unaffected).
+- [ ] **Step 4: verify** — `PARSE_OK`; `$JL --project=. -e 'using Magrathea; println("CORE_OK ", Magrathea._SLEPC_TRIGLOBAL_SOLVER[]===nothing)'` → `CORE_OK true`; `$JL --project=. test/runtests.jl 2>&1 | grep -iE "Error During Test|did not pass"; echo done` → only `done` (the `:krylovkit` triglobal default unaffected).
 
-- [ ] **Step 5: Commit (ASK USER FIRST)** — `git add src/Stability/solver.jl src/Stability/triglobal.jl ext/CrossSlepcExt/` / `git commit -m "feat(mpi): distributed triglobal :slepc solve"`
+- [ ] **Step 5: Commit (ASK USER FIRST)** — `git add src/Stability/solver.jl src/Stability/triglobal.jl ext/MagratheaSlepcExt/` / `git commit -m "feat(mpi): distributed triglobal :slepc solve"`
 
 ---
 

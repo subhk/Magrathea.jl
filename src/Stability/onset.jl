@@ -24,11 +24,11 @@
 #  where σ = σ_r + iω is the complex growth rate (σ_r > 0 → unstable).
 # =============================================================================
 
-# Dependencies provided by Cross module:
+# Dependencies provided by Magrathea module:
 # Parameters, LinearAlgebra, Printf
 # LinearStabilityOperator, OnsetParams, assemble_matrices,
 # solve_eigenvalue_problem, find_growth_rate, ChebyshevDiffn,
-# compute_l_sets are available in the Cross namespace
+# compute_l_sets are available in the Magrathea namespace
 
 """
     OnsetConvectionParams{T}(; E, Pr, Ra, χ, m, lmax, Nr, kwargs...)
@@ -152,7 +152,7 @@ function solve_onset_problem(params::OnsetConvectionParams{T};
         # full tau pencil and the S/P projection matrices, forms the reduced pencil
         # S·A·P / S·B·P via MatMatMult, and runs the EPS solve. Avoids the in-process
         # dense reduction; eigenvectors come back reconstructed to full DOFs on rank 0.
-        eigenvalues, eigenvectors, info = Cross._solve_constrained_slepc(op;
+        eigenvalues, eigenvectors, info = Magrathea._solve_constrained_slepc(op;
             nev=nev, sigma=sigma, which=which, tol=tol, maxiter=maxiter)
     else
         eigenvalues, eigenvectors, info = solve_eigenvalue_problem(op;
@@ -218,7 +218,7 @@ function find_critical_Ra_onset(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int
 
     # Use the existing find_critical_rayleigh function from linear_stability.jl
     # but with no basic_state
-    Ra_c, ω_c, vec_c = Cross.find_critical_rayleigh(
+    Ra_c, ω_c, vec_c = Magrathea.find_critical_rayleigh(
         E_T, Pr_T, χ_T, m, lmax, Nr;
         Ra_guess=Ra_guess_T, tol=T(tol), Ra_bracket=bracket,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
@@ -481,4 +481,4 @@ function onset_scaling_laws(E::T, χ::T; bc::Symbol=:no_slip) where {T<:Real}
 end
 
 
-# Exports are centralized in Cross.jl
+# Exports are centralized in Magrathea.jl

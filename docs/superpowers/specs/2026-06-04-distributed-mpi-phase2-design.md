@@ -84,7 +84,7 @@ steps, with the core assembly call sandwiched between them:
    ```
    (Amat, rstart, rend) = _create_dist_mat(n)
    (Bmat, _, _)         = _create_dist_mat(n)        # identical split
-   coo = Cross._assemble_mhd_coo(op; owned_julia_rows = (rstart+1):rend)
+   coo = Magrathea._assemble_mhd_coo(op; owned_julia_rows = (rstart+1):rend)
    _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rstart, rend)
    _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rstart, rend)
    # then distributed BC overwrites on owned rows (6):
@@ -160,7 +160,7 @@ range) → Phase-0 EPS solve → rank-0 eigenvector gather → result. Each rank
 - `src/MHD/assembly.jl` — add `_mhd_index_map`; extract `_assemble_mhd_coo` (with the
   `owned_julia_rows` kwarg, per-mode `continue` guards, `add_block!` filter); make
   `assemble_mhd_matrices` a thin wrapper. Add `_owned_coo_nnz`.
-- `ext/CrossSlepcExt/CrossSlepcExt.jl` — `_create_dist_mat`, `_fill_dist_mat!`,
+- `ext/MagratheaSlepcExt/MagratheaSlepcExt.jl` — `_create_dist_mat`, `_fill_dist_mat!`,
   `_apply_dist_bcs!`; rewire the MHD branch of `_slepc_solve` to the inverted
   distributed-assembly + distributed-BC flow.
 - `test/distributed_assembly.jl` (new) — the serial tests above; wired into `runtests.jl`.

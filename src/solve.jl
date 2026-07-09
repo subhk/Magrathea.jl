@@ -1,5 +1,5 @@
 # ============================================================================
-# Unified solve() API for Cross.jl v2.0
+# Unified solve() API for Magrathea.jl v2.0
 # ============================================================================
 
 """
@@ -244,7 +244,7 @@ function solve(problem::MHDProblem{T, BS};
         # tau path below (Galerkin dipole not implemented — see galerkin_assembly.jl).
         A_gal, B_gal, layout = assemble_mhd_galerkin(op)
         if backend === :slepc
-            vals_s, vecs_s, _ = Cross._solve_generalized_eigen_slepc(
+            vals_s, vecs_s, _ = Magrathea._solve_generalized_eigen_slepc(
                 sparse(A_gal), sparse(B_gal); nev=nev,
                 sigma = sigma === nothing ? zero(Complex{T}) : Complex{T}(sigma),
                 which=which, selection=:maxreal, tol=tol, maxiter=maxiter, verbosity=0)
@@ -279,7 +279,7 @@ function solve(problem::MHDProblem{T, BS};
         # distributed PETSc form (owned rows only), applies the tau boundary
         # conditions on the distributed Mats, and runs the EPS solve. Avoids ever
         # materializing the full sparse pencil on a single rank.
-        eigenvalues, eigenvectors, info = Cross._solve_mhd_slepc(
+        eigenvalues, eigenvectors, info = Magrathea._solve_mhd_slepc(
             op; nev=nev, sigma=sigma, which=which, tol=tol, maxiter=maxiter)
         interior_dofs = Int[]
         info_assembly = info

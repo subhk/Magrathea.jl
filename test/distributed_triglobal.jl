@@ -1,6 +1,6 @@
 using Test
 using SparseArrays
-using Cross
+using Magrathea
 
 # small coupled triglobal fixture (mirror test/triglobal.jl ~line 324-344)
 function _p5_problem()
@@ -10,21 +10,21 @@ function _p5_problem()
     duphi_dr = Dict((1,1) => zeros(Float64, Nr))
     # reproduce _basic_state_3d_with_modes from test/triglobal.jl:
     T = Float64
-    bs3d = Cross.BasicState3D{T}(lmax_bs=1, mmax_bs=1, Nr=Nr, r=cd.x,
+    bs3d = Magrathea.BasicState3D{T}(lmax_bs=1, mmax_bs=1, Nr=Nr, r=cd.x,
         theta_coeffs=Dict{Tuple{Int,Int},Vector{T}}(), dtheta_dr_coeffs=Dict{Tuple{Int,Int},Vector{T}}(),
         ur_coeffs=Dict{Tuple{Int,Int},Vector{T}}(), utheta_coeffs=Dict{Tuple{Int,Int},Vector{T}}(),
         uphi_coeffs=uphi, dur_dr_coeffs=Dict{Tuple{Int,Int},Vector{T}}(),
         dutheta_dr_coeffs=Dict{Tuple{Int,Int},Vector{T}}(), duphi_dr_coeffs=duphi_dr)
     params = TriglobalParams(E=E, Pr=Pr, Ra=Ra, χ=χ, m_range=1:2, lmax=lmax, Nr=Nr, basic_state_3d=bs3d)
     problem = setup_coupled_mode_problem(params)
-    single = Cross.build_single_mode_operators(problem, false)
-    coupling = Cross.build_mode_coupling_operators(problem, single, false)
+    single = Magrathea.build_single_mode_operators(problem, false)
+    coupling = Magrathea.build_mode_coupling_operators(problem, single, false)
     return problem, single, coupling
 end
 
 @testset "triglobal coupled-pencil COO partition-reassembles" begin
     problem, single, coupling = _p5_problem()
-    full = Cross._assemble_block_coo(problem, single, coupling)
+    full = Magrathea._assemble_block_coo(problem, single, coupling)
     n = full.n
     A_full = sparse(full.A_rows, full.A_cols, full.A_vals, n, n)
     B_full = sparse(full.B_rows, full.B_cols, full.B_vals, n, n)
@@ -32,7 +32,7 @@ end
     Ar=Int[]; Ac=Int[]; Av=ComplexF64[]; Br=Int[]; Bc=Int[]; Bv=ComplexF64[]
     for i in 1:3
         R = (cuts[i]+1):cuts[i+1]
-        c = Cross._assemble_block_coo(problem, single, coupling; owned_julia_rows=R)
+        c = Magrathea._assemble_block_coo(problem, single, coupling; owned_julia_rows=R)
         @test all(r -> r in R, c.A_rows); @test all(r -> r in R, c.B_rows)
         append!(Ar,c.A_rows); append!(Ac,c.A_cols); append!(Av,c.A_vals)
         append!(Br,c.B_rows); append!(Bc,c.B_cols); append!(Bv,c.B_vals)
@@ -43,9 +43,9 @@ end
 
 @testset "build_single_mode_operator matches the all-builder" begin
     problem, _, _ = _p5_problem()
-    all_ops = Cross.build_single_mode_operators(problem, false)
+    all_ops = Magrathea.build_single_mode_operators(problem, false)
     for m in problem.m_range
-        one = Cross.build_single_mode_operator(problem, m)
+        one = Magrathea.build_single_mode_operator(problem, m)
         @test one.A ≈ all_ops[m].A
         @test one.B ≈ all_ops[m].B
     end

@@ -1,4 +1,4 @@
-/* Cross.jl documentation polish.
+/* Magrathea.jl documentation polish.
    Layers a BiGSTARS-style hero / card / learning-path design on top of
    Material for MkDocs, plus site-wide palette and typography tuning. */
 
@@ -6,17 +6,17 @@
    Palette
    ---------------------------------------------------------------------- */
 :root {
-  --cross-navy:   #10233f;
-  --cross-blue:   #226f9f;
-  --cross-teal:   #18a39b;
-  --cross-gold:   #d59a26;
-  --cross-ink:    #142033;
-  --cross-muted:  #5c6c80;
-  --cross-panel:  #f7fafc;
-  --cross-border: rgba(34, 111, 159, 0.18);
-  --cross-shadow: 0 18px 45px rgba(16, 35, 63, 0.12);
+  --magrathea-navy:   #10233f;
+  --magrathea-blue:   #226f9f;
+  --magrathea-teal:   #18a39b;
+  --magrathea-gold:   #d59a26;
+  --magrathea-ink:    #142033;
+  --magrathea-muted:  #5c6c80;
+  --magrathea-panel:  #f7fafc;
+  --magrathea-border: rgba(34, 111, 159, 0.18);
+  --magrathea-shadow: 0 18px 45px rgba(16, 35, 63, 0.12);
 
-  /* Retune Material's theme colors to the Cross palette (site-wide). */
+  /* Retune Material's theme colors to the Magrathea palette (site-wide). */
   --md-primary-fg-color:        #226f9f;
   --md-primary-fg-color--light: #2f86ba;
   --md-primary-fg-color--dark:  #10233f;
@@ -25,15 +25,15 @@
 
 /* Dark mode (Material "slate" scheme). */
 [data-md-color-scheme="slate"] {
-  --cross-navy:   #dbeafe;
-  --cross-blue:   #6cc8ff;
-  --cross-teal:   #5eead4;
-  --cross-gold:   #f8d477;
-  --cross-ink:    #e9f2ff;
-  --cross-muted:  #b7c5d8;
-  --cross-panel:  rgba(255, 255, 255, 0.06);
-  --cross-border: rgba(117, 211, 255, 0.22);
-  --cross-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
+  --magrathea-navy:   #dbeafe;
+  --magrathea-blue:   #6cc8ff;
+  --magrathea-teal:   #5eead4;
+  --magrathea-gold:   #f8d477;
+  --magrathea-ink:    #e9f2ff;
+  --magrathea-muted:  #b7c5d8;
+  --magrathea-panel:  rgba(255, 255, 255, 0.06);
+  --magrathea-border: rgba(117, 211, 255, 0.22);
+  --magrathea-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
 
   --md-accent-fg-color: #5eead4;
 }
@@ -46,11 +46,11 @@
 .md-typeset h3 {
   font-weight: 600;
   letter-spacing: -0.015em;
-  color: var(--cross-ink);
+  color: var(--magrathea-ink);
 }
 
 .md-typeset h2 {
-  border-bottom: 1px solid var(--cross-border);
+  border-bottom: 1px solid var(--magrathea-border);
   padding-bottom: 0.28rem;
 }
 
@@ -64,7 +64,7 @@
 }
 
 .md-typeset .highlight {
-  border: 1px solid var(--cross-border);
+  border: 1px solid var(--magrathea-border);
   border-radius: 14px;
   box-shadow: 0 10px 24px rgba(16, 35, 63, 0.08);
 }
@@ -84,28 +84,28 @@
 }
 
 .md-banner {
-  background: linear-gradient(90deg, var(--cross-blue), var(--cross-teal));
+  background: linear-gradient(90deg, var(--magrathea-blue), var(--magrathea-teal));
   color: #fff;
 }
 
 /* ----------------------------------------------------------------------
    Hero
    ---------------------------------------------------------------------- */
-.cross-hero {
+.magrathea-hero {
   position: relative;
   overflow: hidden;
   margin: 0.6rem 0 2rem;
   padding: 2.2rem;
-  border: 1px solid var(--cross-border);
+  border: 1px solid var(--magrathea-border);
   border-radius: 24px;
   background:
     radial-gradient(circle at 14% 18%, rgba(24, 163, 155, 0.26), transparent 28%),
     radial-gradient(circle at 86% 12%, rgba(213, 154, 38, 0.24), transparent 30%),
     linear-gradient(135deg, rgba(34, 111, 159, 0.14), rgba(24, 163, 155, 0.08) 52%, rgba(213, 154, 38, 0.08));
-  box-shadow: var(--cross-shadow);
+  box-shadow: var(--magrathea-shadow);
 }
 
-.cross-hero::after {
+.magrathea-hero::after {
   content: "";
   position: absolute;
   right: -6rem;
@@ -124,114 +124,114 @@
   pointer-events: none;
 }
 
-.cross-eyebrow {
+.magrathea-eyebrow {
   margin-bottom: 0.7rem;
-  color: var(--cross-blue);
+  color: var(--magrathea-blue);
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-.md-typeset .cross-hero h1 {
+.md-typeset .magrathea-hero h1 {
   margin: 0;
   max-width: 760px;
-  color: var(--cross-ink);
+  color: var(--magrathea-ink);
   font-size: clamp(2rem, 5vw, 3.6rem);
   line-height: 1.05;
 }
 
-.md-typeset .cross-hero p {
+.md-typeset .magrathea-hero p {
   position: relative;
   max-width: 720px;
   margin-top: 1rem;
-  color: var(--cross-muted);
+  color: var(--magrathea-muted);
   font-size: 1.08rem;
 }
 
 /* ----------------------------------------------------------------------
    Buttons / cards / learning path
    ---------------------------------------------------------------------- */
-.cross-actions,
-.cross-card-grid,
-.cross-path {
+.magrathea-actions,
+.magrathea-card-grid,
+.magrathea-path {
   display: grid;
   gap: 1rem;
 }
 
-.cross-actions {
+.magrathea-actions {
   grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
   margin-top: 1.35rem;
 }
 
-.md-typeset .cross-button {
+.md-typeset .magrathea-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 2.75rem;
   padding: 0.75rem 1.1rem;
   border-radius: 999px;
-  border: 1px solid var(--cross-border);
+  border: 1px solid var(--magrathea-border);
   font-weight: 800;
   text-decoration: none !important;
 }
 
-.md-typeset .cross-button.primary {
+.md-typeset .magrathea-button.primary {
   color: #fff !important;
-  background: linear-gradient(135deg, var(--cross-blue), var(--cross-teal));
+  background: linear-gradient(135deg, var(--magrathea-blue), var(--magrathea-teal));
   box-shadow: 0 10px 25px rgba(34, 111, 159, 0.26);
 }
 
-.md-typeset .cross-button.secondary {
-  color: var(--cross-blue) !important;
+.md-typeset .magrathea-button.secondary {
+  color: var(--magrathea-blue) !important;
   background: rgba(255, 255, 255, 0.58);
 }
 
-[data-md-color-scheme="slate"] .md-typeset .cross-button.secondary {
+[data-md-color-scheme="slate"] .md-typeset .magrathea-button.secondary {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.cross-card-grid {
+.magrathea-card-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin: 1.4rem 0 2rem;
 }
 
-.cross-card {
+.magrathea-card {
   padding: 1.1rem;
-  border: 1px solid var(--cross-border);
+  border: 1px solid var(--magrathea-border);
   border-radius: 18px;
-  background: var(--cross-panel);
+  background: var(--magrathea-panel);
   box-shadow: 0 10px 24px rgba(16, 35, 63, 0.06);
 }
 
-.cross-card strong {
+.magrathea-card strong {
   display: block;
   margin-bottom: 0.35rem;
-  color: var(--cross-ink);
+  color: var(--magrathea-ink);
   font-size: 1.02rem;
 }
 
-.md-typeset .cross-card p {
+.md-typeset .magrathea-card p {
   margin: 0;
-  color: var(--cross-muted);
+  color: var(--magrathea-muted);
   font-size: 0.95rem;
 }
 
-.cross-path {
+.magrathea-path {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   counter-reset: docs-path;
   margin: 1.1rem 0 2rem;
 }
 
-.cross-step {
+.magrathea-step {
   position: relative;
   padding: 1rem 1rem 1rem 3.2rem;
-  border: 1px solid var(--cross-border);
+  border: 1px solid var(--magrathea-border);
   border-radius: 16px;
-  background: linear-gradient(180deg, var(--cross-panel), transparent);
+  background: linear-gradient(180deg, var(--magrathea-panel), transparent);
 }
 
-.cross-step::before {
+.magrathea-step::before {
   counter-increment: docs-path;
   content: counter(docs-path);
   position: absolute;
@@ -243,27 +243,27 @@
   place-items: center;
   border-radius: 50%;
   color: #fff;
-  background: var(--cross-blue);
+  background: var(--magrathea-blue);
   font-weight: 800;
 }
 
-.cross-step a {
+.magrathea-step a {
   font-weight: 800;
 }
 
-.md-typeset .cross-step p {
+.md-typeset .magrathea-step p {
   margin: 0.25rem 0 0;
-  color: var(--cross-muted);
+  color: var(--magrathea-muted);
   font-size: 0.94rem;
 }
 
 @media (max-width: 640px) {
-  .cross-hero {
+  .magrathea-hero {
     padding: 1.4rem;
     border-radius: 18px;
   }
 
-  .cross-actions {
+  .magrathea-actions {
     grid-template-columns: 1fr;
   }
 }

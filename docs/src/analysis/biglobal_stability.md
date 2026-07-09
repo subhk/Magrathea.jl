@@ -84,7 +84,7 @@ This means we can still analyze each ``m`` independently, but the growth rates a
 
 ## The `BasicState` Structure
 
-Cross.jl uses the `BasicState` type to store axisymmetric background profiles:
+Magrathea.jl uses the `BasicState` type to store axisymmetric background profiles:
 
 ```julia
 struct BasicState{T}
@@ -114,7 +114,7 @@ end
 In v2.0, use `basic_state(params; mode=...)` instead of constructing `ChebyshevDiffn` manually:
 
 ```julia
-using Cross
+using Magrathea
 
 params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, m=12, lmax=60, Nr=64)
 
@@ -135,7 +135,7 @@ println("Frequency:   ", result.frequency)
 The simplest case—useful as a reference or when thermal wind is negligible:
 
 ```julia
-using Cross
+using Magrathea
 
 # Setup Chebyshev differentiation
 Nr = 64
@@ -238,7 +238,7 @@ using Interpolations
 # Load data from simulation (e.g., Rayleigh, MagIC)
 @load "simulation_output.jld2" T_lm uphi_lm r_sim
 
-# Interpolate to Cross.jl grid
+# Interpolate to Magrathea.jl grid
 for ℓ in [0, 2, 4]
     itp = LinearInterpolation(r_sim, T_lm[ℓ])
     theta_coeffs[ℓ] = itp.(cd.x)
@@ -378,7 +378,7 @@ bs = boundary_forced_basic_state(
 # Biglobal stability analysis with thermal wind driven by
 # latitudinal temperature variations
 
-using Cross
+using Magrathea
 using JLD2
 using Printf
 

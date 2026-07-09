@@ -615,7 +615,7 @@ end
 
 Construct sparse spectral operator for **r^power · d^deriv_order/dr^deriv_order** on radial interval [ri, ro].
 
-This is the **main workhorse function** for building all MHD operators in Cross.jl. It efficiently
+This is the **main workhorse function** for building all MHD operators in Magrathea.jl. It efficiently
 combines multiplication by radial powers and spectral differentiation into a single sparse matrix.
 
 # Mathematical Operation
@@ -739,7 +739,7 @@ D = ut.Dlam(2, N)                              # Derivative matrix
 op = M @ D @ D                                 # Combine and save to .mtx
 ```
 
-Cross.jl (one function call):
+Magrathea.jl (one function call):
 ```julia
 op = sparse_radial_operator(2, 2, N, ri, ro)  # All in one!
 ```

@@ -15,7 +15,7 @@ Must be included after MHD/types.jl.
 """
 
 # This file is included via MHD/MHD.jl after types.jl
-# All functions are in the Cross module scope
+# All functions are in the Magrathea module scope
 
 # -----------------------------------------------------------------------------
 # Bessel Function Utilities for Conducting Inner Core BCs
