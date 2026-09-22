@@ -133,40 +133,70 @@ function galerkin_block(L_band::AbstractMatrix, R_trial::AbstractMatrix, M_test:
 end
 
 """
-    recomb_poloidal_stressfree(T, N, ri, ro) -> Matrix
+    recomb_poloidal_velocity(T, N, ri, ro; bci=1, bco=1)
 
-Stress-free poloidal velocity trial basis: `u = 0` and `r·u'' = 0` at both
-boundaries (order q=4). Built as the nullspace of the exact tau functionals used
-by `apply_velocity_boundary_conditions!` (`:dirichlet` + `:neumann2`), so the
-Galerkin reduction is equivalent to the validated tau path. Size (N+1)×(N−3).
+Poloidal velocity trial basis with independent inner/outer mechanical BCs.
+Each boundary imposes `u = 0`, plus `u' = 0` for no-slip (1) or `r·u'' = 0`
+for stress-free (0), matching the tau functionals. Size (N+1)×(N−3).
 """
-function recomb_poloidal_stressfree(::Type{T}, N::Int, ri::Real, ro::Real) where {T<:Real}
+function recomb_poloidal_velocity(::Type{T}, N::Int, ri::Real, ro::Real;
+                                   bci::Int=1, bco::Int=1) where {T<:Real}
+    bci == bco == 1 && return recomb_clamped(T, N)
     scale = T(_radial_scale(ri, ro))
     funcs = Matrix{T}(undef, 4, N + 1)
-    for (i, b) in enumerate((:outer, :inner))
+    for (i, (b, bc)) in enumerate(((:outer, bco), (:inner, bci)))
         rb = T(_boundary_radius(ri, ro, b))
         funcs[2i - 1, :] = _chebyshev_boundary_values(N, b, T)
-        funcs[2i,     :] = rb .* scale^2 .* _chebyshev_boundary_second_derivative(N, b, T)
+        funcs[2i, :] = bc == 1 ? scale .* _chebyshev_boundary_derivative(N, b, T) :
+                                rb .* scale^2 .* _chebyshev_boundary_second_derivative(N, b, T)
     end
     return T.(recomb_from_functionals(funcs))
 end
 
 """
-    recomb_toroidal_stressfree(T, N, ri, ro) -> Matrix
+    recomb_toroidal_velocity(T, N, ri, ro; bci=1, bco=1)
 
-Stress-free toroidal velocity trial basis: `-r·v' + v = 0` at both boundaries
-(order q=2). Built as the nullspace of the exact tau functional used by
-`apply_velocity_boundary_conditions!` (assembly.jl: `-r·scale·deriv + value`).
-Size (N+1)×(N−1).
+Toroidal velocity trial basis with independent inner/outer mechanical BCs:
+`v = 0` for no-slip (1), `-r·v' + v = 0` for stress-free (0).
+Matches the tau functionals. Size (N+1)×(N−1).
 """
-function recomb_toroidal_stressfree(::Type{T}, N::Int, ri::Real, ro::Real) where {T<:Real}
+function recomb_toroidal_velocity(::Type{T}, N::Int, ri::Real, ro::Real;
+                                   bci::Int=1, bco::Int=1) where {T<:Real}
+    bci == bco == 1 && return recomb_dirichlet(T, N)
     scale = T(_radial_scale(ri, ro))
     funcs = Matrix{T}(undef, 2, N + 1)
-    for (i, b) in enumerate((:outer, :inner))
+    for (i, (b, bc)) in enumerate(((:outer, bco), (:inner, bci)))
         rb    = T(_boundary_radius(ri, ro, b))
         vals  = _chebyshev_boundary_values(N, b, T)
         deriv = _chebyshev_boundary_derivative(N, b, T)
-        funcs[i, :] = @. -rb * scale * deriv + vals
+        funcs[i, :] = bc == 1 ? vals : -rb .* scale .* deriv .+ vals
+    end
+    return T.(recomb_from_functionals(funcs))
+end
+
+"""Poloidal trial basis with stress-free conditions at both boundaries."""
+recomb_poloidal_stressfree(T::Type, N::Int, ri::Real, ro::Real) =
+    recomb_poloidal_velocity(T, N, ri, ro; bci=0, bco=0)
+
+"""Toroidal trial basis with stress-free conditions at both boundaries."""
+recomb_toroidal_stressfree(T::Type, N::Int, ri::Real, ro::Real) =
+    recomb_toroidal_velocity(T, N, ri, ro; bci=0, bco=0)
+
+"""
+    recomb_temperature(T, N, ri, ro; bci=0, bco=0)
+
+Temperature trial basis with independent inner/outer thermal BCs:
+fixed temperature (0) or fixed flux (1). Size (N+1)×(N−1).
+"""
+function recomb_temperature(::Type{T}, N::Int, ri::Real, ro::Real;
+                              bci::Int=0, bco::Int=0) where {T<:Real}
+    bci == bco == 0 && return recomb_dirichlet(T, N)
+    bci == bco == 1 && return recomb_neumann(T, N)
+    scale = T(_radial_scale(ri, ro))
+    funcs = Matrix{T}(undef, 2, N + 1)
+    for (i, (b, bc)) in enumerate(((:outer, bco), (:inner, bci)))
+        funcs[i, :] = bc == 0 ? _chebyshev_boundary_values(N, b, T) :
+                                scale .* _chebyshev_boundary_derivative(N, b, T)
     end
     return T.(recomb_from_functionals(funcs))
 end

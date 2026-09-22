@@ -33,6 +33,15 @@ function _eps_set_dimensions(eps, nev::Integer)
     return nothing
 end
 
+"""Set EPS convergence controls (SlepcWrap 0.1 has no setter wrapper)."""
+function _eps_set_tolerances(eps, tol::Real, maxiter::Integer)
+    err = ccall((:EPSSetTolerances, SlepcWrap.libslepc), PetscWrap.PetscErrorCode,
+                (Ptr{Cvoid}, PetscWrap.PetscReal, PetscWrap.PetscInt),
+                eps.ptr[], PetscWrap.PetscReal(tol), PetscWrap.PetscInt(maxiter))
+    @assert iszero(err)
+    return nothing
+end
+
 """Gather a distributed PETSc vector to rank 0 as a `Vector{ComplexF64}`: full
 length-`n` on rank 0, empty elsewhere. Wraps VecScatterCreateToZero / Begin / End /
 VecGetArray / VecScatterDestroy / VecDestroy."""

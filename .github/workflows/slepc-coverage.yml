@@ -17,7 +17,10 @@ on:
       - "src/Stability/onset.jl"
       - "src/Stability/biglobal.jl"
       - "src/solve.jl"
+      - "src/MHD/assembly.jl"
+      - "src/Stability/linear.jl"
       - "test/test_slepc_solve_coverage.jl"
+      - "test/slepc_assembly_regressions.jl"
 
 jobs:
   slepc-coverage:
@@ -92,6 +95,18 @@ jobs:
           julia --project=. -e 'using MPIPreferences; MPIPreferences.use_system_binary()'
           julia --project=. -e 'using Pkg; Pkg.build("PetscWrap"); Pkg.precompile()'
           julia --project=. --code-coverage=user test/test_slepc_solve_coverage.jl
+
+      - name: Check assembly and convergence controls on two MPI ranks
+        run: |
+          mpiexec -n 2 julia --project=. --code-coverage=user -e '
+            using Magrathea, PetscWrap, SlepcWrap
+            slepc_init!()
+            try
+                include("test/slepc_assembly_regressions.jl")
+            finally
+                slepc_finalize!()
+            end
+          '
 
       - uses: julia-actions/julia-processcoverage@v1
 

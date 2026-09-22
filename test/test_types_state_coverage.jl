@@ -348,7 +348,7 @@ end
         mechanical_bc=:bogus, E=_TSC_E)
 end
 
-@testset "solve_thermal_wind_balance!: stress-free BC + unforced-mode zero-fill" begin
+@testset "solve_thermal_wind_balance!: viscous boundary conditions and parity" begin
     Nr = 20
     cd = Magrathea.ChebyshevDiffn(Nr, [_TSC_CHI, 1.0], 2)
 
@@ -366,11 +366,11 @@ end
                                       _TSC_RA, _TSC_PR; mechanical_bc=:stress_free,
                                       E=_TSC_E)
     @test haskey(uphi, 0)
-    @test all(==(0.0), uphi[0])     # unforced ℓ=0 mode zeroed
+    @test all(isfinite, uphi[0]) # A scalar uφ projection can contain degree zero
     @test length(uphi[0]) == Nr
     @test all(isfinite, uphi[2]) || !haskey(uphi, 2)
     # at least one forced mode is non-trivial
-    @test any(haskey(uphi, L) && maximum(abs, uphi[L]) > 0 for L in (1, 3))
+    @test any(haskey(uphi, L) && maximum(abs, uphi[L]) > 0 for L in (0, 2, 4))
 
     # no_slip variant also runs and zero-fills the unforced ℓ=0 mode.
     uphi2 = Dict{Int,Vector{Float64}}()
@@ -378,7 +378,7 @@ end
     Magrathea.solve_thermal_wind_balance!(uphi2, duphi2, copy(theta), cd, _TSC_CHI,
                                       1.0, _TSC_RA, _TSC_PR;
                                       mechanical_bc=:no_slip, E=_TSC_E)
-    @test all(==(0.0), uphi2[0])
+    @test all(maximum(abs,v[[1,end]])<1e-9 for v in values(uphi2))
 end
 
 # =============================================================================

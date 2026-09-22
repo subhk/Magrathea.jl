@@ -16,6 +16,7 @@ include("sh_transform.jl")
 include("thermal_wind.jl")
 include("velocity_reconstruction.jl")
 include("audit_fixes.jl")
+include("review_regressions.jl")
 
 # v2.0 API tests
 include("test_types.jl")

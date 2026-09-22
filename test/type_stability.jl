@@ -412,53 +412,14 @@ end
     end
 end
 
-@testset "Thermal wind balance reuses mode-independent dense operator" begin
-    T = Float64
-    Nr = 48
-    cd = ChebyshevDiffn(Nr, T[0.35, 1.0], 2)
-    theta_coeffs = Dict{Int, Vector{T}}(
-        ℓ => fill(T(0.05) / T(ℓ + 1), Nr) for ℓ in 1:18)
-
-    uphi_coeffs = Dict{Int, Vector{T}}()
-    duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    Magrathea.solve_thermal_wind_balance!(
-        uphi_coeffs, duphi_dr_coeffs, theta_coeffs, cd, T(0.35), one(T), T(100), one(T))
-
-    GC.gc()
-    uphi_coeffs = Dict{Int, Vector{T}}()
-    duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    bytes = @allocated Magrathea.solve_thermal_wind_balance!(
-        uphi_coeffs, duphi_dr_coeffs, theta_coeffs, cd, T(0.35), one(T), T(100), one(T))
-
-    @test bytes < 2_000_000
-end
-
-@testset "Coupled thermal wind assembly avoids dense block temporaries" begin
-    T = Float64
-    Nr = 24
-    cd = ChebyshevDiffn(Nr, T[0.35, 1.0], 4)
-    theta_coeffs = Dict{Int, Vector{T}}(
-        ℓ => fill(T(0.02) / T(ℓ + 1), Nr) for ℓ in 1:3)
-
-    uphi_coeffs = Dict{Int, Vector{T}}()
-    duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    Magrathea.solve_thermal_wind_coupled!(
-        uphi_coeffs, duphi_dr_coeffs, theta_coeffs, 1, cd,
-        T(0.35), one(T), T(100), one(T);
-        E = T(1e-3), lmax = 4)
-
-    GC.gc()
-    uphi_coeffs = Dict{Int, Vector{T}}()
-    duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    bytes = @allocated Magrathea.solve_thermal_wind_coupled!(
-        uphi_coeffs, duphi_dr_coeffs, theta_coeffs, 1, cd,
-        T(0.35), one(T), T(100), one(T);
-        E = T(1e-3), lmax = 4)
-
-    # Threshold sized for the sparse-accumulation path with cross-platform/Julia
-    # headroom: macOS 1.11/1.12 land ~210 KB while Linux/Windows stay <185 KB. A
-    # dense-temporary regression would allocate far more (sibling guard uses 1 MB).
-    @test bytes < 524_288
+# The old per-degree scalar first-order solver allocation bounds do not apply
+# to the coupled vector-potential boundary-value problem. Its temperature-
+# independent angular cross-product projection should still be reused.
+@testset "Steady mean flow reuses angular Coriolis projections" begin
+    first=Magrathea._mean_coriolis(8,2,Float64)
+    second=Magrathea._mean_coriolis(8,2,Float64)
+    @test first[1] === second[1]
+    @test first[2] === second[2]
 end
 
 @testset "Triglobal unweighted coupling avoids quadrature node allocation" begin
@@ -469,33 +430,13 @@ end
     @test bytes < 512
 end
 
-@testset "Full meridional coupled solve reuses mode-independent radial work" begin
-    T = Float64
-    Nr = 32
-    lmax = 8
-    m = 1
-    cd = ChebyshevDiffn(Nr, T[0.35, 1.0], 2)
-    theta_coeffs = Dict{Tuple{Int,Int}, Vector{T}}(
-        (ℓ, m) => fill(T(0.05) / T(ℓ + 1), Nr) for ℓ in m:lmax)
-    uphi_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
-
-    function run_meridional(theta_coeffs, uphi_coeffs, cd)
-        ur_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
-        utheta_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
-        dur_dr_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
-        dutheta_dr_coeffs = Dict{Tuple{Int,Int}, Vector{T}}()
-        Magrathea.solve_meridional_coupled!(
-            ur_coeffs, utheta_coeffs, dur_dr_coeffs, dutheta_dr_coeffs,
-            theta_coeffs, uphi_coeffs, cd.x, cd.D1, cd.D2,
-            T(0.35), one(T), T(100), T(1e-3), one(T), m, lmax)
-        return ur_coeffs, utheta_coeffs
-    end
-
-    run_meridional(theta_coeffs, uphi_coeffs, cd)
-    GC.gc()
-    bytes = @allocated run_meridional(theta_coeffs, uphi_coeffs, cd)
-
-    @test bytes < 2_600_000
+@testset "Zero mean-flow forcing avoids coupled solves" begin
+    cd=ChebyshevDiffn(32,[0.35,1.0],2)
+    theta=Dict((2,1)=>zeros(32))
+    f=Magrathea._steady_mean_flow(theta,cd.x,cd.D1,cd.D2,1e-3,100.,1.,8,1)
+    @test isempty(f.p) && isempty(f.t)
+    bytes=@allocated Magrathea._steady_mean_flow(theta,cd.x,cd.D1,cd.D2,1e-3,100.,1.,8,1)
+    @test bytes<300_000
 end
 
 @testset "Symbolic spherical harmonic constructors preserve amplitude precision" begin
@@ -589,22 +530,11 @@ end
         verbose = false
     )
 
-    # Nonaxisymmetric advection now uses the correct vector-SH divergence
-    # (vecsh_advection) — a real pseudo-spectral transform per radius, heavier
-    # than the former approximate term-split but aliasing-free and correct. The
-    # meridional solve now also computes the sin(|m|φ) partner (signed-m), adding
-    # one extra block solve per |m| present. The m=0 sector now uses the full
-    # coupled thermal-wind operator (a dense block solve) instead of the diagonal
-    # heuristic — correct parity + satisfies the PDE.
-    #
-    # The θ-meridional u_θ solve was rewritten (audit #3) from the broken block-
-    # build (two BCs on a first-order operator + Tikhonov diagonal, PDE residual
-    # ~1e3) to the validated coupled-Galerkin structure (dense L_op + lu/gecon,
-    # pinv min-norm fallback when singular, inner BC only). This satisfies the
-    # thermal-wind PDE (residual ~1e-2, see test/audit_fixes.jl) at ~1 MB extra
-    # for lmax_bs=4 (measured 4.56 MB) — a deliberate correctness-for-allocation
-    # trade, not an accidental regression.
-    @test bytes < 10_000_000
+    # The new solve includes a dense coupled momentum BVP and an implicit
+    # spectral thermal transport matrix. Bound workspace relative to their
+    # total scalar temperature dimension, rather than the old scalar ODE.
+    nthermal = 19 * length(cd.x)  # lmax=4, |m|≤2
+    @test bytes < 64 * sizeof(T) * nthermal^2
 end
 
 @testset "Poisson mode solve avoids dense diagonal temporaries" begin

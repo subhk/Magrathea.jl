@@ -39,11 +39,9 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
               "supported; use the tau path for conducting/perfect conductor.")
     end
 
-    noslip = (p.bci == 1 && p.bco == 1)
-    fixedT = (p.bci_thermal == 0 && p.bco_thermal == 0)
-    Rpol = noslip ? recomb_clamped(T, N) : recomb_poloidal_stressfree(T, N, ri, ro)
-    Rtor = noslip ? recomb_dirichlet(T, N) : recomb_toroidal_stressfree(T, N, ri, ro)
-    Rtem = fixedT ? recomb_dirichlet(T, N) : recomb_neumann(T, N)
+    Rpol = recomb_poloidal_velocity(T, N, ri, ro; bci=p.bci, bco=p.bco)
+    Rtor = recomb_toroidal_velocity(T, N, ri, ro; bci=p.bci, bco=p.bco)
+    Rtem = recomb_temperature(T, N, ri, ro; bci=p.bci_thermal, bco=p.bco_thermal)
     Rg   = recomb_dirichlet(T, N)
 
     qof = Dict(:u => 4, :v => 2, :h => 2, :f => 2, :g => 2)
@@ -107,9 +105,15 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
     # ---- Temperature equation (q=2) ----
     for ℓ in Hls
         L = T(ℓ * (ℓ + 1)); H = idx[(:h, ℓ)]
-        B[H, H] += gb(bt(3,0,2), :h, :h, ℓ)
-        ℓ in Uls && (A[H, idx[(:u, ℓ)]] += gb((L * ri / gap) * bt(0,0,2), :h, :u, ℓ))
-        A[H, H] += gb(thermaD * (-L * bt(1,0,2) + 2 * bt(2,1,2) + bt(3,2,2)), :h, :h, ℓ)
+        if p.heating === :differential
+            B[H, H] += gb(bt(3,0,2), :h, :h, ℓ)
+            ℓ in Uls && (A[H, idx[(:u, ℓ)]] += gb((L * ri / gap) * bt(0,0,2), :h, :u, ℓ))
+            A[H, H] += gb(thermaD * (-L * bt(1,0,2) + 2 * bt(2,1,2) + bt(3,2,2)), :h, :h, ℓ)
+        else # internal heating: r² weighting and a conductive gradient ∝ r
+            B[H, H] += gb(bt(2,0,2), :h, :h, ℓ)
+            ℓ in Uls && (A[H, idx[(:u, ℓ)]] += gb(L * bt(2,0,2), :h, :u, ℓ))
+            A[H, H] += gb(thermaD * (-L * bt(0,0,2) + 2 * bt(1,1,2) + bt(2,2,2)), :h, :h, ℓ)
+        end
     end
 
     # ---- Toroidal velocity equation (q=2) ----

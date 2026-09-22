@@ -93,6 +93,10 @@ function validate_basic_state_consistency(bs, params)
         (:uphi_coeffs, bs.uphi_coeffs),
         (:dtheta_dr_coeffs, bs.dtheta_dr_coeffs),
         (:duphi_dr_coeffs, bs.duphi_dr_coeffs),
+        (:ur_coeffs, bs.ur_coeffs),
+        (:utheta_coeffs, bs.utheta_coeffs),
+        (:dur_dr_coeffs, bs.dur_dr_coeffs),
+        (:dutheta_dr_coeffs, bs.dutheta_dr_coeffs),
     )
     for (field_name, coefficient_dict) in coefficient_fields
         for coeffs in values(coefficient_dict)

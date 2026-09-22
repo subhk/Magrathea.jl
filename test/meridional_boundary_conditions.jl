@@ -2,11 +2,8 @@ using Test
 using LinearAlgebra
 using Magrathea
 
-@testset "Meridional circulation enforces only the inner radial BC" begin
-    # The (ẑ·∇) meridional operator is FIRST-ORDER in radius ⇒ exactly ONE radial
-    # BC per mode (inner); the outer boundary is determined by the ODE, not pinned.
-    # (The old solver imposed BOTH boundaries + a Tikhonov diagonal — over-constraint,
-    # audit #3 — and did not satisfy the thermal-wind PDE.)
+@testset "Meridional circulation enforces both radial boundaries" begin
+    # Viscosity permits both impermeability and tangential boundary conditions.
     cd = ChebyshevDiffn(10, [0.35, 1.0], 2)
     r = cd.x; D1 = cd.D1; D2 = cd.D2
     idx_inner = 1; idx_outer = length(r)
@@ -25,7 +22,7 @@ using Magrathea
         return uθ
     end
 
-    # No-slip (non-singular): inner u_θ = 0 enforced exactly; outer is FREE.
+    # No-slip at both boundaries.
     uθ = run_bc(:no_slip)
     outer_free = 0.0
     for ell in 1:2
@@ -33,7 +30,7 @@ using Magrathea
         @test abs(u[idx_inner]) < 1e-9 * max(norm(u), eps(Float64))
         outer_free = max(outer_free, abs(u[idx_outer]))
     end
-    @test outer_free > 1e-9          # outer boundary unconstrained (one-BC operator)
+    @test outer_free < 1e-9          # outer no-slip condition
 
     # Stress-free at m=1 has an exact geostrophic null mode (∝ r·Y_1^1); the solver
     # returns the finite minimum-norm solution rather than over-constraining.

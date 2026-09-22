@@ -58,6 +58,7 @@ module Magrathea
         meridional_basic_state,
         nonaxisymmetric_basic_state,
         basic_state,
+        mean_flow_velocity,
 
         # Self-consistent basic state (with advection)
         nonaxisymmetric_basic_state_selfconsistent,

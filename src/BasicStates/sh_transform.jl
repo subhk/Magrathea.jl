@@ -14,8 +14,7 @@
 #     m=0:  Ȳ_ℓ0  =    N_ℓ0  P_ℓ0(cosθ)
 #  with ∫ Ȳ_ℓm Ȳ_ℓ'm' dΩ = δ_{ℓℓ'} δ_{mm'},  N_ℓm = √((2ℓ+1)/4π · (ℓ-m)!/(ℓ+m)!).
 #
-#  NOT yet wired into the basic-state solvers (that needs the basic-state storage
-#  extended from cos-only to full ±m). Provided as the validated building block.
+#  Used by the steady vector-potential mean-flow solve and thermal transport.
 # =============================================================================
 
 """Quadrature grid + precomputed associated-Legendre / normalization tables."""
@@ -94,7 +93,13 @@ end
 function _sh_dYφ_over_sin(g::SHGrid{T}, ℓ::Int, m::Int, j::Int, k::Int) where {T}
     am = abs(m)
     (ℓ < am || am == 0 || ℓ > g.lmax || am > g.mmax) && return zero(T)
-    g.N[am][ℓ - am + 1] * (g.P[am][ℓ - am + 1, j] / _sh_sinθ(g, j)) * _sh_dφfac(g, m, k)
+    g.N[am][ℓ - am + 1] * _sh_P_over_sin(g,ℓ,am,j) * _sh_dφfac(g, m, k)
+end
+
+function _sh_P_over_sin(g::SHGrid{T},l,am,j) where T
+    s=_sh_sinθ(g,j)
+    s>0 && return g.P[am][l-am+1,j]/s
+    am==1 ? -g.μ[j]^(l+1)*T(l*(l+1))/2 : zero(T)
 end
 
 """Synthesize a scalar field on the grid from coeffs `Dict{(ℓ,m),value}` using
@@ -137,7 +142,7 @@ function sh_synthesize!(f::AbstractMatrix{T}, coeffs::AbstractDict{Tuple{Int,Int
         mi = m + g.mmax + 1
         mused[mi] = true
         if kind == 3
-            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * (Pam[row, j] / _sh_sinθ(g, j)); end
+            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * _sh_P_over_sin(g,ℓ,am,j); end
         elseif kind == 2
             @inbounds for j in 1:Nθ; Gθ[j, mi] += c * _sh_dPdθ(g, ℓ, am, j); end
         else  # kind == 1
@@ -254,18 +259,9 @@ function sh_horizontal_divergence!(div::AbstractDict{Tuple{Int,Int},T},
 end
 
 """
-    vecsh_advection(theta, dtheta_dr, ur, dur_dr, utheta, uphi, lmax, mmax, r) -> Dict
-
-Correct nonaxisymmetric advection forcing ū·∇T̄ = ∇·(ūT̄) (assumes incompressible
-ū, as for a basic state), computed in the vector-harmonic basis (aliasing-free).
-All coefficient dicts are `Dict{(ℓ,m), Vector}` over the radial grid `r`, in the
-real-orthonormal SH convention (cos for m>0, sin for m<0). Returns forcing in the
-same representation.
-
-Per radius:  ∇·(ūT̄) = (1/r²)∂_r(r² u_r T̄) + (1/r) ∇_h·(T̄ u_h)
-           = (2/r)·SH(u_r T̄) + SH(∂_r(u_r T̄)) + (1/r)·∇_h·(T̄ u_θ, T̄ u_φ)
-with ∂_r(u_r T̄) = (∂_r u_r) T̄ + u_r (∂_r T̄). Assembled from machine-precision-
-validated primitives (`sh_synthesize`/`sh_analyze` round-trip, `sh_horizontal_divergence`).
+Project u·∇T directly in the real orthonormal scalar-harmonic basis. The
+`dur_dr` argument is retained for compatibility and is not needed for this
+advective form. Constructed mean states use vector-harmonic velocity directly.
 """
 function vecsh_advection(theta::AbstractDict{Tuple{Int,Int},Vector{T}},
                          dtheta_dr::AbstractDict{Tuple{Int,Int},Vector{T}},
@@ -275,43 +271,15 @@ function vecsh_advection(theta::AbstractDict{Tuple{Int,Int},Vector{T}},
                          uphi::AbstractDict{Tuple{Int,Int},Vector{T}},
                          lmax::Int, mmax::Int, r::Vector{T}) where {T<:Real}
     g = sh_grid(lmax, mmax, T)
-    Nr = length(r)
-    forcing = Dict{Tuple{Int,Int},Vector{T}}()
-    for m in -mmax:mmax, ℓ in abs(m):lmax
-        forcing[(ℓ, m)] = zeros(T, Nr)
-    end
-    # Per-radius scratch, allocated once and reused (the per-radius slice-Dict
-    # rebuilds and synthesized/product grids were the top allocators here).
-    fields = (theta, dtheta_dr, ur, dur_dr, utheta, uphi)
-    slices = ntuple(_ -> Dict{Tuple{Int,Int},T}(), 6)
-    Nθ = _sh_Nθ(g); Nφ = _sh_Nφ(g)
-    grids = ntuple(_ -> Matrix{T}(undef, Nθ, Nφ), 6)
-    Tg, dTr, Urg, dUr, Uθg, Uφg = grids
-    PA = Matrix{T}(undef, Nθ, Nφ); PB = Matrix{T}(undef, Nθ, Nφ)
-    Cr   = Dict{Tuple{Int,Int},T}()
-    CdVr = Dict{Tuple{Int,Int},T}()
-    hdiv = Dict{Tuple{Int,Int},T}()
-    for i in 1:Nr
-        for (s, d) in zip(slices, fields)
-            for (key, v) in d
-                s[key] = v[i]
-            end
-        end
-        for (fg, s) in zip(grids, slices)
-            sh_synthesize!(fg, s, g)
-        end
-        @. PA = Urg * Tg
-        sh_analyze!(Cr, PA, g)                                # SH(u_r T̄)
-        @. PA = dUr * Tg + Urg * dTr
-        sh_analyze!(CdVr, PA, g)                              # SH(∂_r(u_r T̄))
-        @. PA = Uθg * Tg
-        @. PB = Uφg * Tg
-        sh_horizontal_divergence!(hdiv, PA, PB, g)
-        ri = r[i]
-        for m in -mmax:mmax, ℓ in abs(m):lmax
-            forcing[(ℓ, m)][i] = (T(2) / ri) * get(Cr, (ℓ, m), zero(T)) +
-                                 get(CdVr, (ℓ, m), zero(T)) +
-                                 (one(T) / ri) * get(hdiv, (ℓ, m), zero(T))
+    forcing = Dict((l,m)=>zeros(T,length(r)) for m in -mmax:mmax for l in abs(m):lmax)
+    for i in eachindex(r)
+        at(d)=Dict(k=>v[i] for (k,v) in d)
+        temp=at(theta)
+        adv = sh_synthesize(at(ur),g).*sh_synthesize(at(dtheta_dr),g) +
+            (sh_synthesize(at(utheta),g).*sh_synthesize(temp,g;Yf=_sh_dYθ) +
+             sh_synthesize(at(uphi),g).*sh_synthesize(temp,g;Yf=_sh_dYφ_over_sin))./r[i]
+        for (k,v) in sh_analyze(adv,g)
+            forcing[k][i]=v
         end
     end
     forcing

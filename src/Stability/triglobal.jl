@@ -333,30 +333,29 @@ end
 
 """Extract the axisymmetric part of a 3D basic state for diagonal m blocks."""
 function axisymmetric_basic_state(basic_state::BasicState3D{T}) where T
-    lmax_bs = basic_state.lmax_bs
-    Nr = basic_state.Nr
-    theta_coeffs = Dict{Int, Vector{T}}()
-    uphi_coeffs = Dict{Int, Vector{T}}()
-    dtheta_dr_coeffs = Dict{Int, Vector{T}}()
-    duphi_dr_coeffs = Dict{Int, Vector{T}}()
-    zero_coeff = zeros(T, Nr)
+    return _axisymmetric_state(basic_state)
+end
 
-    for ℓ in 0:lmax_bs
-        theta_coeffs[ℓ] = get(basic_state.theta_coeffs, (ℓ, 0), zero_coeff)
-        uphi_coeffs[ℓ] = get(basic_state.uphi_coeffs, (ℓ, 0), zero_coeff)
-        dtheta_dr_coeffs[ℓ] = get(basic_state.dtheta_dr_coeffs, (ℓ, 0), zero_coeff)
-        duphi_dr_coeffs[ℓ] = get(basic_state.duphi_dr_coeffs, (ℓ, 0), zero_coeff)
+# Carry the axisymmetric circulation into the same meridional coupling path
+# used for the nonaxisymmetric flow. Previously BasicState could only carry uφ.
+function _append_axisymmetric_meridional_coo!(rows,cols,vals,op::LinearStabilityOperator{T};
+                                              owned_julia_rows=nothing) where T
+    bs=op.params.basic_state
+    bs===nothing && return
+    any(any(!iszero,v) for d in (bs.ur_coeffs,bs.utheta_coeffs) for v in values(d)) || return
+    ongrid(d)=Dict((l,0)=>interpolate_to_grid(v,bs.r,op.r) for (l,v) in d)
+    ur=ongrid(bs.ur_coeffs); uθ=ongrid(bs.utheta_coeffs)
+    dur=ongrid(bs.dur_dr_coeffs); duθ=ongrid(bs.dutheta_dr_coeffs)
+    C=zeros(Complex{T},op.total_dof,op.total_dof)
+    idx=_full_index_map(op); m=op.params.m
+    for l in union(keys(bs.ur_coeffs),keys(bs.utheta_coeffs))
+        add_radial_advection_coupling!(C,op,op,idx,idx,m,m,l,0,op.r,ur,Matrix(op.cd.D1),op.params)
+        add_meridional_advection_coupling!(C,op,op,idx,idx,m,m,l,0,op.r,uθ,op.params)
+        add_radial_velocity_shear!(C,op,op,idx,idx,m,m,l,0,op.r,dur,op.params)
+        add_meridional_velocity_shear!(C,op,op,idx,idx,m,m,l,0,op.r,duθ,op.params)
     end
-
-    return BasicState(
-        lmax_bs = lmax_bs,
-        Nr = Nr,
-        r = basic_state.r,
-        theta_coeffs = theta_coeffs,
-        uphi_coeffs = uphi_coeffs,
-        dtheta_dr_coeffs = dtheta_dr_coeffs,
-        duphi_dr_coeffs = duphi_dr_coeffs
-    )
+    _emit_block!(rows,cols,vals,1:op.total_dof,1:op.total_dof,C;owned=owned_julia_rows)
+    nothing
 end
 
 """Return true when an axisymmetric basic state has any active temperature or flow."""

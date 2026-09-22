@@ -4,23 +4,14 @@
 #
 #  This example demonstrates computing the basic state (temperature + thermal
 #  wind flow) driven by:
-#    - Inner boundary: constant heat flux (uniform heating)
+#    - Inner boundary: uniform fixed temperature
 #    - Outer boundary: -Y₂₀ heat flux pattern (latitudinal cooling variation)
 #
-#  Key difference from the Y₂₂ case:
-#    - Y₂₀ is AXISYMMETRIC (m=0), so ∂T̄/∂φ = 0
-#    - No meridional circulation from geostrophic balance!
-#    - Only zonal flow (u_φ) from thermal wind: 2Ω ∂ū_φ/∂z = (Ra E²/Pr)(1/r)∂T̄/∂θ
-#
-#  The Y₂₀ = (3cos²θ - 1)/2 pattern creates:
-#    - Enhanced cooling at poles (θ = 0, π)
-#    - Reduced cooling at equator (θ = π/2)
-#    - This drives differential rotation (zonal jets)
-#
-#  Physics:
-#    - Heat equation: κ∇²T̄ = 0 (no advection for axisymmetric T with m=0)
-#    - Thermal wind: 2Ω ∂ū_φ/∂z = (Ra E²/Pr) (1/r) ∂T̄/∂θ
-#    - Meridional circulation: u_r = u_θ = 0 (no φ-forcing for m=0)
+#  Axisymmetric forcing drives both zonal flow and viscous meridional circulation.
+#  The momentum solve is Stokes–Coriolis with both mechanical boundaries.
+#  The standard temperature constructor neglects advection; the self-consistent
+#  constructor includes transport with diffusivity E/Pr. Momentum inertia is
+#  neglected in both. Use mean_flow_velocity for physical vector fields.
 # =============================================================================
 
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
@@ -197,7 +188,7 @@ if is_3d
             end
         end
         if !has_meridional
-            println("  (No meridional flow - expected for axisymmetric basic state!)")
+            println("  (No meridional component above the reporting threshold)")
         end
     end
 
@@ -267,7 +258,8 @@ else
     end
 
     println("\nMeridional flow:")
-    println("  u_θ = 0, u_r = 0 (axisymmetric basic state has no meridional circulation)")
+    println("  max coefficient |u_θ| = ", maximum(maximum(abs,v) for v in values(bs.utheta_coeffs);init=0.0))
+    println("  max coefficient |u_r| = ", maximum(maximum(abs,v) for v in values(bs.ur_coeffs);init=0.0))
 end
 
 # =============================================================================
@@ -294,13 +286,13 @@ println("   - Creates prograde/retrograde jets at different latitudes")
 println()
 println("3. Meridional circulation:")
 println("   - For m=0 (axisymmetric): ∂T̄/∂φ = 0")
-println("   - Therefore: 2Ω(ẑ·∇)ū_θ = -(Ra E²/Pr)/(r sinθ) × ∂T̄/∂φ = 0")
-println("   - NO meridional circulation in the geostrophic limit!")
-println("   - This is the KEY difference from non-axisymmetric (m≠0) cases")
+println("   - Viscosity and both mechanical boundaries couple the velocity components")
+println("   - The viscous solution generally includes meridional circulation")
+println("   - Use the self-consistent thermal solver when heat advection matters")
 println()
 println("4. Comparison with Y₂₂ case:")
 println("   - Y₂₂ (m=2): Has ∂T̄/∂φ ≠ 0, drives meridional flow")
-println("   - Y₂₀ (m=0): Has ∂T̄/∂φ = 0, no meridional forcing")
+println("   - Y₂₀ (m=0): Has ∂T̄/∂φ = 0 but can have viscous meridional circulation")
 println("   - Both drive zonal flow through ∂T̄/∂θ")
 println()
 
@@ -316,19 +308,19 @@ if is_3d
     if haskey(bs.theta_coeffs, (2, 0))
         T_20 = bs.theta_coeffs[(2, 0)]
 
-        # Find the zonal velocity mode (should be Y30 or Y10)
-        u_30 = haskey(bs.uphi_coeffs, (3, 0)) ? bs.uphi_coeffs[(3, 0)] : zeros(Nr)
-        u_10 = haskey(bs.uphi_coeffs, (1, 0)) ? bs.uphi_coeffs[(1, 0)] : zeros(Nr)
+        # Find the zonal velocity mode (scalar projection has even degree for Y20 forcing)
+        u_40 = haskey(bs.uphi_coeffs, (4, 0)) ? bs.uphi_coeffs[(4, 0)] : zeros(Nr)
+        u_20 = haskey(bs.uphi_coeffs, (2, 0)) ? bs.uphi_coeffs[(2, 0)] : zeros(Nr)
 
         println("\nY₂₀ temperature and resulting zonal velocity:")
-        println("  r          T̄₂₀(r)         ū_φ,₃₀(r)       ū_φ,₁₀(r)")
+        println("  r          T̄₂₀(r)         ū_φ,₄₀(r)       ū_φ,₂₀(r)")
         println("  " * "-"^60)
 
         n_print = min(12, Nr)
         step = max(1, Nr ÷ n_print)
         for i in 1:step:Nr
             @printf("  %.4f     %+.4e     %+.4e     %+.4e\n",
-                    r[i], T_20[i], u_30[i], u_10[i])
+                    r[i], T_20[i], u_40[i], u_20[i])
         end
     end
 else
@@ -337,18 +329,18 @@ else
         T_20 = bs.theta_coeffs[2]
 
         # Find the zonal velocity modes
-        u_30 = haskey(bs.uphi_coeffs, 3) ? bs.uphi_coeffs[3] : zeros(Nr)
-        u_10 = haskey(bs.uphi_coeffs, 1) ? bs.uphi_coeffs[1] : zeros(Nr)
+        u_40 = haskey(bs.uphi_coeffs, 4) ? bs.uphi_coeffs[4] : zeros(Nr)
+        u_20 = haskey(bs.uphi_coeffs, 2) ? bs.uphi_coeffs[2] : zeros(Nr)
 
         println("\nY₂₀ temperature and resulting zonal velocity:")
-        println("  r          T̄₂₀(r)         ū_φ,₃₀(r)       ū_φ,₁₀(r)")
+        println("  r          T̄₂₀(r)         ū_φ,₄₀(r)       ū_φ,₂₀(r)")
         println("  " * "-"^60)
 
         n_print = min(12, Nr)
         step = max(1, Nr ÷ n_print)
         for i in 1:step:Nr
             @printf("  %.4f     %+.4e     %+.4e     %+.4e\n",
-                    r[i], T_20[i], u_30[i], u_10[i])
+                    r[i], T_20[i], u_40[i], u_20[i])
         end
     end
 end
@@ -381,11 +373,11 @@ if is_3d
 
         if u_theta_max < 1e-10 && u_r_max < 1e-10
             println()
-            println("  ✓ Meridional circulation is negligible (as expected for m=0)")
+            println("  ✓ Meridional coefficients are below the reporting threshold")
         end
 
         # Rossby number estimate
-        Ro = u_phi_max * E
+        Ro = u_phi_max # outer-radius, rotation-time velocity units
         @printf("\n  Rossby number Ro = U/(ΩL) ≈ %.4e\n", Ro)
         @printf("  (Geostrophic balance valid for Ro << 1)\n")
     end
@@ -398,10 +390,10 @@ else
 
         println()
         @printf("  max|ū_φ|  = %.4e  (zonal flow)\n", u_phi_max)
-        println("  max|ū_θ|  = 0  (no meridional flow for axisymmetric case)")
-        println("  max|ū_r|  = 0  (no radial flow for axisymmetric case)")
+        println("  max coefficient |ū_θ| = ", maximum(maximum(abs,v) for v in values(bs.utheta_coeffs);init=0.0))
+        println("  max coefficient |ū_r| = ", maximum(maximum(abs,v) for v in values(bs.ur_coeffs);init=0.0))
 
-        Ro = u_phi_max * E
+        Ro = u_phi_max # outer-radius, rotation-time velocity units
         @printf("\n  Rossby number Ro = U/(ΩL) ≈ %.4e\n", Ro)
         @printf("  (Geostrophic balance valid for Ro << 1)\n")
     end

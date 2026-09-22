@@ -127,6 +127,8 @@ function _eps_solve_and_gather(Amat, Bmat, n::Int;
     _eps_set_dimensions(eps, nev)
     EPSSetTarget(eps, PetscScalar(target))
     EPSSetWhichEigenpairs(eps, EPS_TARGET_MAGNITUDE)
+    _eps_set_tolerances(eps, tol, maxiter)
+    # Explicit PETSc options may override these Julia keyword defaults.
     EPSSetFromOptions(eps)        # GNHEP + sinvert + MUMPS come from slepc_init! opts
     EPSSetUp(eps)
     EPSSolve(eps)
@@ -150,8 +152,10 @@ function _eps_solve_and_gather(Amat, Bmat, n::Int;
         rank == 0 && (vecs[:, j + 1] .= full)
     end
 
+    effective_tol, effective_maxiter = EPSGetTolerances(eps)
     info = Dict{String,Any}("solver" => :slepc, "strategy" => :shift_invert,
         "target" => target, "nconv" => nconv, "selection" => selection,
+        "tol" => effective_tol, "maxiter" => effective_maxiter,
         "ranks" => MPI.Comm_size(MPI.COMM_WORLD))
 
     EPSDestroy(eps); MatDestroy(Amat); MatDestroy(Bmat)   # NOT SlepcFinalize (explicit lifecycle)
@@ -182,10 +186,10 @@ function _create_dist_mat(n::Int)
 end
 
 """Preallocate and fill the owned rows of a distributed matrix from COO triplets.
-`rows`/`cols` are 1-based Julia indices, `vals` complex. Inserts only entries whose
+`rows`/`cols` are 1-based Julia indices, `vals` complex. Accumulates entries whose
 row lies in this rank's owned band `[rstart, rend)` (0-based). The preallocation
-counts (`_owned_coo_nnz`) are computed from the SAME triplet stream, so they match
-exactly what is inserted."""
+counts (`_owned_coo_nnz`) count unique coordinates. Repeated coordinates are summed,
+matching Julia's `sparse(rows, cols, vals)` assembly."""
 function _fill_dist_mat!(mat, rows, cols, vals, rstart::Int, rend::Int)
     PI = PetscWrap.PetscInt
     d, o = Magrathea._owned_coo_nnz(rows, cols, rstart, rend)
@@ -193,7 +197,7 @@ function _fill_dist_mat!(mat, rows, cols, vals, rstart::Int, rend::Int)
     @inbounds for k in eachindex(rows)
         r0 = rows[k] - 1
         if rstart <= r0 < rend
-            MatSetValue(mat, r0, cols[k] - 1, PetscScalar(vals[k]), INSERT_VALUES)
+            MatSetValue(mat, r0, cols[k] - 1, PetscScalar(vals[k]), ADD_VALUES)
         end
     end
     MatAssemblyBegin(mat, MAT_FINAL_ASSEMBLY); MatAssemblyEnd(mat, MAT_FINAL_ASSEMBLY)

@@ -28,8 +28,11 @@ else
         op = OnsetParams(E=1e-3, Pr=1.0, Ra=1.0e3, χ=0.35, m=2, lmax=6, Nr=16)
 
         @testset "OnsetProblem solve" begin
-            r = Magrathea.solve(OnsetProblem(op); nev=4, sigma=0.0)
+            r = Magrathea.solve(OnsetProblem(op); nev=4, sigma=0.0,
+                                tol=2e-9, maxiter=321)
             @test finite_vals(r)
+            @test r.extra.info["tol"] == 2e-9
+            @test r.extra.info["maxiter"] == 321
         end
 
         @testset "MHDProblem solve (axial + dipole)" begin
@@ -64,5 +67,6 @@ else
         end
     end
 
+    include("slepc_assembly_regressions.jl")
     Magrathea.slepc_finalize!()
 end

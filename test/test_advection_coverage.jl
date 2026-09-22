@@ -235,7 +235,7 @@ end
         @test length(dur[key]) == Nr && length(duθ[key]) == Nr
     end
     # zero-amplitude mode yields exact zeros (early branch)
-    @test all(==(0.0), uθ[(4, 2)])
+    @test maximum(abs, uθ[(4, 2)]) > 0 # Coriolis couples unforced degrees
 
     # --- stress_free branch (lines 779-788)
     ur_s = _empty_c(); uθ_s = _empty_c(); dur_s = _empty_c(); duθ_s = _empty_c()
@@ -367,14 +367,14 @@ end
     bsA, infoA = Magrathea.basic_state_selfconsistent(cd, _CHI, _E, _RA, _PR;
                                                   temperature_bc=Magrathea.Y20(0.1))
     @test bsA isa Magrathea.BasicState
-    @test infoA === nothing
+    @test infoA isa NamedTuple
     @test maximum(abs, bsA.theta_coeffs[2]) > 0
 
     # Axisymmetric flux BC also routes through the standard solver.
     bsAf, infoAf = Magrathea.basic_state_selfconsistent(cd, _CHI, _E, _RA, _PR;
                                                     flux_bc=Magrathea.Y00(-1.0) + Magrathea.Y20(0.1))
     @test bsAf isa Magrathea.BasicState
-    @test infoAf === nothing
+    @test infoAf isa NamedTuple
 
     # Non-axisymmetric temperature BC -> self-consistent 3D solver (BasicState3D).
     bsN, infoN = Magrathea.basic_state_selfconsistent(cd, _CHI, _E, _RA, _PR;

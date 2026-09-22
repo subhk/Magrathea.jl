@@ -205,15 +205,21 @@ end
 
 """Per-owned-row diagonal/off-diagonal nnz from COO triplets, for the owned PETSc row
 block `[rstart, rend)` (0-based, half-open), diagonal band = same column range. `rows`
-and `cols` are 1-based Julia indices. Returns `(d_nnz, o_nnz)`, length `rend-rstart`."""
+and `cols` are 1-based Julia indices. Repeated coordinates count once, even when
+several physical terms contribute to an entry. Returns `(d_nnz, o_nnz)`, length
+`rend-rstart`."""
 function _owned_coo_nnz(rows::AbstractVector{<:Integer}, cols::AbstractVector{<:Integer},
                         rstart::Int, rend::Int)
     nloc = rend - rstart
     d = zeros(Int, nloc); o = zeros(Int, nloc)
+    seen = Set{Tuple{Int,Int}}()
     @inbounds for k in eachindex(rows)
         r0 = rows[k] - 1
         if rstart <= r0 < rend
             c0 = cols[k] - 1
+            entry = (r0, c0)
+            entry in seen && continue
+            push!(seen, entry)
             i = r0 - rstart + 1
             (rstart <= c0 < rend) ? (d[i] += 1) : (o[i] += 1)
         end

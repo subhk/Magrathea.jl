@@ -165,6 +165,10 @@ SLEPc backend with shift-invert method.
 - `krylovdim::Union{Nothing,Int}=nothing`: Krylov subspace dimension
 - `verbosity::Int=0`: Verbosity level for the eigensolver
 
+`tol` and `maxiter` configure SLEPc's convergence controls. Explicit `-eps_tol`
+and `-eps_max_it` options passed to `slepc_init!` take precedence. The effective
+values are returned in `info["tol"]` and `info["maxiter"]`.
+
 # Returns
 - `eigenvalues::Vector{Complex}`: Computed eigenvalues σ = σ_r + iω
 - `eigenvectors::Matrix{Complex}`: Corresponding eigenvectors

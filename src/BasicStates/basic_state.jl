@@ -22,7 +22,8 @@ Holds the axisymmetric (m=0) basic state for linear stability analysis.
 The basic state consists of:
 - Temperature: θ̄(r,θ) = Σ_ℓ θ̄_ℓ0(r) Y_ℓ0(θ)
 - Zonal flow: ū_φ(r,θ) = Σ_ℓ ū_φ,ℓ0(r) Y_ℓ0(θ)
-- No meridional flow: ū_r = ū_θ = 0
+- Meridional circulation: ū_r and ū_θ from the same viscous solve
+- `flow`: authoritative divergence-free vector-harmonic representation
 
 Fields:
 - `lmax_bs::Int` - Maximum spherical harmonic degree for basic state
@@ -41,6 +42,11 @@ Fields:
     uphi_coeffs::Dict{Int,Vector{T}}
     dtheta_dr_coeffs::Dict{Int,Vector{T}}
     duphi_dr_coeffs::Dict{Int,Vector{T}}
+    ur_coeffs::Dict{Int,Vector{T}} = empty(theta_coeffs)
+    utheta_coeffs::Dict{Int,Vector{T}} = empty(theta_coeffs)
+    dur_dr_coeffs::Dict{Int,Vector{T}} = empty(theta_coeffs)
+    dutheta_dr_coeffs::Dict{Int,Vector{T}} = empty(theta_coeffs)
+    flow::Union{Nothing,SolenoidalMeanFlow{T}} = nothing
 end
 
 
@@ -51,7 +57,7 @@ Holds a non-axisymmetric (3D) basic state for tri-global instability analysis.
 
 The basic state has both meridional AND longitudinal variations:
 - Temperature: θ̄(r,θ,φ) = Σ_ℓ Σ_m_bs θ̄_ℓm_bs(r) Y_ℓm_bs(θ,φ)
-- Velocity components: ū_r, ū_θ, ū_φ from thermal-wind/geostrophic balance
+- Velocity components: ū_r, ū_θ, ū_φ from the steady Stokes–Coriolis balance
 
 This enables studying onset of convection on top of 3D thermal and flow structures,
 such as:
@@ -94,6 +100,7 @@ The eigenvalue problem becomes block-coupled across different m values.
     dur_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}
     dutheta_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}
     duphi_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}
+    flow::Union{Nothing,SolenoidalMeanFlow{T}} = nothing
 end
 
 
@@ -108,6 +115,20 @@ end
 #
 #  These can be passed directly to basic state functions.
 # =============================================================================
+
+function _axisymmetric_state(bs::BasicState3D{T}) where T
+    axis(d)=Dict(l=>v for ((l,m),v) in d if m==0)
+    f=bs.flow
+    if f !== nothing
+        only0(d)=Dict(k=>v for (k,v) in d if k[2]==0)
+        f=SolenoidalMeanFlow(f.lmax,0,f.r,only0(f.p),only0(f.t),only0(f.dp),only0(f.d2p),only0(f.dt))
+    end
+    BasicState(lmax_bs=bs.lmax_bs,Nr=bs.Nr,r=bs.r,
+        theta_coeffs=axis(bs.theta_coeffs),dtheta_dr_coeffs=axis(bs.dtheta_dr_coeffs),
+        uphi_coeffs=axis(bs.uphi_coeffs),duphi_dr_coeffs=axis(bs.duphi_dr_coeffs),
+        ur_coeffs=axis(bs.ur_coeffs),utheta_coeffs=axis(bs.utheta_coeffs),
+        dur_dr_coeffs=axis(bs.dur_dr_coeffs),dutheta_dr_coeffs=axis(bs.dutheta_dr_coeffs),flow=f)
+end
 
 """
     SphericalHarmonicBC{T<:Real}
@@ -465,9 +486,9 @@ function conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
 
     # Initialize dictionaries
     theta_coeffs = Dict{Int,Vector{T}}()
-    uphi_coeffs = Dict{Int,Vector{T}}()
-    dtheta_dr_coeffs = Dict{Int,Vector{T}}()
-    duphi_dr_coeffs = Dict{Int,Vector{T}}()
+    uphi_coeffs = empty(theta_coeffs)
+    dtheta_dr_coeffs = empty(theta_coeffs)
+    duphi_dr_coeffs = empty(theta_coeffs)
 
     # Only ℓ=0 component is non-zero
     # Y_00 = 1/√(4π), so θ̄_00(r) = √(4π) × θ_cond(r)
@@ -498,72 +519,15 @@ end
 
 
 """
-    meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
-                          lmax_bs::Int, amplitude::T;
-                          mechanical_bc::Symbol=:no_slip,
-                          thermal_bc::Symbol=:fixed_temperature,
-                          outer_flux_mean::T=zero(T),
-                          outer_flux_Y20::T=zero(T)) where T
+Construct the axisymmetric conductive-temperature / viscous mean-flow state.
+The outer anomaly is `amplitude * P₂(cosθ)` for fixed temperature, or
+`outer_flux_Y20 * P₂(cosθ)` for fixed flux. The inner temperature is uniform.
 
-Create a basic state with meridional temperature variation at the outer boundary.
-
-# Fixed Temperature Boundary Conditions (default)
-The inner boundary is held at uniform temperature:
-    θ̄(r_i, θ) = 1
-
-The outer boundary has zero-mean meridional variation:
-    θ̄(r_o, θ) = amplitude × Y_20(θ)
-
-This represents differential heating (e.g., equator hotter than poles).
-
-# Fixed Flux Boundary Conditions
-The inner boundary is held at uniform temperature:
-    θ̄(r_i, θ) = 1
-
-The outer boundary has prescribed heat flux:
-    dθ̄/dr|_{r_o} = outer_flux_mean + outer_flux_Y20 × Y_20(θ)
-
-This represents:
-- `outer_flux_mean` : Mean (spherically symmetric) heat flux at outer boundary
-- `outer_flux_Y20` : Meridional variation in heat flux (amplitude of Y_20 component)
-
-# Arguments
-- `cd` - Chebyshev differentiation structure
-- `χ` - Radius ratio r_i/r_o
-- `E` - Ekman number (REQUIRED for thermal wind balance scaling)
-- `Ra` - Rayleigh number (needed for thermal wind balance)
-- `Pr` - Prandtl number
-- `lmax_bs` - Maximum ℓ for basic state expansion
-- `amplitude` - For :fixed_temperature: amplitude of Y_20 temperature at outer boundary
-               For :fixed_flux: amplitude of Y_20 FLUX at outer boundary (overrides outer_flux_Y20)
-- `mechanical_bc` - Mechanical BCs: `:no_slip` (default) or `:stress_free`
-- `thermal_bc` - Outer thermal BC: `:fixed_temperature` (default) or `:fixed_flux`
-- `outer_flux_mean` - Mean heat flux at outer (for :fixed_flux only)
-- `outer_flux_Y20` - Y_20 flux amplitude at outer (for :fixed_flux only, overridden by amplitude)
-
-# Physical Examples
-
-1. Differential heating with fixed temperatures:
-   ```julia
-   bs = meridional_basic_state(cd, χ, E, Ra, Pr, 4, 0.1)
-   # θ̄(r_i) = 1 (uniform hot), θ̄(r_o) = 0.1 × Y_20 (equator warmer than poles)
-   ```
-
-2. Fixed inner temperature, uniform flux out:
-   ```julia
-   bs = meridional_basic_state(cd, χ, E, Ra, Pr, 4, 0.0;
-                               thermal_bc=:fixed_flux,
-                               outer_flux_mean=-1.0)
-   # θ̄(r_i) = 1, dθ̄/dr|_{r_o} = -1 (heat flowing out uniformly)
-   ```
-
-3. Fixed inner temperature, meridionally-varying flux:
-   ```julia
-   bs = meridional_basic_state(cd, χ, E, Ra, Pr, 4, 0.1;
-                               thermal_bc=:fixed_flux,
-                               outer_flux_mean=-1.0)
-   # θ̄(r_i) = 1, dθ̄/dr|_{r_o} = -1 + 0.1 × Y_20 (more heat loss at equator)
-   ```
+All three velocity components solve the steady Stokes–Coriolis equations in a
+solenoidal vector-harmonic basis, with both mechanical boundaries enforced.
+`Ra` is shell-gap based. This neglects momentum inertia and temperature
+advection; use `basic_state_selfconsistent` to include temperature advection.
+Use `mean_flow_velocity` to evaluate the full vector field.
 """
 function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
                                lmax_bs::Int, amplitude::T;
@@ -584,9 +548,9 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
 
     # Initialize dictionaries
     theta_coeffs = Dict{Int,Vector{T}}()
-    dtheta_dr_coeffs = Dict{Int,Vector{T}}()
-    uphi_coeffs = Dict{Int,Vector{T}}()
-    duphi_dr_coeffs = Dict{Int,Vector{T}}()
+    dtheta_dr_coeffs = empty(theta_coeffs)
+    uphi_coeffs = empty(theta_coeffs)
+    duphi_dr_coeffs = empty(theta_coeffs)
 
     # Spherical harmonic normalization for Y_20
     norm_Y20 = sqrt(T(5) / (T(4) * T(pi)))
@@ -654,27 +618,16 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
         duphi_dr_coeffs[ℓ] = zeros(T, Nr)
     end
 
-    # =========================================================================
-    # Solve thermal wind balance for ū_φ
-    # =========================================================================
-    # Use the full coupled operator (not the diagonal heuristic): the diagonal
-    # solver placed the zonal flow at the wrong (odd-L) parity and did not satisfy
-    # the thermal-wind PDE. The coupled solve (m_bs=0) yields the correct
-    # equatorially-symmetric (even-L) flow that satisfies the balance.
-    solve_thermal_wind_coupled!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs, 0,
-                                cd, r_i, r_o, Ra, Pr;
-                                mechanical_bc=mechanical_bc,
-                                E=E)
-
-    return BasicState(
-        lmax_bs = lmax_bs,
-        Nr = Nr,
-        r = r,
-        theta_coeffs = theta_coeffs,
-        uphi_coeffs = uphi_coeffs,
-        dtheta_dr_coeffs = dtheta_dr_coeffs,
-        duphi_dr_coeffs = duphi_dr_coeffs
-    )
+    theta3 = Dict((l,0)=>v for (l,v) in theta_coeffs)
+    flow = _steady_mean_flow(theta3, r, cd.D1, cd.D2, E, Ra, Pr, lmax_bs, 0;
+                             mechanical_bc=mechanical_bc)
+    ur, utheta, uphi, dur, dutheta, duphi = _mean_flow_components(flow)
+    axis(d) = Dict(l=>v for ((l,m),v) in d if m==0)
+    return BasicState(lmax_bs=lmax_bs, Nr=Nr, r=r,
+        theta_coeffs=theta_coeffs, dtheta_dr_coeffs=dtheta_dr_coeffs,
+        uphi_coeffs=axis(uphi), duphi_dr_coeffs=axis(duphi),
+        ur_coeffs=axis(ur), utheta_coeffs=axis(utheta),
+        dur_dr_coeffs=axis(dur), dutheta_dr_coeffs=axis(dutheta), flow=flow)
 end
 
 
@@ -851,6 +804,23 @@ function evaluate_basic_state(bs::BasicState{T}, r_eval::T, theta_eval::T) where
         end
     end
 
+    if bs.flow !== nothing
+        # Axisymmetric uφ is the toroidal vector harmonic t/r * ∂θY.
+        # Use it directly instead of differentiating a scalar projection.
+        uphi_bar = zero(T); duphi_dr = zero(T); duphi_dtheta = zero(T)
+        for ((l,m),values) in bs.flow.t
+            m==0 || continue
+            t = _mean_barycentric(bs.r,values,r_eval)
+            dt = _mean_barycentric(bs.r,bs.flow.dt[(l,m)],r_eval)
+            Y = norms[l+1]*P[l+1]
+            dY = -sinθ*norms[l+1]*dPdx[l+1]
+            d2Y = x*norms[l+1]*dPdx[l+1]-l*(l+1)*Y
+            uphi_bar += t/r_eval*dY
+            duphi_dr += (dt/r_eval-t/r_eval^2)*dY
+            duphi_dtheta += t/r_eval*d2Y
+        end
+    end
+
     return (
         theta_bar = theta_bar,
         uphi_bar = uphi_bar,
@@ -917,90 +887,21 @@ end
 # =============================================================================
 
 """
-    nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::Real, Pr::Real,
-                                lmax_bs::Int, mmax_bs::Int,
-                                amplitudes::AbstractDict;
-                                mechanical_bc::Symbol=:no_slip,
-                                thermal_bc::Symbol=:fixed_temperature,
-                                outer_fluxes::AbstractDict=Dict{Tuple{Int,Int},Float64}())
+Construct a conductive-temperature / steady Stokes–Coriolis basic state.
+Both shell boundaries satisfy the selected mechanical condition. Temperature
+and velocity retain cosine (`m>0`) and sine (`m<0`) modes. Public temperature
+amplitudes multiply the associated Legendre function and its real azimuthal
+factor; stored coefficients use the historical no-factorial normalization.
 
-Create a 3D basic state with both meridional and longitudinal temperature variations.
+`Ra` is shell-gap based. Momentum inertia and thermal advection are omitted;
+`nonaxisymmetric_basic_state_selfconsistent` includes thermal advection.
+`coupled_thermal_wind` and `include_meridional_flow` are compatibility keywords:
+all values now use the complete viscous velocity solve.
 
-# Fixed Temperature Boundary Conditions (default)
-The inner boundary is held at uniform temperature:
-    θ̄(r_i, θ, φ) = 1
-
-The outer boundary has zero-mean variations:
-    θ̄(r_o, θ, φ) = Σ_{ℓ,m} amplitude_{ℓm} × Y_ℓm(θ,φ)
-
-# Fixed Flux Boundary Conditions
-The inner boundary is held at uniform temperature:
-    θ̄(r_i, θ, φ) = 1
-
-The outer boundary has prescribed heat flux:
-    dθ̄/dr|_{r_o} = Σ_{ℓ,m} flux_{ℓm} × Y_ℓm(θ,φ)
-
-where `flux_{ℓm}` values are taken from `outer_fluxes` dictionary, and `amplitudes`
-provides the flux values for any (ℓ,m) not in `outer_fluxes`.
-
-This represents fully 3D differential heating scenarios, such as:
-- Longitudinally-varying solar heating
-- Zonal wavenumber patterns in thermal forcing
-- Realistic planetary/stellar boundary conditions
-
-The interior temperature θ̄(r,θ,φ) satisfies ∇²θ̄ = 0 with these BCs.
-
-The zonal velocity field ū_φ(r,θ,φ) is computed from the coupled thermal wind
-balance by default. Pass `coupled_thermal_wind=false` to use the faster diagonal
-approximation.
-
-# Arguments
-- `cd` - Chebyshev differentiation structure
-- `χ` - Radius ratio r_i/r_o
-- `E` - Ekman number (REQUIRED for thermal wind balance scaling)
-- `Ra` - Rayleigh number (for thermal wind balance)
-- `Pr` - Prandtl number
-- `lmax_bs` - Maximum ℓ for basic state
-- `mmax_bs` - Maximum m for basic state (e.g., 0-4)
-- `amplitudes` - Dict{(ℓ,m) => value} specifying:
-  - For :fixed_temperature: boundary temperature amplitudes
-  - For :fixed_flux: flux amplitudes (if not specified in outer_fluxes)
-- `mechanical_bc` - Mechanical boundary conditions: `:no_slip` (default) or `:stress_free`
-- `thermal_bc` - Outer thermal BC: `:fixed_temperature` (default) or `:fixed_flux`
-- `outer_fluxes` - Dict{(ℓ,m) => flux} specifying heat flux at outer boundary
-                   (only used if thermal_bc=:fixed_flux)
-- `coupled_thermal_wind` - Use full coupled thermal-wind solve (default: true)
-- `include_meridional_flow` - Compute ū_r and ū_θ for m≠0 from geostrophic
-                              balance (default: true)
-
-# Examples
-
-1. Fixed temperature at outer boundary (standard differential heating):
-```julia
-amplitudes = Dict(
-    (2,0) => 0.1,   # Meridional Y_20 temperature pattern
-    (2,2) => 0.05   # Longitudinal Y_22 temperature pattern
-)
-bs3d = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, 4, 2, amplitudes)
-```
-
-2. Fixed flux at outer boundary:
-```julia
-outer_fluxes = Dict(
-    (0,0) => -1.0,   # Mean heat flux (negative = outward)
-    (2,0) => 0.1,    # Meridional flux variation
-    (2,2) => 0.05    # Longitudinal flux variation
-)
-bs3d = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, 4, 2, Dict{Tuple{Int,Int},Float64}();
-                                    thermal_bc=:fixed_flux, outer_fluxes=outer_fluxes)
-```
-
-3. Mixed specification (amplitudes provide defaults for flux):
-```julia
-amplitudes = Dict((2,0) => 0.1, (2,2) => 0.05)  # Treated as flux amplitudes
-bs3d = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, 4, 2, amplitudes;
-                                    thermal_bc=:fixed_flux)
-```
+`flow` stores the authoritative orthonormal vector potentials. The component
+coefficient dictionaries are scalar projections for compatibility, not a
+solenoidal representation of tangential components. Evaluate physical velocity
+with `mean_flow_velocity`.
 """
 function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::Real, Pr::Real,
                                      lmax_bs::Int, mmax_bs::Int,
@@ -1042,7 +943,7 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
     # =========================================================================
 
     for ℓ in 0:lmax_bs
-        for m in 0:min(ℓ, mmax_bs)
+        for m in -min(ℓ, mmax_bs):min(ℓ, mmax_bs)
             norm_Ylm = Y_norm(ℓ, m)
 
             if ℓ == 0 && m == 0
@@ -1054,7 +955,7 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
 
                 if thermal_bc == :fixed_temperature
                     # Outer BC: θ̄_00(r_o) = 0 (cold outer boundary)
-                    outer_value = zero(T)
+                    outer_value = T(get(amplitudes,(0,0),zero(T))) * sqrt(T(4)*T(π))
                     theta_00, dtheta_00 = laplace_mode_profile(0, r, r_i, r_o,
                                                                inner_value, outer_value;
                                                                outer_bc=:fixed_temperature)
@@ -1121,78 +1022,14 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
         end
     end
 
-    # =========================================================================
-    # Solve thermal wind balance for ALL azimuthal modes
-    # =========================================================================
-    # For non-axisymmetric temperature variations Y_ℓm with m≠0, the thermal
-    # wind balance generates velocity components that also have azimuthal
-    # structure. The full geostrophic balance is:
-    #
-    #   2Ω × ū = -∇p + Ra E² Θ̄ g r̂ / Pr
-    #
-    # For the φ-component (thermal wind):
-    #   cos(θ) ∂ū_φ/∂r - sin(θ) ū_φ/r = -(Ra E²)/(2Pr) × (r/r_o) × (1/r) × ∂Θ̄/∂θ
-    #
-    # For m≠0 modes, we also get contributions from ∂Θ̄/∂φ to ū_θ, but the
-    # leading order balance for ū_φ follows the same thermal wind structure.
-    #
-    # Key insight: ∂Y_ℓm/∂θ couples to Y_{ℓ±1,m} (same m, different ℓ)
-    # So Y_22 temperature generates velocity in Y_12 and Y_32 modes.
-
-    # Process each azimuthal wavenumber m separately
-    for m_bs in 0:mmax_bs
-        # Extract temperature modes for this m
-        theta_m = Dict{Int, Vector{T}}()
-        for ℓ in m_bs:lmax_bs  # ℓ ≥ m required
-            if haskey(theta_coeffs, (ℓ, m_bs))
-                theta_m[ℓ] = theta_coeffs[(ℓ, m_bs)]
-            end
-        end
-
-        # Skip if no temperature modes for this m
-        if isempty(theta_m) || all(maximum(abs, v) < 1e-15 for v in values(theta_m))
-            continue
-        end
-
-        # Initialize velocity storage for this m
-        uphi_m = Dict{Int, Vector{T}}(ℓ => zeros(T, Nr) for ℓ in 0:lmax_bs)
-        duphi_dr_m = Dict{Int, Vector{T}}(ℓ => zeros(T, Nr) for ℓ in 0:lmax_bs)
-
-        # Solve thermal wind for this azimuthal mode
-        if coupled_thermal_wind
-            # Full coupled solver (no diagonal approximation)
-            solve_thermal_wind_coupled!(uphi_m, duphi_dr_m, theta_m, m_bs,
-                                        cd, r_i, r_o, Ra, Pr;
-                                        mechanical_bc=mechanical_bc,
-                                        E=E, lmax=lmax_bs + 1)
-        else
-            # Diagonal approximation (faster but less accurate)
-            solve_thermal_wind_balance_3d!(uphi_m, duphi_dr_m, theta_m, m_bs,
-                                           cd, r_i, r_o, Ra, Pr;
-                                           mechanical_bc=mechanical_bc,
-                                           E=E)
-        end
-
-        # Copy results to 3D storage
-        for ℓ in 0:lmax_bs
-            if haskey(uphi_m, ℓ) && maximum(abs, uphi_m[ℓ]) > 1e-15
-                uphi_coeffs[(ℓ, m_bs)] = uphi_m[ℓ]
-                duphi_dr_coeffs[(ℓ, m_bs)] = duphi_dr_m[ℓ]
-            end
-        end
-    end
-
-    if include_meridional_flow
-        solve_meridional_circulation_toroidal_poloidal!(
-            ur_coeffs, utheta_coeffs, dur_dr_coeffs, dutheta_dr_coeffs,
-            theta_coeffs, uphi_coeffs,
-            r, Matrix(cd.D1), Matrix(cd.D2), r_i, r_o,
-            T(Ra), T(E), T(Pr), lmax_bs, mmax_bs;
-            mechanical_bc=mechanical_bc,
-            include_meridional=true,
-            use_full_coupling=true,
-        )
-    end
+    # Both legacy values of coupled_thermal_wind now use the viscous solve.
+    # Omitting meridional components would violate continuity for m != 0.
+    # include_meridional_flow is retained for source compatibility; the complete
+    # velocity is always returned because dropping components breaks continuity.
+    flow = _steady_mean_flow(theta_coeffs, r, cd.D1, cd.D2, E, Ra, Pr,
+                             lmax_bs, mmax_bs; mechanical_bc=mechanical_bc)
+    ur_coeffs, utheta_coeffs, uphi_coeffs, dur_dr_coeffs, dutheta_dr_coeffs,
+        duphi_dr_coeffs = _mean_flow_components(flow)
 
     return BasicState3D(
         lmax_bs = lmax_bs,
@@ -1206,7 +1043,8 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
         uphi_coeffs = uphi_coeffs,
         dur_dr_coeffs = dur_dr_coeffs,
         dutheta_dr_coeffs = dutheta_dr_coeffs,
-        duphi_dr_coeffs = duphi_dr_coeffs
+        duphi_dr_coeffs = duphi_dr_coeffs,
+        flow = flow
     )
 end
 
@@ -1334,45 +1172,11 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
         return conduction_basic_state(cd, T(χ), _lmax; thermal_bc=thermal_bc)
     end
 
-    # Check if BC is purely Y00 (uniform outer temperature/flux)
-    if bc_lmax == 0 && bc_mmax == 0
-        # Only Y00 component - use conduction with outer_flux if flux BC
-        if thermal_bc == :fixed_flux
-            outer_flux_val = get(bc.coeffs, (0,0), zero(T))
-            return conduction_basic_state(cd, T(χ), _lmax;
-                                          thermal_bc=:fixed_flux,
-                                          outer_flux=T(outer_flux_val))
-        else
-            # temperature_bc with only Y00 is unusual but valid
-            # Use meridional with zero Y20 amplitude
-            return meridional_basic_state(cd, T(χ), T(E), T(Ra), T(Pr),
-                                          _lmax, zero(T);
-                                          mechanical_bc=mechanical_bc,
-                                          thermal_bc=:fixed_temperature)
-        end
-    end
-
-    # Check if axisymmetric (m=0 only) → use meridional_basic_state
     if is_axisymmetric(bc)
-        # Extract Y20 amplitude for meridional_basic_state
-        amp_Y20 = get(bc.coeffs, (2,0), zero(T))
-
-        if thermal_bc == :fixed_temperature
-            return meridional_basic_state(cd, T(χ), T(E), T(Ra), T(Pr),
-                                          _lmax, T(amp_Y20);
-                                          mechanical_bc=mechanical_bc,
-                                          thermal_bc=:fixed_temperature)
-        else  # fixed_flux
-            # Get mean flux (Y00) and Y20 flux
-            flux_mean = get(bc.coeffs, (0,0), zero(T))
-            flux_Y20 = get(bc.coeffs, (2,0), zero(T))
-            return meridional_basic_state(cd, T(χ), T(E), T(Ra), T(Pr),
-                                          _lmax, zero(T);  # amplitude=0 since we use explicit fluxes
-                                          mechanical_bc=mechanical_bc,
-                                          thermal_bc=:fixed_flux,
-                                          outer_flux_mean=T(flux_mean),
-                                          outer_flux_Y20=T(flux_Y20))
-        end
+        bs = nonaxisymmetric_basic_state(cd,T(χ),T(E),T(Ra),T(Pr),_lmax,0,to_dict(bc);
+            mechanical_bc=mechanical_bc,thermal_bc=thermal_bc,
+            coupled_thermal_wind=coupled_thermal_wind)
+        return _axisymmetric_state(bs)
     end
 
     # Non-axisymmetric → use nonaxisymmetric_basic_state
@@ -1396,94 +1200,11 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
 end
 
 
-# =============================================================================
-#  CORRECTED Thermal Wind Balance Solver
-#
-#  Key fixes:
-#  1. Added missing E² factor in the prefactor
-#  2. Corrected spherical harmonic coupling for ∂Y_ℓ0/∂θ
-#  3. Fixed boundary condition application
-#  4. Proper Chebyshev spectral BVP solver (replaces trapezoidal integration)
-#  5. Full stress-free boundary condition support
-# =============================================================================
-
-function _thermal_wind_operator_lu(r::AbstractVector{T}, D1::AbstractMatrix{T},
-                                   idx_inner::Int, mechanical_bc::Symbol) where {T<:Real}
-    Nr = length(r)
-    A_mat = Matrix{T}(undef, Nr, Nr)
-
-    @inbounds for j in 1:Nr, i in 1:Nr
-        A_mat[i, j] = r[i] * D1[i, j]
-    end
-    @inbounds for i in 1:Nr
-        A_mat[i, i] += one(T)
-    end
-
-    if mechanical_bc == :no_slip
-        A_mat[idx_inner, :] .= zero(T)
-        A_mat[idx_inner, idx_inner] = one(T)
-    else
-        A_mat[idx_inner, :] .= D1[idx_inner, :]
-        A_mat[idx_inner, idx_inner] -= one(T) / r[idx_inner]
-    end
-
-    return lu(A_mat)
-end
-
 """
-    solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
-                                cd, r_i, r_o, Ra, Pr;
-                                mechanical_bc=:no_slip,
-                                E=1e-4)
-
-Solve the thermal wind balance equation to compute zonal flow coefficients.
-
-The thermal wind equation in non-dimensional form (viscous time scale) is:
-
-    2Ω̂·∇ū = -Ra E²/Pr × Θ̄ r̂
-
-Taking the φ-component of the curl:
-
-    cos(θ) ∂ū_φ/∂r - sin(θ) ū_φ/r = -(Ra E²)/(2Pr) × (r/r_o) × (1/r) × ∂Θ̄/∂θ
-
-For linear gravity profile g(r) = g_o × r/r_o.
-
-Arguments:
-- `uphi_coeffs` : Dict{Int, Vector{T}} - zonal flow coefficients Ū_L(r) (modified in place)
-- `duphi_dr_coeffs` : Dict{Int, Vector{T}} - derivatives ∂Ū_L/∂r (modified in place)
-- `theta_coeffs` : Dict{Int, Vector{T}} - temperature coefficients Θ̄_ℓ(r)
-- `cd` : ChebyshevDiffn - radial discretization
-- `r_i, r_o` : inner and outer radii (non-dimensional, typically χ and 1)
-- `Ra` : Rayleigh number
-- `Pr` : Prandtl number
-- `mechanical_bc` : :no_slip or :stress_free
-- `E` : Ekman number (CRITICAL - was missing in original!)
-
-Mathematical Details:
---------------------
-The θ-derivative of temperature in spectral space:
-
-    ∂Θ̄/∂θ = Σ_ℓ Θ̄_ℓ(r) × ∂Y_ℓ0/∂θ
-
-Using the identity:
-    ∂Y_ℓ0/∂θ = -sin(θ) × dP_ℓ/d(cosθ) × √((2ℓ+1)/(4π))
-
-And the recurrence relation:
-    sin(θ) dP_ℓ/d(cosθ) = ℓ(ℓ+1)/(2ℓ+1) × [P_{ℓ+1} - P_{ℓ-1}]
-
-We get coupling from temperature mode ℓ to velocity modes L = ℓ±1.
-
-ODE Solver:
------------
-Uses Chebyshev spectral collocation to solve the BVP:
-    r dŪ/dr + Ū = f(r)
-with boundary condition at the INNER boundary only:
-- No-slip: Ū(r_i) = 0
-- Stress-free: dŪ/dr - Ū/r = 0 at r_i
-
-NOTE: The thermal wind equation is a first-order ODE, so we can only satisfy
-ONE boundary condition. We enforce the inner BC; the outer boundary will have
-a small non-zero value consistent with the diagonal approximation.
+Compatibility wrapper returning the axisymmetric zonal projection of the
+steady viscous Stokes–Coriolis solution. Both mechanical boundaries and the
+gap-based Rayleigh conversion are applied. Prefer `meridional_basic_state`
+for the complete, divergence-free velocity (including meridional circulation).
 """
 function solve_thermal_wind_balance!(uphi_coeffs::Dict{Int,Vector{T}},
                             duphi_dr_coeffs::Dict{Int,Vector{T}},
@@ -1493,174 +1214,15 @@ function solve_thermal_wind_balance!(uphi_coeffs::Dict{Int,Vector{T}},
                             mechanical_bc::Symbol=:no_slip,
                             E::T=T(1e-4)) where T<:Real
 
-    # Validate BC type
-    if !(mechanical_bc in (:no_slip, :stress_free))
-        error("mechanical_bc must be :no_slip or :stress_free, got: $mechanical_bc")
-    end
-
-    r = cd.x
-    Nr = length(r)
-    D1 = cd.D1
-
-    lmax_theta = maximum(keys(theta_coeffs))
-
-    # Spherical harmonic normalization: Y_ℓ0 = √((2ℓ+1)/(4π)) × P_ℓ(cosθ)
-    Y_norm(ℓ::Int) = sqrt(T(2ℓ + 1) / (4 * T(π)))
-
-    # =========================================================================
-    # Step 1: Compute forcing coefficients F_L(r) from ∂Θ̄/∂θ
-    # =========================================================================
-    #
-    # The key identity is:
-    #   sin(θ) dP_ℓ/d(cosθ) = ℓ(ℓ+1)/(2ℓ+1) × [P_{ℓ+1}(cosθ) - P_{ℓ-1}(cosθ)]
-    #
-    # Therefore:
-    #   ∂Y_ℓ0/∂θ = -ℓ(ℓ+1)/(2ℓ+1) × Y_norm(ℓ) × [P_{ℓ+1}/1 - P_{ℓ-1}/1]
-    #
-    # Converting P_L back to Y_L0:
-    #   ∂Y_ℓ0/∂θ = -ℓ(ℓ+1)/(2ℓ+1) × [Y_norm(ℓ)/Y_norm(ℓ+1) × Y_{ℓ+1,0}
-    #                                 - Y_norm(ℓ)/Y_norm(ℓ-1) × Y_{ℓ-1,0}]
-    #
-    # Projecting ∂Θ̄/∂θ onto Y_L0:
-    #   ⟨∂Θ̄/∂θ, Y_L0⟩ = Σ_ℓ Θ̄_ℓ(r) × ⟨∂Y_ℓ0/∂θ, Y_L0⟩
-    #
-    # Non-zero contributions when L = ℓ±1.
-
-    forcing = Dict{Int, Vector{T}}()
-
-    for (ℓ, θ_coeff) in theta_coeffs
-        if ℓ == 0
-            continue  # ∂Y_00/∂θ = 0 (uniform temperature has no θ-gradient)
-        end
-
-        # Base coupling coefficient from the recurrence relation
-        base_coeff = T(ℓ * (ℓ + 1)) / T(2ℓ + 1)
-
-        # Contribution to L = ℓ + 1 mode
-        L_plus = ℓ + 1
-        norm_ratio_plus = Y_norm(ℓ) / Y_norm(L_plus)
-        c_plus = -base_coeff * norm_ratio_plus  # Negative from ∂Y/∂θ formula
-
-        if !haskey(forcing, L_plus)
-            forcing[L_plus] = zeros(T, Nr)
-        end
-        forcing[L_plus] .+= c_plus .* θ_coeff
-
-        # Contribution to L = ℓ - 1 mode (if ℓ ≥ 1)
-        if ℓ >= 1
-            L_minus = ℓ - 1
-            norm_ratio_minus = L_minus == 0 ? Y_norm(ℓ) / Y_norm(0) : Y_norm(ℓ) / Y_norm(L_minus)
-            c_minus = base_coeff * norm_ratio_minus  # Positive (double negative)
-
-            if !haskey(forcing, L_minus)
-                forcing[L_minus] = zeros(T, Nr)
-            end
-            forcing[L_minus] .+= c_minus .* θ_coeff
-        end
-    end
-
-    # =========================================================================
-    # Step 2: Compute prefactor with CORRECT scaling
-    # =========================================================================
-    #
-    # Thermal wind equation (non-dimensional with viscous time scale D²/ν):
-    #
-    #   cos(θ) ∂ū_φ/∂r - sin(θ) ū_φ/r = -(Ra E²)/(2 Pr) × (g(r)/g_o) × (1/r) × ∂Θ̄/∂θ
-    #
-    # For linear gravity g(r) = g_o × r/r_o:
-    #
-    #   RHS = -(Ra E²)/(2 Pr r_o) × ∂Θ̄/∂θ
-    #
-    # IMPORTANT: The E² factor is ESSENTIAL and was missing in the original code!
-    # Without E², the zonal flow amplitude is wrong by a factor of E².
-
-    prefactor = -(Ra * E^2) / (2 * Pr * r_o)
-
-    # =========================================================================
-    # Step 3: Solve BVP for each L mode using Chebyshev spectral method
-    # =========================================================================
-    #
-    # The thermal wind ODE in the diagonal approximation:
-    #   d(r Ū_L)/dr = prefactor × r² × F_L(r)
-    #
-    # Rewritten as:
-    #   r dŪ/dr + Ū = f(r)   where f(r) = prefactor × r² × F_L(r)
-    #
-    # In matrix form: (diag(r) @ D1 + I) @ Ū = f
-    #
-    # Boundary conditions:
-    # - No-slip: Ū(r_boundary) = 0
-    # - Stress-free: dŪ/dr - Ū/r = 0  ⟺  (D1 - diag(1/r)) @ Ū = 0 at boundary
-
-    # Determine boundary indices (depends on grid ordering)
-    # Chebyshev grids typically have r[1] at one boundary, r[Nr] at the other
-    # We need to identify which is inner (r_i) and which is outer (r_o)
-    idx_inner = abs(r[1] - r_i) < abs(r[Nr] - r_i) ? 1 : Nr
-    r2 = r .^ 2
-    tw_lu = _thermal_wind_operator_lu(r, D1, idx_inner, mechanical_bc)
-
-    for (L, F_L) in forcing
-        # RHS for the ODE: r dŪ/dr + Ū = f(r)
-        f_rhs = prefactor .* r2 .* F_L
-        f_rhs[idx_inner] = zero(T)
-
-        # Solve the linear system
-        uphi_L = tw_lu \ f_rhs
-
-        # Store results
-        uphi_coeffs[L] = uphi_L
-
-        # Compute radial derivative using Chebyshev differentiation
-        duphi_dr_coeffs[L] = D1 * uphi_L
-    end
-
-    # =========================================================================
-    # Step 4: Zero out modes that have no forcing
-    # =========================================================================
-
-    forced_modes = Set(keys(forcing))
-    for ℓ in keys(theta_coeffs)
-        if !haskey(uphi_coeffs, ℓ) || !(ℓ in forced_modes)
-            uphi_coeffs[ℓ] = zeros(T, Nr)
-            duphi_dr_coeffs[ℓ] = zeros(T, Nr)
-        end
-    end
-
-    return nothing
+    return solve_thermal_wind_coupled!(uphi_coeffs,duphi_dr_coeffs,theta_coeffs,0,
+        cd,r_i,r_o,Ra,Pr;mechanical_bc=mechanical_bc,E=E)
 end
 
 
 """
-    solve_thermal_wind_balance_3d!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs, m_bs,
-                                   cd, r_i, r_o, Ra, Pr;
-                                   mechanical_bc=:no_slip, E=1e-4)
-
-Solve thermal wind balance for a specific azimuthal wavenumber m_bs.
-
-This extends the axisymmetric thermal wind solver to handle non-axisymmetric
-temperature variations Y_ℓm with m ≠ 0.
-
-The key difference from m=0 is that the spherical harmonic coupling coefficients
-depend on m through the associated Legendre functions:
-
-    ∂Y_ℓm/∂θ = m cot(θ) Y_ℓm + √[(ℓ-m)(ℓ+m+1)] Y_{ℓ,m+1} e^{-iφ}  (complex form)
-
-For real spherical harmonics with fixed m:
-    ∂Y_ℓm/∂θ couples to Y_{ℓ±1,m}
-
-The coupling coefficients are:
-    c_{ℓ→ℓ+1,m} = √[(ℓ+1)² - m²] / (2ℓ+1) × (ℓ+1)
-    c_{ℓ→ℓ-1,m} = √[ℓ² - m²] / (2ℓ+1) × ℓ
-
-Arguments:
-- `uphi_coeffs` : velocity coefficients for mode m (modified in place)
-- `duphi_dr_coeffs` : velocity derivatives (modified in place)
-- `theta_coeffs` : temperature coefficients {ℓ => θ̄_ℓm(r)} for fixed m
-- `m_bs` : azimuthal wavenumber of the basic state
-- `cd` : Chebyshev differentiation
-- `r_i, r_o` : radii
-- `Ra, Pr, E` : physical parameters
-- `mechanical_bc` : boundary condition type
+Compatibility wrapper for `solve_thermal_wind_coupled!`. Returns only the
+requested real-m zonal projection; use `nonaxisymmetric_basic_state` for all
+components, both azimuthal phases, and the vector-harmonic representation.
 """
 function solve_thermal_wind_balance_3d!(uphi_coeffs::Dict{Int,Vector{T}},
                                         duphi_dr_coeffs::Dict{Int,Vector{T}},
@@ -1671,168 +1233,13 @@ function solve_thermal_wind_balance_3d!(uphi_coeffs::Dict{Int,Vector{T}},
                                         mechanical_bc::Symbol=:no_slip,
                                         E::T=T(1e-4)) where T<:Real
 
-    # For m=0, delegate to the standard solver
-    if m_bs == 0
-        solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
-                                    cd, r_i, r_o, Ra, Pr;
-                                    mechanical_bc=mechanical_bc, E=E)
-        return nothing
-    end
-
-    # Validate BC type
-    if !(mechanical_bc in (:no_slip, :stress_free))
-        error("mechanical_bc must be :no_slip or :stress_free, got: $mechanical_bc")
-    end
-
-    r = cd.x
-    Nr = length(r)
-    D1 = cd.D1
-
-    lmax_theta = isempty(theta_coeffs) ? 0 : maximum(keys(theta_coeffs))
-
-    # Spherical harmonic normalization for Y_ℓm
-    # For m≠0: Y_ℓm includes factor √(2) for real spherical harmonics
-    function Y_norm_m(ℓ::Int, m::Int)
-        if m == 0
-            return sqrt(T(2ℓ + 1) / (4 * T(π)))
-        else
-            return sqrt(T(2) * T(2ℓ + 1) / (4 * T(π)))
-        end
-    end
-
-    # =========================================================================
-    # Compute forcing coefficients F_L(r) from ∂Θ̄/∂θ for fixed m
-    # =========================================================================
-    #
-    # The θ-derivative of spherical harmonics Y_ℓm couples to Y_{ℓ±1,m}:
-    #
-    #   ∂Y_ℓm/∂θ = ℓ cot(θ) Y_ℓm - √[(ℓ+m)(ℓ-m+1)/(2ℓ+1)(2ℓ-1)] × (2ℓ+1) Y_{ℓ-1,m}
-    #            + √[(ℓ-m)(ℓ+m+1)/(2ℓ+1)(2ℓ+3)] × (2ℓ+1) Y_{ℓ+1,m}
-    #
-    # Using the recurrence for associated Legendre functions:
-    #   (1-x²) dP_ℓ^m/dx = -ℓx P_ℓ^m + (ℓ+m) P_{ℓ-1}^m
-    #                    = (ℓ+1)x P_ℓ^m - (ℓ-m+1) P_{ℓ+1}^m
-    #
-    # For the thermal wind, we need sin(θ)⁻¹ × ∂Θ̄/∂θ, which projects as:
-    #   ⟨sin(θ)⁻¹ ∂Y_ℓm/∂θ, Y_Lm⟩ gives coupling coefficients
-    #
-    # Simplified coupling (following Kore/standard approach):
-    #   Temperature ℓ,m → Velocity L=ℓ-1,m: c_{-} = √[(ℓ²-m²)/(4ℓ²-1)] × ℓ
-    #   Temperature ℓ,m → Velocity L=ℓ+1,m: c_{+} = √[((ℓ+1)²-m²)/((2ℓ+1)(2ℓ+3))] × (ℓ+1)
-
-    forcing = Dict{Int, Vector{T}}()
-
-    for (ℓ, θ_coeff) in theta_coeffs
-        if ℓ < m_bs
-            continue  # Invalid: ℓ must be ≥ m
-        end
-
-        if maximum(abs, θ_coeff) < 1e-15
-            continue  # Skip negligible modes
-        end
-
-        # Coupling to L = ℓ - 1 (if ℓ > m, so that L ≥ m)
-        if ℓ > m_bs
-            L_minus = ℓ - 1
-            # c_{-} = √[(ℓ²-m²)/(4ℓ²-1)] × ℓ × norm_ratio
-            denom_minus = T(4 * ℓ^2 - 1)
-            if denom_minus > 0
-                c_minus = sqrt(T(ℓ^2 - m_bs^2) / denom_minus) * T(ℓ)
-                norm_ratio = Y_norm_m(ℓ, m_bs) / Y_norm_m(L_minus, m_bs)
-                c_minus *= norm_ratio
-
-                if !haskey(forcing, L_minus)
-                    forcing[L_minus] = zeros(T, Nr)
-                end
-                forcing[L_minus] .+= c_minus .* θ_coeff
-            end
-        end
-
-        # Coupling to L = ℓ + 1 (always valid)
-        L_plus = ℓ + 1
-        # c_{+} = -√[((ℓ+1)²-m²)/((2ℓ+1)(2ℓ+3))] × (ℓ+1) × norm_ratio
-        # Note: negative sign comes from the derivative relation
-        denom_plus = T((2ℓ + 1) * (2ℓ + 3))
-        numer_plus = T((ℓ + 1)^2 - m_bs^2)
-        if numer_plus > 0 && denom_plus > 0
-            c_plus = -sqrt(numer_plus / denom_plus) * T(ℓ + 1)
-            norm_ratio_plus = Y_norm_m(ℓ, m_bs) / Y_norm_m(L_plus, m_bs)
-            c_plus *= norm_ratio_plus
-
-            if !haskey(forcing, L_plus)
-                forcing[L_plus] = zeros(T, Nr)
-            end
-            forcing[L_plus] .+= c_plus .* θ_coeff
-        end
-    end
-
-    # =========================================================================
-    # Prefactor with E² scaling (same as axisymmetric case)
-    # =========================================================================
-    prefactor = -(Ra * E^2) / (2 * Pr * r_o)
-
-    # =========================================================================
-    # Solve BVP for each L mode using Chebyshev spectral method
-    # =========================================================================
-    #
-    # The thermal wind ODE in the diagonal approximation:
-    #   d(r Ū_L)/dr = prefactor × r² × F_L(r)
-    #
-    # Rewritten as:
-    #   r dŪ/dr + Ū = f(r)   where f(r) = prefactor × r² × F_L(r)
-    #
-    # In matrix form: (diag(r) @ D1 + I) @ Ū = f
-    #
-    # Boundary condition (INNER only - first-order ODE can only satisfy one BC):
-    # - No-slip: Ū(r_i) = 0
-    # - Stress-free: dŪ/dr - Ū/r = 0 at r_i
-
-    # Determine boundary indices
-    idx_inner = abs(r[1] - r_i) < abs(r[Nr] - r_i) ? 1 : Nr
-    r2 = r .^ 2
-    tw_lu = _thermal_wind_operator_lu(r, D1, idx_inner, mechanical_bc)
-
-    for (L, F_L) in forcing
-        if L < m_bs
-            continue  # L must be ≥ m
-        end
-
-        # RHS for the ODE: r dŪ/dr + Ū = f(r)
-        f_rhs = prefactor .* r2 .* F_L
-        f_rhs[idx_inner] = zero(T)
-
-        # Solve the linear system
-        uphi_L = tw_lu \ f_rhs
-
-        # Store results
-        uphi_coeffs[L] = uphi_L
-        duphi_dr_coeffs[L] = D1 * uphi_L
-    end
-
-    # Zero out modes without forcing
-    forced_modes = Set(keys(forcing))
-    for ℓ in keys(theta_coeffs)
-        if !haskey(uphi_coeffs, ℓ) || !(ℓ in forced_modes)
-            uphi_coeffs[ℓ] = zeros(T, Nr)
-            duphi_dr_coeffs[ℓ] = zeros(T, Nr)
-        end
-    end
-
-    return nothing
+    return solve_thermal_wind_coupled!(uphi_coeffs,duphi_dr_coeffs,theta_coeffs,m_bs,
+        cd,r_i,r_o,Ra,Pr;mechanical_bc=mechanical_bc,E=E)
 end
 
 
 # =============================================================================
-#  Full Coupled Thermal Wind Solver (No Diagonal Approximation)
-#
-#  Solves the thermal wind equation without the diagonal approximation by
-#  treating the full mode coupling from the (ẑ·∇) operator on the LHS.
-#
-#  The equation is:
-#    cos(θ) ∂ū_φ/∂r - (sin(θ)/r) ∂ū_φ/∂θ = -(Ra E²)/(2 Pr r_o) × ∂Θ̄/∂θ
-#
-#  The cos(θ) and sin(θ)∂/∂θ terms couple mode L to modes L±1, creating a
-#  tridiagonal system of coupled ODEs that must be solved simultaneously.
+#  Orthonormal angular projection utilities and legacy component interface
 # =============================================================================
 
 """
@@ -1919,29 +1326,11 @@ function _dtheta_sphere_projection(Kset, Lset, m::Int, ::Type{T}) where {T<:Real
 end
 
 """
-    solve_thermal_wind_coupled!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
-                                m_bs, cd, r_i, r_o, Ra, Pr;
-                                mechanical_bc=:no_slip, E=1e-4, lmax=nothing)
-
-Solve thermal wind balance WITHOUT the diagonal approximation.
-
-This solver accounts for the full mode coupling from the (ẑ·∇) operator:
-- cos(θ) couples Y_Lm → Y_{L±1,m}
-- sin(θ) ∂/∂θ also couples Y_Lm → Y_{L±1,m}
-
-The result is a coupled tridiagonal system of ODEs in L that is solved
-simultaneously using a spectral Chebyshev discretization.
-
-# Arguments
-- `uphi_coeffs` : Output dictionary for velocity coefficients (modified in place)
-- `duphi_dr_coeffs` : Output dictionary for velocity derivatives (modified in place)
-- `theta_coeffs` : Input temperature coefficients {ℓ => θ̄_ℓm(r)}
-- `m_bs` : Azimuthal wavenumber
-- `cd` : ChebyshevDiffn structure
-- `r_i, r_o` : Inner and outer radii
-- `Ra, Pr, E` : Rayleigh, Prandtl, Ekman numbers
-- `mechanical_bc` : :no_slip or :stress_free
-- `lmax` : Maximum L for velocity (defaults to max key in theta_coeffs + 1)
+Return a scalar zonal-component projection of the steady viscous mean flow.
+Temperature input uses the public no-factorial normalization and `Ra` is
+shell-gap based. `lmax` sets the retained vector-potential degree. This legacy
+single-phase interface cannot represent the complete 3D velocity; use the
+basic-state constructors and `mean_flow_velocity` for physical fields.
 """
 function solve_thermal_wind_coupled!(uphi_coeffs::Dict{Int,Vector{T}},
                                      duphi_dr_coeffs::Dict{Int,Vector{T}},
@@ -1953,282 +1342,17 @@ function solve_thermal_wind_coupled!(uphi_coeffs::Dict{Int,Vector{T}},
                                      E::T=T(1e-4),
                                      lmax::Union{Nothing,Int}=nothing) where T<:Real
 
-    # NOTE: m=0 is handled by the SAME coupled operator below — it is deliberately
-    # NOT delegated to the diagonal solve_thermal_wind_balance! heuristic. That
-    # heuristic puts the axisymmetric zonal flow at the wrong spherical-harmonic
-    # parity (odd L for a Y_ℓ0-even forcing) and does not satisfy the thermal-wind
-    # PDE (the true cosθ/sinθ∂θ operator is zero-diagonal). Velocity modes start at
-    # L = max(m_bs, 1): u_φ has no ℓ=0 component (a constant-in-θ zonal flow is
-    # unphysical and pole-singular under advection).
-
-    if !(mechanical_bc in (:no_slip, :stress_free))
-        error("mechanical_bc must be :no_slip or :stress_free, got: $mechanical_bc")
+    mechanical_bc in (:no_slip,:stress_free) || error("mechanical_bc must be :no_slip or :stress_free")
+    L = lmax === nothing ? max(2,maximum(keys(theta_coeffs);init=0)+2) : lmax
+    theta = Dict((l,m_bs)=>v for (l,v) in theta_coeffs)
+    flow = _steady_mean_flow(theta,cd.x,cd.D1,cd.D2,E,Ra,Pr,L,abs(m_bs);
+                             mechanical_bc=mechanical_bc)
+    _,_,uphi,_,_,duphi = _mean_flow_components(flow)
+    empty!(uphi_coeffs); empty!(duphi_dr_coeffs)
+    for ((l,m),v) in uphi
+        m==m_bs || continue
+        uphi_coeffs[l]=v; duphi_dr_coeffs[l]=duphi[(l,m)]
     end
-
-    r = cd.x
-    Nr = length(r)
-    D1 = cd.D1
-
-    # Determine lmax from temperature coefficients
-    lmax_theta = isempty(theta_coeffs) ? m_bs : maximum(keys(theta_coeffs))
-    lmax_vel = lmax === nothing ? lmax_theta + 1 : lmax
-    lmax_vel = max(lmax_vel, m_bs)  # L ≥ m required
-    Lmin = max(m_bs, 1)             # exclude unphysical ℓ=0 zonal flow; for m≥1, Lmin=m_bs
-
-    # Number of velocity modes: L = Lmin, Lmin+1, ..., lmax_vel
-    n_modes = lmax_vel - Lmin + 1
-    if n_modes < 1
-        return nothing
-    end
-
-    # The cosθ coupling matrix A (built below) is zero-diagonal tridiagonal, which
-    # is singular for an ODD number of modes (det recurrence d_n = -a·b·d_{n-2},
-    # d_1 = 0 ⇒ det = 0 for every odd dim). That makes the coupled thermal-wind BVP
-    # singular (e.g. m_bs=1 with lmax_vel=9). Pad by one degree so n_modes is even
-    # and A is non-singular; the extra high-degree mode is a small truncation
-    # correction.
-    if isodd(n_modes)
-        lmax_vel += 1
-        n_modes += 1
-    end
-
-    # Mode indices: mode_idx[k] = L means the k-th mode corresponds to degree L
-    mode_idx = collect(Lmin:lmax_vel)
-
-    # =========================================================================
-    # Coupling coefficients
-    # =========================================================================
-    #
-    # cos(θ) Y_Lm = α_L^+ Y_{L+1,m} + α_L^- Y_{L-1,m}
-    # where:
-    #   α_L^+ = √[((L+1)²-m²)/((2L+1)(2L+3))]
-    #   α_L^- = √[(L²-m²)/((2L-1)(2L+1))]
-    #
-    # sin(θ) ∂Y_Lm/∂θ (verified numerically against orthonormal Y_lm):
-    #   sin(θ) ∂Y_Lm/∂θ = L α_L^+ Y_{L+1,m} - (L+1) α_L^- Y_{L-1,m}
-
-    function alpha_plus(L::Int)
-        num = (L + 1)^2 - m_bs^2
-        den = (2L + 1) * (2L + 3)
-        return num > 0 && den > 0 ? sqrt(T(num) / T(den)) : zero(T)
-    end
-
-    function alpha_minus(L::Int)
-        num = L^2 - m_bs^2
-        den = (2L - 1) * (2L + 1)
-        return num > 0 && den > 0 ? sqrt(T(num) / T(den)) : zero(T)
-    end
-
-    # =========================================================================
-    # Build the coupling matrices A and B
-    # =========================================================================
-    #
-    # The thermal wind equation projected onto Y_Km:
-    #   Σ_L [A_{KL} dŪ_L/dr - (1/r) B_{KL} Ū_L] = F_K(r)
-    #
-    # where:
-    #   A_{KL} = ⟨cos(θ) Y_Lm, Y_Km⟩
-    #   B_{KL} = ⟨sin(θ) ∂Y_Lm/∂θ, Y_Km⟩
-
-    A = zeros(T, n_modes, n_modes)  # cos(θ) coupling
-    B = zeros(T, n_modes, n_modes)  # sin(θ)∂/∂θ coupling
-
-    for (k, K) in enumerate(mode_idx)
-        # Contribution from L = K-1 (if valid)
-        if K > m_bs
-            l = K - 1
-            j = findfirst(==(l), mode_idx)
-            if j !== nothing
-                # A_{K,L} where L = K-1: ⟨cos(θ) Y_{K-1,m}, Y_Km⟩ = α_{K-1}^+
-                A[k, j] = alpha_plus(l)
-
-                # B_{K,L} where L = K-1:
-                # From: sin(θ)∂Y_{K-1,m}/∂θ = (K-1) α_{K-1}^+ Y_{K,m} - K α_{K-1}^- Y_{K-2,m}
-                # Projection onto Y_Km: ⟨sin(θ)∂Y_{K-1,m}/∂θ, Y_Km⟩ = (K-1) α_{K-1}^+
-                B[k, j] = l * alpha_plus(l)  # = (K-1) α_{K-1}^+
-            end
-        end
-
-        # Contribution from L = K+1 (if valid)
-        if K < lmax_vel
-            l = K + 1
-            j = findfirst(==(l), mode_idx)
-            if j !== nothing
-                # A_{K,L} where L = K+1: ⟨cos(θ) Y_{K+1,m}, Y_Km⟩ = α_{K+1}^-
-                A[k, j] = alpha_minus(l)
-
-                # B_{K,L} where L = K+1:
-                # From: sin(θ)∂Y_{K+1,m}/∂θ = (K+1) α_{K+1}^+ Y_{K+2,m} - (K+2) α_{K+1}^- Y_{K,m}
-                # Projection onto Y_Km: ⟨sin(θ)∂Y_{K+1,m}/∂θ, Y_Km⟩ = -(K+2) α_{K+1}^-
-                B[k, j] = -(l + 1) * alpha_minus(l)  # = -(K+2) α_{K+1}^-
-            end
-        end
-    end
-
-    # =========================================================================
-    # Compute forcing F_K(r) from temperature gradient
-    # =========================================================================
-    #
-    # F_K(r) = -(Ra E²)/(2 Pr r_o) × ⟨∂Θ̄/∂θ, Y_Km⟩
-    #
-    # The forcing is the full sphere projection ⟨∂Y_ℓm/∂θ, Y_Km⟩, which couples
-    # ℓ → K = ℓ±1, ℓ±3, …. This matches the orthonormal cosθ/sinθ∂θ operators
-    # assembled above (verified by the manufactured-solution test). The diagonal
-    # ℓ±1-only approximation (theta_derivative_coeff_3d) is NOT used here because
-    # it is inconsistent with the coupled operators.
-
-    prefactor = -(Ra * E^2) / (2 * Pr * r_o)
-
-    F = zeros(T, n_modes, Nr)  # F[k, i] = F_{mode_idx[k]}(r[i])
-
-    Lset = Int[ℓ for (ℓ, θ_coeff) in theta_coeffs
-               if ℓ >= m_bs && maximum(abs, θ_coeff) >= 1e-15]
-    if !isempty(Lset)
-        Mproj = _dtheta_sphere_projection(mode_idx, Lset, m_bs, T)
-        for ℓ in Lset
-            θ_coeff = theta_coeffs[ℓ]
-            for (k, K) in enumerate(mode_idx)
-                c = get(Mproj, (K, ℓ), zero(T))
-                c == zero(T) && continue
-                F[k, :] .+= (prefactor * c) .* θ_coeff
-            end
-        end
-    end
-
-    # =========================================================================
-    # Build and solve the full linear system
-    # =========================================================================
-    #
-    # The equation A × dŪ/dr - (1/r) × B × Ū = F becomes:
-    # (A ⊗ D1 - diag(1/r) × B ⊗ I) × vec(Ū) = vec(F)
-    #
-    # where vec(Ū) stacks all modes: [Ū_{m}; Ū_{m+1}; ...; Ū_{lmax}]
-    # and each Ū_L has Nr components.
-
-    # Total unknowns: n_modes × Nr
-    n_total = n_modes * Nr
-
-    # Build the system matrix
-    # Index convention: u[(k-1)*Nr + i] = Ū_{mode_idx[k]}(r[i])
-    L_op = zeros(T, n_total, n_total)
-
-    for k1 in 1:n_modes  # row (equation for mode K = mode_idx[k1])
-        for k2 in 1:n_modes  # column (contribution from mode L = mode_idx[k2])
-            # Block (k1, k2) has size Nr × Nr
-            row_start = (k1 - 1) * Nr + 1
-            row_end = k1 * Nr
-            col_start = (k2 - 1) * Nr + 1
-            col_end = k2 * Nr
-
-            if abs(A[k1, k2]) > 1e-15
-                # A_{k1,k2} × D1 contribution
-                coeff = A[k1, k2]
-                @inbounds for j in 1:Nr
-                    col = col_start + j - 1
-                    for i in 1:Nr
-                        L_op[row_start + i - 1, col] += coeff * D1[i, j]
-                    end
-                end
-            end
-
-            if abs(B[k1, k2]) > 1e-15
-                # -(1/r) × B_{k1,k2} × I contribution
-                for i in 1:Nr
-                    L_op[row_start + i - 1, col_start + i - 1] -= B[k1, k2] / r[i]
-                end
-            end
-        end
-    end
-
-    # RHS vector
-    F_vec = vec(F')  # Flatten: [F[1,:]; F[2,:]; ...]
-
-    # =========================================================================
-    # Apply boundary conditions
-    # =========================================================================
-    #
-    # For each mode K, apply one BC at the inner boundary:
-    # - No-slip: Ū_K(r_i) = 0
-    # - Stress-free: dŪ_K/dr - Ū_K/r = 0
-    #
-    # The coupled thermal-wind balance is still first-order in radius. Applying
-    # both radial boundaries would replace two collocation equations per mode and
-    # overconstrain the continuous problem.
-
-    idx_inner = abs(r[1] - r_i) < abs(r[Nr] - r_i) ? 1 : Nr
-
-    for k in 1:n_modes
-        # Row index for the BC at inner boundary for mode k
-        bc_row = (k - 1) * Nr + idx_inner
-
-        if mechanical_bc == :no_slip
-            # Dirichlet: Ū = 0 at inner boundary
-            L_op[bc_row, :] .= zero(T)
-            L_op[bc_row, bc_row] = one(T)
-            F_vec[bc_row] = zero(T)
-        else  # stress_free
-            # Robin: dŪ/dr - Ū/r = 0 at inner boundary
-            L_op[bc_row, :] .= zero(T)
-            col_start = (k - 1) * Nr + 1
-            col_end = k * Nr
-            L_op[bc_row, col_start:col_end] .= D1[idx_inner, :]
-            L_op[bc_row, bc_row] -= one(T) / r[idx_inner]
-            F_vec[bc_row] = zero(T)
-        end
-    end
-
-    # =========================================================================
-    # Solve the system
-    # =========================================================================
-    #
-    # The discretized first-order coupled BVP has a condition number that grows
-    # exponentially with lmax (the cosθ/sinθ∂θ transport couples modes with
-    # growth rate ∝ L/r, so the fundamental solution spans ~exp(L·Δr)). Above
-    # lmax≈16-18 (Float64) cond(L_op) exceeds machine precision and the solve is
-    # unreliable. Estimate the reciprocal condition number and warn rather than
-    # silently return garbage. A robust high-lmax solve would need a stiff-BVP
-    # method (e.g. marching with re-orthonormalization); basic states are
-    # low-degree in practice, so capping lmax is the pragmatic remedy.
-
-    F_lu = lu(L_op; check=false)
-    rcond = issuccess(F_lu) ?
-        LinearAlgebra.LAPACK.gecon!('1', F_lu.factors, opnorm(L_op, 1)) : zero(real(T))
-    if rcond < eps(real(T))
-        # Numerically singular. The thermal-wind balance determines ū_φ only up
-        # to geostrophic modes u_φ = f(r sinθ); for stress-free with m_bs = 1 the
-        # mode ū_φ ∝ r·Y_1^1 (= r sinθ) satisfies the interior equations AND the
-        # Robin boundary condition exactly, so the discrete system has an exact
-        # null vector (higher truncations approach singularity through
-        # near-geostrophic modes). An LU solve would return an arbitrary
-        # null-space component; take the minimum-norm least-squares solution
-        # instead — deterministic and free of the undetermined geostrophic part.
-        U_vec = pinv(L_op) * F_vec
-        @warn "Coupled thermal-wind system is singular (zonal flow determined \
-               only up to a geostrophic mode); returning the minimum-norm \
-               solution." rcond lmax_vel n_modes maxlog=1
-    else
-        U_vec = F_lu \ F_vec
-    end
-
-    # =========================================================================
-    # Extract results
-    # =========================================================================
-
-    for (k, L) in enumerate(mode_idx)
-        start_idx = (k - 1) * Nr + 1
-        end_idx = k * Nr
-        uphi_coeffs[L] = U_vec[start_idx:end_idx]
-        duphi_dr_coeffs[L] = D1 * uphi_coeffs[L]
-    end
-
-    # Zero out modes without forcing
-    for ℓ in keys(theta_coeffs)
-        if !haskey(uphi_coeffs, ℓ)
-            uphi_coeffs[ℓ] = zeros(T, Nr)
-            duphi_dr_coeffs[ℓ] = zeros(T, Nr)
-        end
-    end
-
     return nothing
 end
 

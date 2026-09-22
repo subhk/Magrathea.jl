@@ -128,7 +128,7 @@ basic_state(cd, χ, E, Ra, Pr;
 | Boundary Condition | Function Called | Returns |
 |-------------------|-----------------|---------|
 | None specified | `conduction_basic_state` | `BasicState` |
-| Axisymmetric (``m=0`` only) | `meridional_basic_state` | `BasicState` |
+| Axisymmetric (``m=0`` only) | shared viscous solver | `BasicState` |
 | Non-axisymmetric (``m \neq 0``) | `nonaxisymmetric_basic_state` | `BasicState3D` |
 
 ### Examples with Symbolic BCs
@@ -189,7 +189,7 @@ The `mode` keyword selects the construction strategy:
 |--------|---------|-------------|
 | `:conduction` | `BasicState` | Pure conductive profile, no flow |
 | `:meridional` | `BasicState` | Y₂₀ thermal wind (axisymmetric) |
-| `:selfconsistent` | `BasicState3D` | Iterative solver for full geostrophic balance |
+| `:selfconsistent` | `BasicState` or `BasicState3D` | Coupled Stokes–Coriolis and thermal transport |
 | `:nonaxisymmetric` | `BasicState3D` | Laplace-approximation 3D state |
 
 !!! note "Low-level API"
@@ -212,6 +212,11 @@ struct BasicState{T}
     uphi_coeffs::Dict{Int, Vector{T}}
     dtheta_dr_coeffs::Dict{Int, Vector{T}}
     duphi_dr_coeffs::Dict{Int, Vector{T}}
+    ur_coeffs::Dict{Int, Vector{T}}
+    utheta_coeffs::Dict{Int, Vector{T}}
+    dur_dr_coeffs::Dict{Int, Vector{T}}
+    dutheta_dr_coeffs::Dict{Int, Vector{T}}
+    flow::Union{Nothing, SolenoidalMeanFlow{T}}
 end
 ```
 
@@ -284,31 +289,46 @@ bs_flux = meridional_basic_state(
 )
 ```
 
-This generates:
-- Temperature perturbation: ``\bar{\Theta}_{20}(r) \propto Y_{2,0}(\theta)``
-- Thermal wind: ``\bar{u}_\phi(r,\theta)`` from thermal wind balance
+This generates the prescribed conductive temperature and a three-component
+axisymmetric velocity. Viscous meridional circulation is generally nonzero,
+even when the temperature has no azimuthal dependence.
 
 ### Thermal Wind Balance
 
-When temperature varies with latitude, geostrophic balance requires a zonal flow:
+The constructors solve the steady **Stokes–Coriolis** equations:
 
 ```math
-2\Omega \cos\theta \frac{\partial \bar{u}_\phi}{\partial r} = -\frac{Ra \cdot E^2}{Pr \cdot r} \frac{\partial \bar{\Theta}}{\partial \theta}
+2\hat{\mathbf z}\times\bar{\mathbf u}
+= -\nabla\bar p + \frac{Ra E^2}{Pr(1-\chi)^3}\,r\bar T\hat{\mathbf r}
++ E\nabla^2\bar{\mathbf u},\qquad \nabla\cdot\bar{\mathbf u}=0.
 ```
 
-This balance is handled internally by `meridional_basic_state`. For custom
-axisymmetric profiles, you can call the solver directly:
+Both inner and outer mechanical boundaries are enforced. The thermal-wind
+balance is an interior approximation to these equations; it is insufficient
+to impose both boundaries by itself. The model neglects momentum inertia.
+The noniterated constructors also neglect temperature advection, so their
+conductive temperature approximation requires a small thermal Péclet number.
+
+The public Rayleigh number uses shell thickness, while radius and time use
+outer radius and inverse rotation rate. The conversion ``Ra/(1-\chi)^3`` is
+applied exactly once. Thermal diffusivity in these units is ``E/Pr``.
 
 ```julia
-solve_thermal_wind_balance!(
-    uphi_coeffs,
-    duphi_dr_coeffs,
-    theta_coeffs,
-    cd, χ, 1.0, Ra, Pr;
-    mechanical_bc = :no_slip,
-    E = E,
-)
+velocity = mean_flow_velocity(bs, 0.7, pi/3, 0.0)
+velocity.ur, velocity.utheta, velocity.uphi
 ```
+
+`bs.flow` holds orthonormal vector-harmonic potentials, including every mode
+through `lmax_bs`. The component dictionaries remain available as scalar
+projections for existing consumers. Tangential vector components are not
+band-limited scalar harmonics: use `mean_flow_velocity` for physical fields,
+pole regularity, and continuity checks, rather than differentiating the
+truncated scalar component projections.
+
+The old `solve_thermal_wind_balance!`, `solve_thermal_wind_balance_3d!`, and
+`solve_thermal_wind_coupled!` interfaces now return component projections of
+the viscous solve. A single-phase component dictionary cannot retain the
+complete nonaxisymmetric flow; prefer the basic-state constructors.
 
 ### Using Basic States in Problems
 
@@ -616,352 +636,72 @@ bs3d = basic_state(cd, χ, E, Ra, Pr; flux_bc=flux)
 
 ## Self-Consistent Basic States with Advection
 
-### The Physics of Temperature Advection
-
-For **axisymmetric** (bi-global) basic states, the zonal flow ``\bar{u}_\phi(r,\theta)`` advects only in the ``\phi`` direction, but the temperature ``\bar{T}(r,\theta)`` has no ``\phi`` dependence:
-
-```math
-\bar{\mathbf{u}} \cdot \nabla \bar{T} = \frac{\bar{u}_\phi}{r \sin\theta} \frac{\partial \bar{T}}{\partial \phi} = 0
-```
-
-This means the standard approach of solving ``\nabla^2 \bar{T} = 0`` (Laplace equation) is **exact** for axisymmetric cases.
-
-For **non-axisymmetric** (tri-global) basic states, the temperature depends on ``\phi``:
+Both axisymmetric and nonaxisymmetric viscous flows can advect temperature.
+The self-consistent solver couples the momentum equation above to
 
 ```math
-\bar{T}(r, \theta, \phi) = \sum_{\ell, m} \bar{T}_{\ell m}(r) Y_{\ell m}(\theta, \phi)
+\frac{E}{Pr}\nabla^2\bar T = \bar{\mathbf u}\cdot\nabla\bar T.
 ```
 
-Now the advection term is **non-zero**:
-
-```math
-\bar{\mathbf{u}} \cdot \nabla \bar{T} = \frac{\bar{u}_\phi}{r \sin\theta} \frac{\partial \bar{T}}{\partial \phi} = \frac{i m \bar{u}_\phi \bar{T}}{r \sin\theta} \neq 0
-```
-
-The full steady-state equation becomes:
-
-```math
-\kappa \nabla^2 \bar{T} = \bar{\mathbf{u}} \cdot \nabla \bar{T}
-```
-
-where ``\kappa`` is the thermal diffusivity.
-
-### When Does This Matter?
-
-The importance of advection is controlled by the **Péclet number**:
-
-```math
-\text{Pe} = \frac{UL}{\kappa}
-```
-
-| Regime | Péclet Number | Approximation |
-|--------|---------------|---------------|
-| Low Pe | Pe ≪ 1 | Diffusion dominates: ``\nabla^2 \bar{T} \approx 0`` (Laplace) |
-| High Pe | Pe ≫ 1 | Advection dominates: must solve coupled problem |
-
-For most planetary/stellar scenarios with moderate forcing amplitudes, the Laplace approximation is sufficient. Use the self-consistent solver when:
-
-- Non-axisymmetric amplitude > 0.1
-- High quantitative accuracy is needed
-- Studying strong forcing scenarios
-- Benchmarking against other codes
-
-### Using the Self-Consistent Solver
-
-Magrathea.jl provides `basic_state_selfconsistent()` which iteratively solves the coupled advection-diffusion equation:
+It solves thermal transport implicitly at fixed velocity, relaxes the
+resulting temperature update, and recomputes the entire velocity from the
+updated temperature. Advection uses the vector-harmonic flow directly.
+Momentum inertia is still omitted; this is not a nonlinear Navier–Stokes
+steady-state solver.
 
 ```julia
-using Magrathea
-
-# Setup
-cd = ChebyshevDiffn(64, [0.35, 1.0], 4)
-E, Pr, Ra, χ = 1e-5, 1.0, 1e7, 0.35
-
-# Non-axisymmetric boundary condition
-bc = Y20(0.1) + Y22(0.08)
-
-# Standard solver (Laplace approximation)
-bs_standard = basic_state(cd, χ, E, Ra, Pr; temperature_bc=bc)
-
-# Self-consistent solver (with advection)
-bs_sc, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr;
-                                          temperature_bc=bc,
-                                          verbose=true)
-
-println("Converged in $(info.iterations) iterations")
+cd = ChebyshevDiffn(32, [0.35, 1.0], 4)
+bs, info = basic_state_selfconsistent(cd, 0.35, 0.01, 30.0, 1.0;
+    temperature_bc=Y20(0.01) + Y22(0.01),
+    lmax_bs=8, max_iterations=50, tolerance=1e-9)
+@assert info.converged
+println(info.thermal_residual)
+v = mean_flow_velocity(bs, 0.7, pi/3, pi/8)
 ```
 
-### Algorithm
+`info.residual_history` records the unrelaxed temperature fixed-point defect.
+`info.thermal_residual` measures the maximum interior spectral energy-equation
+residual of the returned state. `info.converged=false` means the requested
+thermal tolerance was not reached. The returned velocity is nevertheless
+computed from the returned temperature, including on an iteration limit.
+Failure to converge does not by itself establish physical instability.
 
-The solver uses **Picard iteration**:
-
-1. **Initialize**: Solve ``\nabla^2 \bar{T}^{(0)} = 0`` (Laplace)
-2. **Thermal wind**: Compute ``\bar{u}_\phi^{(n)}`` from ``\bar{T}^{(n)}``
-3. **Advection source**: ``S^{(n)} = \frac{1}{\kappa} \bar{u}_\phi^{(n)} \cdot \nabla \bar{T}^{(n)}``
-4. **Poisson solve**: ``\nabla^2 \bar{T}^{(n+1)} = S^{(n)}`` with boundary conditions
-5. **Check convergence**: ``\|\bar{T}^{(n+1)} - \bar{T}^{(n)}\| < \epsilon``
-6. **Repeat** steps 2-5 until converged
-
-### Options
-
-```julia
-basic_state_selfconsistent(cd, χ, E, Ra, Pr;
-                           temperature_bc = Y20(0.1) + Y22(0.05),
-                           flux_bc = nothing,
-                           mechanical_bc = :no_slip,
-                           lmax_bs = nothing,
-                           max_iterations = 20,    # Max Picard iterations
-                           tolerance = 1e-8,       # Convergence tolerance
-                           verbose = false)        # Print progress
-```
-
-### Convergence Information
-
-The solver returns a named tuple with convergence diagnostics:
-
-```julia
-bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; temperature_bc=bc)
-
-info.iterations       # Number of iterations used
-info.converged        # true if converged, false if hit max_iterations
-info.residual_history # Vector of residuals at each iteration
-```
-
-### Example: Comparing Standard vs Self-Consistent
-
-```julia
-using Magrathea
-using Printf
-
-cd = ChebyshevDiffn(64, [0.35, 1.0], 4)
-E, Pr, Ra, χ = 1e-5, 1.0, 1e8, 0.35
-
-bc = Y20(0.2) + Y22(0.1)  # Larger amplitudes
-
-# Standard (Laplace)
-bs_laplace = basic_state(cd, χ, E, Ra, Pr; temperature_bc=bc)
-
-# Self-consistent
-bs_sc, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr;
-                                          temperature_bc=bc,
-                                          verbose=true)
-
-# Compare Y22 temperature coefficients
-T22_laplace = bs_laplace.theta_coeffs[(2, 2)]
-T22_sc = bs_sc.theta_coeffs[(2, 2)]
-
-diff = maximum(abs.(T22_laplace .- T22_sc))
-@printf("Max difference in T_22: %.4e\n", diff)
-```
-
-### Technical Notes
-
-- **Spectral coupling**: The advection term ``\bar{u}_\phi Y_{Lm} \times \bar{T}_{\ell m} Y_{\ell m}`` couples modes through Gaunt coefficients
-- **m=0 modes**: Have zero advection (no ``\phi`` dependence)
-- **Mode coupling**: The full solver accounts for coupling through the ``(\hat{z}\cdot\nabla)`` operator
-- **Convergence**: Typically converges in 2-5 iterations for small amplitudes, more for larger amplitudes
-- **Non-convergence**: May indicate the basic state is unstable (not typical for onset studies)
+Boundary conditions apply to every retained real harmonic, including sine
+modes generated by transport. Fixed-flux problems retain homogeneous flux on
+unforced modes. The purely conductive convenience path returns `nothing` for
+`info`; axisymmetric forced states run the thermal iteration too.
 
 ## Full Geostrophic Balance with Meridional Circulation
 
-### Physical Overview
-
-For **non-axisymmetric** basic states (``m \neq 0``), the complete geostrophic balance includes not just zonal flow (``\bar{u}_\phi``) but also **meridional circulation** (``\bar{u}_r``, ``\bar{u}_\theta``).
-
-The full thermal wind equation (curl of geostrophic balance) is:
+The mean velocity is represented as
 
 ```math
-2\Omega \, (\hat{\mathbf{z}} \cdot \nabla) \bar{\mathbf{u}} = \frac{Ra \cdot E^2}{Pr} \nabla \bar{T} \times \hat{\mathbf{r}}
+\bar{\mathbf u} = \sum_{\ell,m}\left[
+\frac{\ell(\ell+1)p_{\ell m}}{r^2}Y_{\ell m}\hat{\mathbf r}
++\frac{p'_{\ell m}}{r}\nabla_hY_{\ell m}
++\frac{t_{\ell m}}{r}\hat{\mathbf r}\times\nabla_hY_{\ell m}\right].
 ```
 
-**Component-wise:**
+This representation enforces incompressibility and vector regularity without
+integrating an independent radial continuity equation. Projection of the full
+Coriolis cross product couples degrees and cosine/sine phases. Internal
+harmonics are orthonormal; public scalar coefficients are converted from the
+historical no-factorial normalization on entry and back on output.
 
-| Component | Equation | Drives |
-|-----------|----------|--------|
-| ``\phi`` (zonal) | ``2\Omega (\hat{z}\cdot\nabla) \bar{u}_\phi = \frac{Ra E^2}{Pr r} \frac{\partial \bar{T}}{\partial \theta}`` | Zonal jets |
-| ``\theta`` (meridional) | ``2\Omega (\hat{z}\cdot\nabla) \bar{u}_\theta = -\frac{Ra E^2}{Pr r \sin\theta} \frac{\partial \bar{T}}{\partial \phi}`` | Meridional flow |
-| Continuity | ``\nabla \cdot \bar{\mathbf{u}} = 0`` | Radial flow |
+At each boundary, no-slip requires ``p=p'=t=0``. Stress-free requires
+``p=0``, ``p''-2p'/r=0``, and ``t'-2t/r=0``. With two stress-free boundaries,
+zero axial angular momentum fixes the axisymmetric solid-rotation nullspace.
 
-### Why Meridional Circulation Matters
+The historical `coupled_thermal_wind` and `include_meridional_flow` constructor
+keywords are accepted for source compatibility; all values now construct the
+complete viscous flow. The old diagonal approximation is no longer used.
 
-For **axisymmetric** basic states (``m = 0`` only):
-- ``\partial \bar{T}/\partial \phi = 0`` → No forcing for ``\bar{u}_\theta``
-- Meridional circulation is **exactly zero**
-- Only zonal flow exists
-
-For **non-axisymmetric** basic states (``m \neq 0``):
-- ``\partial \bar{T}/\partial \phi \propto im \bar{T}`` → **Non-zero forcing**
-- Meridional circulation is driven by the ``\phi``-gradient
-- Full three-component velocity field required
-
-### The ``(\hat{z}\cdot\nabla)`` Operator and Mode Coupling
-
-The key operator in geostrophic balance is:
-
-```math
-(\hat{\mathbf{z}} \cdot \nabla) = \cos\theta \frac{\partial}{\partial r} - \frac{\sin\theta}{r} \frac{\partial}{\partial \theta}
-```
-
-In spectral space, this **couples modes ``\ell`` to ``\ell \pm 1``**:
-
-```math
-\cos\theta \, Y_{\ell m} = C^+_{\ell m} Y_{\ell+1,m} + C^-_{\ell m} Y_{\ell-1,m}
-```
-
-```math
-\sin\theta \frac{\partial Y_{\ell m}}{\partial \theta} = A^+_{\ell m} Y_{\ell+1,m} + A^-_{\ell m} Y_{\ell-1,m}
-```
-
-This requires solving a **block-tridiagonal system** for all ``\ell`` modes at each azimuthal wavenumber ``m``.
-
-### Toroidal-Poloidal Decomposition
-
-Magrathea.jl uses the **toroidal-poloidal decomposition** for the meridional circulation, which:
-
-1. **Eliminates pressure** from the formulation
-2. **Automatically satisfies** the continuity equation ``\nabla \cdot \bar{\mathbf{u}} = 0``
-3. **Handles mode coupling** through exact spherical harmonic recurrence relations
-
-The solver builds the full block-tridiagonal system:
-
-```math
-\begin{pmatrix}
-\ddots & & & \\
-& A_{\ell-1} & C_{\ell-1,\ell} & \\
-& C_{\ell,\ell-1} & A_\ell & C_{\ell,\ell+1} \\
-& & C_{\ell+1,\ell} & A_{\ell+1} \\
-& & & & \ddots
-\end{pmatrix}
-\begin{pmatrix}
-\vdots \\ \bar{u}_{\theta,\ell-1} \\ \bar{u}_{\theta,\ell} \\ \bar{u}_{\theta,\ell+1} \\ \vdots
-\end{pmatrix}
-= \begin{pmatrix}
-\vdots \\ F_{\ell-1} \\ F_\ell \\ F_{\ell+1} \\ \vdots
-\end{pmatrix}
-```
-
-where:
-- ``A_\ell``: Diagonal blocks (regularization for numerical stability)
-- ``C_{\ell,\ell\pm1}``: Off-diagonal coupling from ``\cos\theta`` and ``\sin\theta \partial/\partial\theta``
-- ``F_\ell``: Forcing from ``\partial \bar{T}/\partial \phi``
-
-After solving for ``\bar{u}_\theta``, the radial velocity ``\bar{u}_r`` is computed from continuity.
-
-### Using the Full Solver
-
-The self-consistent solver automatically uses the full geostrophic balance:
-
-```julia
-using Magrathea
-
-# Setup
-cd = ChebyshevDiffn(32, [0.35, 1.0], 4)
-E, Pr, Ra, χ = 1e-4, 1.0, 1e6, 0.35
-
-# Non-axisymmetric flux boundary condition
-flux = Y00(-1.0) + Y22(-0.2)
-
-# Self-consistent solver (includes meridional circulation)
-bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr;
-                                       flux_bc = flux,
-                                       verbose = true)
-
-# Access all velocity components
-println("Zonal velocity modes: ", keys(bs.uphi_coeffs))
-println("Meridional velocity modes: ", keys(bs.utheta_coeffs))
-println("Radial velocity modes: ", keys(bs.ur_coeffs))
-```
-
-### Controlling the Solver Options
-
-```julia
-# Use full mode coupling (default)
-solve_meridional_circulation_toroidal_poloidal!(
-    ur_coeffs, utheta_coeffs, ...,
-    use_full_coupling = true  # Full block-tridiagonal solver
-)
-
-# Use diagonal approximation (faster, less accurate)
-solve_meridional_circulation_toroidal_poloidal!(
-    ur_coeffs, utheta_coeffs, ...,
-    use_full_coupling = false  # Simplified diagonal solver
-)
-
-# Disable meridional circulation entirely
-solve_meridional_circulation_toroidal_poloidal!(
-    ur_coeffs, utheta_coeffs, ...,
-    include_meridional = false  # Sets u_r = u_θ = 0
-)
-```
-
-### Coupling Coefficient Functions
-
-Magrathea.jl provides functions for computing the spherical harmonic coupling coefficients:
-
-```julia
-# cos(θ) × Y_ℓm coupling
-b_minus, b_plus = cos_theta_coupling(ℓ, m)
-
-# sin(θ) × Y_ℓm coupling
-a_minus, a_plus = sin_theta_coupling(ℓ, m)
-
-# sin(θ) × ∂Y_ℓm/∂θ coupling
-A_minus, A_plus, A_diag = theta_derivative_coupling(ℓ, m)
-
-# ⟨Y_Lm | 1/sinθ | Y_ℓm⟩ Gaunt-like integral
-gaunt = inv_sin_theta_gaunt(L, ℓ, m)
-```
-
-### Example: Y₂₂ Heat Flux (Non-Axisymmetric)
-
-```julia
-# Sectoral heat flux pattern at outer boundary
-flux = Y00(-1.0) + Y22(-0.2)
-bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; flux_bc=flux, verbose=true)
-
-# Results show all three velocity components
-# Temperature: Y₀₀ (conduction) + Y₂₂ (sectoral)
-# Zonal flow: Y₃₂ mode from thermal wind
-# Meridional: Multiple modes (ℓ=2,3,4,...) from mode coupling
-```
-
-### Example: Y₂₀ Heat Flux (Axisymmetric)
-
-```julia
-# Latitudinal heat flux pattern at outer boundary
-flux = Y00(-1.0) + Y20(-0.2)
-bs = basic_state(cd, χ, E, Ra, Pr; flux_bc=flux)
-
-# Results show only zonal flow
-# Temperature: Y₀₀ (conduction) + Y₂₀ (latitudinal)
-# Zonal flow: Y₁₀, Y₃₀ modes from thermal wind
-# Meridional: u_r = u_θ = 0 (exactly zero for m=0)
-```
-
-### Comparison: Y₂₀ vs Y₂₂
-
-| Property | Y₂₀ (m=0) | Y₂₂ (m=2) |
-|----------|-----------|-----------|
-| Symmetry | Axisymmetric | Sectoral (4-fold) |
-| ``\partial \bar{T}/\partial \phi`` | = 0 | ≠ 0 |
-| Advection ``\bar{\mathbf{u}}\cdot\nabla\bar{T}`` | = 0 (no iteration) | ≠ 0 (iteration needed) |
-| Zonal flow ``\bar{u}_\phi`` | Yes (Y₁₀, Y₃₀) | Yes (Y₃₂) |
-| Meridional ``\bar{u}_\theta``, ``\bar{u}_r`` | **No** | **Yes** (mode coupling) |
-| Velocity modes | ``\ell = 1, 3`` | ``\ell = 2, 3, 4, ..., L_{max}`` |
-
-### Physical Interpretation
-
-The full geostrophic solution captures important physics:
-
-1. **Zonal jets** from thermal wind balance (both Y₂₀ and Y₂₂)
-2. **Meridional overturning cells** driven by ``\phi``-gradient of temperature (Y₂₂ only)
-3. **Mode coupling cascade**: Energy spreads across multiple ``\ell`` modes
-4. **Continuity-consistent radial flow**: ``\bar{u}_r`` computed from ``\nabla \cdot \bar{\mathbf{u}} = 0``
-
-This is particularly important for:
-- **Tidal forcing** (Y₂₂ patterns from gravitational tides)
-- **Heterogeneous boundary heat flux** (CMB variations)
-- **Libration-driven flows** in planetary cores
+For quantitative work, increase radial resolution and `lmax_bs` until the
+physical velocity, temperature, and balance residuals converge. In a nonlinear
+thermal calculation, also increase `mmax_bs` using
+`nonaxisymmetric_basic_state_selfconsistent`, since transport can generate
+azimuthal orders above those in the prescribed boundary forcing. Small Ekman
+numbers require enough radial nodes to resolve the viscous boundary layers.
 
 ## Checklist
 
@@ -986,4 +726,4 @@ Before using a basic state:
     - `basic_state_onset_example.jl` - Basic state with symbolic BCs
     - `nonaxisymmetric_basic_state.jl` - 3D basic states with Y₂₂ patterns
     - `flux_bc_mean_flow.jl` - Non-axisymmetric heat flux (Y₂₂) with meridional circulation
-    - `flux_bc_axisymmetric_flow.jl` - Axisymmetric heat flux (Y₂₀) showing zero meridional flow
+    - `flux_bc_axisymmetric_flow.jl` - Axisymmetric heat flux (Y₂₀)
