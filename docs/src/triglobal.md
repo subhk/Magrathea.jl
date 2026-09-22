@@ -44,7 +44,10 @@ The coupling strength is determined by Gaunt coefficients:
 G_{\ell_1 \ell_2 \ell_3}^{m_1 m_2 m_3} = \int Y_{\ell_1}^{m_1} Y_{\ell_2}^{m_2} Y_{\ell_3}^{m_3*} d\Omega
 ```
 
-These are computed from Wigner 3j symbols using the `WignerSymbols.jl` package.
+Scalar Gaunt utilities use `WignerSymbols.jl`. The mean-state stability operator
+projects the full vector and temperature products by angular quadrature, including
+velocity shear, spherical metric terms and the radial equation weights. The same
+physical projection is used for axisymmetric and non-axisymmetric states.
 
 ## Setting Up a Tri-Global Problem
 

@@ -101,6 +101,8 @@ struct MHDProblem{T, BS}
     params::MHDParams{T}
     basic_state::BS
     function MHDProblem{T, BS}(params::MHDParams{T}, basic_state::BS) where {T, BS}
+        basic_state === nothing || throw(ArgumentError(
+            "MHD stability currently supports a motionless conductive basic state and an imposed magnetic field. Coupling an explicit mean-flow/basic-state object is not implemented."))
         validate_mhd_params(params)   # soft @warn for unusual-but-valid inputs
         new{T, BS}(params, basic_state)
     end
@@ -263,7 +265,8 @@ function _mhd_total_dof(params)
         n_g = n_tor
     end
     n_h = n_pol  # temperature shares poloidal-velocity parity
-    total_dof = (n_pol + n_tor + n_f + n_g + n_h) * n_per_mode
+    n_core = params.bci_magnetic == 1 ? n_f + n_g : 0
+    total_dof = (n_pol + n_tor + n_f + n_g + n_h + n_core) * n_per_mode
     return total_dof, n_pol, n_tor, n_f, n_g, n_per_mode
 end
 
@@ -330,7 +333,8 @@ end
 
 """
     basic_state(params::OnsetParams; mode=:conduction, amplitude=0.05, mmax_bs=2,
-                lmax_bs=4, max_iterations=20, tol=1e-8)
+                lmax_bs=4, max_iterations=50, tol=1e-8,
+                momentum_model=:navier_stokes, allow_unconverged=false)
 
 Convenience constructor that builds a basic state directly from an `OnsetParams`,
 selecting the implementation by `mode`. The radial grid (`ChebyshevDiffn`) is
@@ -339,15 +343,24 @@ derived from `params.Nr` and `params.χ`.
 - `:conduction`      — pure conduction profile (`conduction_basic_state`)
 - `:meridional`      — axisymmetric thermal-wind state of strength `amplitude`
                        (`meridional_basic_state`) → `BasicState`
-- `:selfconsistent`  — self-consistent geostrophic balance from a flux BC
+- `:selfconsistent`  — nonlinear steady momentum and heat balance from a flux BC
                        `Y00(-1) + Σ Y(2,m)(amplitude)` (`basic_state_selfconsistent`)
 - `:nonaxisymmetric` — 3-D state with `m≠0` boundary forcing of strength
                        `amplitude` at degree 2, `m=1…mmax_bs`
                        (`nonaxisymmetric_basic_state`) → `BasicState3D`
+
+`momentum_model` applies to `:selfconsistent`; choose `:stokes` to omit momentum
+inertia. This mode throws if momentum, thermal, or boundary residuals fail `tol`.
+Use `basic_state_selfconsistent` for detailed convergence information, or
+`allow_unconverged=true` to explicitly inspect an incomplete iterate. In this
+convenience wrapper `mmax_bs` selects the imposed degree-2 boundary modes;
+the nonlinear solve retains azimuthal orders through `lmax_bs`.
 """
 function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
                      amplitude::Real=0.05, mmax_bs::Int=2, lmax_bs::Int=4,
-                     max_iterations::Int=20, tol::Real=1e-8) where {T}
+                     max_iterations::Int=50, tol::Real=1e-8,
+                     momentum_model::Symbol=:navier_stokes,
+                     allow_unconverged::Bool=false) where {T}
     cd = ChebyshevDiffn(params.Nr, [T(params.χ), one(T)], 4)
     χ = T(params.χ); E = T(params.E); Ra = T(params.Ra); Pr = T(params.Pr)
     if mode === :conduction
@@ -361,10 +374,15 @@ function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
         for mm in 1:mmax_bs
             flux = flux + Ylm(2, mm, T(amplitude))
         end
-        bs, _ = basic_state_selfconsistent(cd, χ, E, Ra, Pr; flux_bc=flux,
+        bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; flux_bc=flux,
                                            mechanical_bc=params.mechanical_bc,
                                            lmax_bs=lmax_bs, max_iterations=max_iterations,
-                                           tolerance=T(tol))
+                                           tolerance=Float64(tol),momentum_model=momentum_model)
+        if !allow_unconverged && info!==nothing && !info.converged
+            error("Self-consistent mean flow did not converge ($(info.termination_reason)); " *
+                  "momentum residual=$(info.momentum_residual), thermal residual=$(info.thermal_residual). " *
+                  "Use basic_state_selfconsistent to inspect the state and convergence information.")
+        end
         return bs
     elseif mode === :nonaxisymmetric
         amps = Dict{Tuple{Int,Int},T}((2, mm) => T(amplitude) for mm in 1:mmax_bs)

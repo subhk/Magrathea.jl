@@ -494,8 +494,6 @@ function _assemble_onset_coo(op::LinearStabilityOperator{T};
         bs_ops = build_basic_state_operators(op.params.basic_state, op, op.params.m)
         add_basic_state_operators_coo!(A_rows, A_cols, A_vals, B_rows, B_cols, B_vals,
                                        bs_ops, op, op.params.m; owned_julia_rows=owned_julia_rows)
-        _append_axisymmetric_meridional_coo!(A_rows,A_cols,A_vals,op;
-                                             owned_julia_rows=owned_julia_rows)
     end
 
     return (A_rows=A_rows, A_cols=A_cols, A_vals=A_vals,

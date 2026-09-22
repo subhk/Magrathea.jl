@@ -144,6 +144,23 @@ Where ``\mathcal{L}`` is the angular Laplacian:
 \mathcal{L} = -\frac{1}{\sin\theta} \frac{\partial}{\partial \theta} \left( \sin\theta \frac{\partial}{\partial \theta} \right) - \frac{1}{\sin^2\theta} \frac{\partial^2}{\partial \phi^2}
 ```
 
+### Coordinates stored by the stability solver
+
+The formulas above describe the physical potentials accepted by
+`potentials_to_velocity`. The onset matrices store rescaled potentials
+``P_{\rm physical}=rP_{\rm onset}``, ``T_{\rm physical}=rT_{\rm onset}``, and use
+angular basis ``Y_{\ell m}/\sqrt{2\ell+1}``, where ``Y`` is complex orthonormal.
+Thus one onset poloidal mode gives
+``u_r=\ell(\ell+1)P_{\rm onset}Y/(r\sqrt{2\ell+1})``.
+`eigenvector_to_velocity` and the triglobal reconstruction apply these conventions
+automatically and evaluate angular derivatives analytically.
+
+The native mean-flow potentials use a different convention:
+``p=rP_{\rm onset}/\sqrt{2\ell+1}`` and
+``t=-rT_{\rm onset}/\sqrt{2\ell+1}`` after the real/complex phase conversion.
+The minus sign comes from using ``\hat r\times\nabla_hY`` for the native toroidal
+basis. The coupling assembly converts the physical fields before projection.
+
 ## Spherical Harmonic Expansion
 
 Fields are expanded in spherical harmonics:

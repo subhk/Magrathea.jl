@@ -113,6 +113,7 @@ end
 function lorentz_upol_bpol_axial(op::MHDStabilityOperator{T},
                                  l::Int, m::Int, offset::Int,
                                  Le::T) where {T}
+    abs(offset) == 1 || return spzeros(Complex{T}, op.params.N + 1, op.params.N + 1)
     nblock = zero_block(op)
     bg(p, h, d) = background_operator(op, p, h, d)
     L = l * (l + 1)
@@ -235,6 +236,7 @@ end
 function lorentz_upol_btor_axial(op::MHDStabilityOperator{T},
                                  l::Int, m::Int, offset::Int,
                                  Le::T) where {T}
+    offset == 0 || return spzeros(Complex{T}, op.params.N + 1, op.params.N + 1)
     nblock = zero_block(op)
     bg(p, h, d) = background_operator(op, p, h, d)
     Le2 = Le^2
@@ -334,52 +336,15 @@ end
 function operator_lorentz_poloidal_offdiag(op::MHDStabilityOperator{T},
                                            l::Int, m::Int, offset::Int,
                                            Le::T) where {T}
-    params = op.params
-    if params.B0_type == axial
-        return lorentz_upol_btor_axial(op, l, m, offset, Le)
-    end
-
-    is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)
-    shift = radial_power_shift_poloidal(is_dipole)
-    bo(p, h, d) = background_operator(op, p + shift, h, d)
-
-    if offset == -1
-        denom = 2l - 1
-        abs(denom) < eps(T) && return zero_block(op)
-        coef = (Le^2) * (6im * m * sqrt(max(l^2 - m^2, 0))) / denom
-        terms = [
-            (-(3 - 3l - 2l^2), bo(1, 0, 0)),
-            (-(l - 3), bo(2, 0, 1)),
-            ((3 - 2l - l^2), bo(2, 1, 0)),
-            (3, bo(3, 0, 2)),
-            (-(l - 3), bo(3, 1, 1)),
-            (-l, bo(3, 2, 0)),
-        ]
-        combo = combine_terms(terms)
-        return _scale_sparse(T, coef, combo)
-    elseif offset == 1
-        denom = 2l + 3
-        abs(denom) < eps(T) && return zero_block(op)
-        coef = (Le^2) * (6im * m * sqrt(max((l + 1)^2 - m^2, 0))) / denom
-        terms = [
-            ((-4 + l + 2l^2), bo(1, 0, 0)),
-            ((4 + l), bo(2, 0, 1)),
-            ((4 - l^2), bo(2, 1, 0)),
-            (3, bo(3, 0, 2)),
-            ((1 + l), bo(3, 2, 0)),
-            ((4 + l), bo(3, 1, 1)),
-        ]
-        combo = combine_terms(terms)
-        return _scale_sparse(T, coef, combo)
-    else
-        return zero_block(op)
-    end
+    # Degree-one backgrounds have only the diagonal u <- g coupling.
+    return zero_block(op)
 end
 
 """Return poloidal-magnetic to poloidal-velocity Lorentz coupling for offsets -2:2."""
 function operator_lorentz_poloidal_from_bpol(op::MHDStabilityOperator{T},
                                              l::Int, m::Int, offset::Int,
                                              Le::T) where {T}
+    abs(offset) == 1 || return spzeros(Complex{T}, op.params.N + 1, op.params.N + 1)
     params = op.params
     if params.B0_type == axial
         return lorentz_upol_bpol_axial(op, l, m, offset, Le)
@@ -515,6 +480,7 @@ end
 function operator_lorentz_toroidal_from_bpol(op::MHDStabilityOperator{T},
                                              l::Int, m::Int, offset::Int,
                                              Le::T) where {T}
+    offset == 0 || return spzeros(Complex{T}, op.params.N + 1, op.params.N + 1)
     Np1 = op.params.N + 1
     zero_block = spzeros(Complex{T}, Np1, Np1)
     is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)
@@ -554,6 +520,7 @@ end
 function operator_lorentz_toroidal_from_btor(op::MHDStabilityOperator{T},
                                              l::Int, m::Int, offset::Int,
                                              Le::T) where {T}
+    abs(offset) == 1 || return spzeros(T, op.params.N + 1, op.params.N + 1)
     Np1 = op.params.N + 1
     zero_block = spzeros(T, Np1, Np1)
     is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)
@@ -637,6 +604,7 @@ For poloidal field (no-curl equation):
 """
 function operator_induction_poloidal_from_u(op::MHDStabilityOperator{T},
                                            l::Int, m::Int, offset::Int) where {T}
+    abs(offset) == 1 || return spzeros(T, op.params.N + 1, op.params.N + 1)
     is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)
     shift = radial_power_shift_magnetic_poloidal(is_dipole)
     bo(p, h, d) = background_operator(op, p + shift, h, d)
@@ -706,6 +674,7 @@ end
 """Return toroidal-velocity to poloidal-magnetic induction coupling."""
 function operator_induction_poloidal_from_v(op::MHDStabilityOperator{T},
                                             l::Int, m::Int, offset::Int) where {T}
+    offset == 0 || return spzeros(Complex{T}, op.params.N + 1, op.params.N + 1)
     is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)
     shift = radial_power_shift_magnetic_poloidal(is_dipole)
     term = SparseMatrixCSC{Complex{T}, Int}(background_operator(op, 1 + shift, 0, 0))
@@ -736,6 +705,7 @@ Implements Kore's induction equation for section g.
 """
 function operator_induction_toroidal_from_u(op::MHDStabilityOperator{T},
                                            l::Int, m::Int, offset::Int) where {T}
+    offset == 0 || return spzeros(Complex{T}, op.params.N + 1, op.params.N + 1)
     is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)
     shift = radial_power_shift_magnetic_toroidal(is_dipole)
 
@@ -799,6 +769,7 @@ end
 """Return toroidal-velocity to toroidal-magnetic induction coupling for offsets -2:2."""
 function operator_induction_toroidal_from_v(op::MHDStabilityOperator{T},
                                             l::Int, m::Int, offset::Int) where {T}
+    abs(offset) == 1 || return spzeros(T, op.params.N + 1, op.params.N + 1)
     Np1 = op.params.N + 1
     zero_block = spzeros(T, Np1, Np1)
     is_dipole = is_dipole_case(op.params.B0_type, op.params.ricb)

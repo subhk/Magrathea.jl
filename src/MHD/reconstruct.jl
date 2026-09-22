@@ -7,14 +7,12 @@
 #  T_n(x) = cos(n·acos(x)) (accurate for the small N used here), then
 #  synthesize physical fields on a meridional (r, θ) grid.  The poloidal-toroidal
 #  curl mirrors `potentials_to_velocity` exactly (velocity and magnetic field
-#  share the same B = ∇×∇×(P r̂) + ∇×(T r̂) form).
+#  share the same B = ∇×∇×(r P r̂) + ∇×(r T r̂) form).
 # =============================================================================
 
 """Total (pre-BC) MHD degrees of freedom: all five sections × `(N+1)` radial coeffs."""
 function _mhd_reconstruction_dof(op::MHDStabilityOperator)
-    n_modes = length(op.ll_u) + length(op.ll_v) + length(op.ll_f) +
-              length(op.ll_g) + length(op.ll_h)
-    return n_modes * (op.params.N + 1)
+    return op.matrix_size
 end
 
 """
@@ -87,7 +85,7 @@ end
                              Nθ=nothing, Nr=nothing, interior_dofs=nothing, grid=nothing)
 
 Reconstruct the physical perturbation temperature field
-`θ(r,θ) = Σ_ℓ h_ℓ(r) Y_ℓ^m(θ)` from an MHD eigenvector (interior or full).
+`θ(r,θ) = Σ_ℓ h_ℓ(r) Y_ℓ^m(θ)/√(2ℓ+1)` from an MHD eigenvector (interior or full).
 Returns `(θfield, r_grid, grid)`.
 """
 function perturbation_temperature(evec::AbstractVector{<:Complex},
@@ -109,7 +107,7 @@ function perturbation_temperature(evec::AbstractVector{<:Complex},
     θfield = zeros(ComplexF64, length(r_grid), length(g.θ))
     for l in op.ll_h
         hl = _mhd_radial_eval(_mhd_field_block(full, idx_map, :h, l), ricb, r_grid)
-        ylm = g.Ylm[l]
+        ylm = g.Ylm[l] ./ sqrt(2l + 1)
         @inbounds for j in eachindex(g.θ), k in eachindex(r_grid)
             θfield[k, j] += hl[k] * ylm[j]
         end
@@ -117,57 +115,17 @@ function perturbation_temperature(evec::AbstractVector{<:Complex},
     return θfield, r_grid, g
 end
 
-# Poloidal-toroidal → physical curl, mirroring `potentials_to_velocity`:
-#   F_r = -L²P / r²              (L² acting on the synthesized poloidal field)
-#   F_θ = (1/r) ∂²P/∂r∂θ + (im·m / (r sinθ)) T
-#   F_φ = (im·m / (r sinθ)) ∂P/∂r - (1/r) ∂T/∂θ
-# P, T are synthesized poloidal/toroidal potential fields on (r_grid, θ).
+# Native potentials multiply the radius vector and use Y_lm/sqrt(2l+1).
 function _mhd_poltor_to_physical(full, idx_map, op,
                                  ls_pol, sec_pol::Symbol,
                                  ls_tor, sec_tor::Symbol,
                                  r_grid, g::MeridionalGrid)
-    ricb = op.params.ricb
-    Nr = length(r_grid); Nθ = length(g.θ)
-
-    # Synthesize potential fields P(r,θ), T(r,θ) on the grid.
-    P   = zeros(ComplexF64, Nr, Nθ)
-    Tor = zeros(ComplexF64, Nr, Nθ)
-    for l in ls_pol
-        pl = _mhd_radial_eval(_mhd_field_block(full, idx_map, sec_pol, l), ricb, r_grid)
-        ylm = g.Ylm[l]
-        @inbounds for j in 1:Nθ, k in 1:Nr
-            P[k, j] += pl[k] * ylm[j]
-        end
-    end
-    for l in ls_tor
-        tl = _mhd_radial_eval(_mhd_field_block(full, idx_map, sec_tor, l), ricb, r_grid)
-        ylm = g.Ylm[l]
-        @inbounds for j in 1:Nθ, k in 1:Nr
-            Tor[k, j] += tl[k] * ylm[j]
-        end
-    end
-
-    # Radial derivative on the Chebyshev-Lobatto r_grid.
-    cd = ChebyshevDiffn(Nr, [ricb, 1.0], 1)
-    Dr = cd.D1
-
-    Fr    = P * transpose(g.Lθ)        # L² P
-    dP_dr = Dr * P                      # ∂P/∂r
-    Fθ    = dP_dr * transpose(g.Dθ)    # ∂²P/∂r∂θ
-    Fφ    = Tor * transpose(g.Dθ)      # ∂T/∂θ
-
-    im_m = ComplexF64(im * op.params.m)   # imaginary unit × m  (im = Base.im here)
-    @inbounds for j in 1:Nθ
-        inv_sinθ = inv(g.sinθ[j])
-        for k in 1:Nr
-            inv_r = inv(r_grid[k])
-            inv_r_sinθ = inv_r * inv_sinθ
-            Fr[k, j] = -Fr[k, j] * inv_r * inv_r
-            Fθ[k, j] = Fθ[k, j] * inv_r + im_m * Tor[k, j] * inv_r_sinθ
-            Fφ[k, j] = im_m * dP_dr[k, j] * inv_r_sinθ - Fφ[k, j] * inv_r
-        end
-    end
-    return Fr, Fθ, Fφ
+    radial(sec, l) = _mhd_radial_eval(_mhd_field_block(full, idx_map, sec, l),
+                                     op.params.ricb, r_grid)
+    P = Dict(l => radial(sec_pol, l) for l in ls_pol)
+    Tor = Dict(l => radial(sec_tor, l) for l in ls_tor)
+    Dr = ChebyshevDiffn(length(r_grid), [op.params.ricb, 1.0], 1).D1
+    return _onset_velocity_from_coefficients(P, Tor, r_grid, Dr, g, op.params.m)
 end
 
 """

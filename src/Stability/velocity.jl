@@ -613,20 +613,38 @@ function _eigenvector_to_velocity(eigenvector::AbstractVector{<:Complex},
     # Extract spectral coefficients
     P_coeffs, T_coeffs, _ = extract_eigenvector_coefficients(eigenvector, op)
 
-    # Transform to physical space
-    P_phys = spectral_to_physical(P_coeffs, grid, Nr)
-    T_phys = spectral_to_physical(T_coeffs, grid, Nr)
-
-    # Compute velocity using potentials_to_velocity
-    ur, uθ, uφ = potentials_to_velocity(P_phys, T_phys;
-                                         Dr=Dr,
-                                         Dθ=grid.Dθ,
-                                         Lθ=grid.Lθ,
-                                         r=r,
-                                         sintheta=grid.sinθ,
-                                         m=m)
+    ur,uθ,uφ=_onset_velocity_from_coefficients(P_coeffs,T_coeffs,r,Dr,grid,m)
 
     return ur, uθ, uφ, grid
+end
+
+"""Reconstruct onset's rP/rT potentials and Y_lm/√(2l+1) angular convention."""
+function _onset_velocity_from_coefficients(Pcoeff,Tcoeff,r,Dr,grid::MeridionalGrid{T},m) where T
+    CT=promote_type(_coefficient_eltype(Pcoeff,grid),_coefficient_eltype(Tcoeff,grid))
+    Nr=length(r); Nθ=length(grid.θ); a=abs(m)
+    L=max(maximum(keys(Pcoeff);init=a),maximum(keys(Tcoeff);init=a))
+    g=SHGrid{T}(L,a,grid.cosθ,zeros(T,Nθ),T[0],
+        Dict(k=>_associated_legendre_table(k,L,grid.cosθ) for k in 0:min(a+1,L)),
+        Dict(k=>_normalization_table(T,k,L) for k in 0:a))
+    ur=zeros(CT,Nr,Nθ); uθ=similar(ur); uφ=similar(ur)
+    fill!(uθ,0); fill!(uφ,0)
+    for (l,p) in Pcoeff
+        y,h,v=_coupling_harmonic(g,l,m); norm=inv(sqrt(T(2l+1)))
+        dp=Dr*p; q=l*(l+1)
+        for j in 1:Nθ, i in 1:Nr
+            ur[i,j]+=norm*q*p[i]/r[i]*y[j]
+            uθ[i,j]+=norm*(dp[i]+p[i]/r[i])*h[j]
+            uφ[i,j]+=norm*(dp[i]+p[i]/r[i])*v[j]
+        end
+    end
+    for (l,t) in Tcoeff
+        y,h,v=_coupling_harmonic(g,l,m); norm=inv(sqrt(T(2l+1)))
+        for j in 1:Nθ, i in 1:Nr
+            uθ[i,j]+=norm*t[i]*v[j]
+            uφ[i,j]-=norm*t[i]*h[j]
+        end
+    end
+    ur,uθ,uφ
 end
 
 
@@ -736,23 +754,7 @@ function _triglobal_velocity_slice(eigenvector::AbstractVector{<:Complex},
         isempty(P_m) && isempty(T_m) && continue
 
         # Transform to physical θ-space
-        P_phys = spectral_to_physical(P_m, grid_m, Nr)
-        T_phys = spectral_to_physical(T_m, grid_m, Nr)
-
-        if m < 0
-            phase_lat = isodd(abs(m)) ? -one(CT) : one(CT)
-            P_phys .*= phase_lat
-            T_phys .*= phase_lat
-        end
-
-        # Compute velocity for this mode
-        ur_m, uθ_m, uφ_m = potentials_to_velocity(P_phys, T_phys;
-                                                   Dr=Dr,
-                                                   Dθ=grid_m.Dθ,
-                                                   Lθ=grid_m.Lθ,
-                                                   r=r,
-                                                   sintheta=grid_m.sinθ,
-                                                   m=m)
+        ur_m,uθ_m,uφ_m=_onset_velocity_from_coefficients(P_m,T_m,r,Dr,grid_m,m)
 
         # Add contribution with e^{imφ} phase factor
         phase = CT(exp(im * m * φ))
@@ -804,23 +806,7 @@ function _triglobal_velocity_3d(eigenvector::AbstractVector{<:Complex},
         isempty(P_m) && isempty(T_m) && continue
 
         # Transform to physical θ-space
-        P_phys = spectral_to_physical(P_m, grid_m, Nr)
-        T_phys = spectral_to_physical(T_m, grid_m, Nr)
-
-        if m < 0
-            phase_lat = isodd(abs(m)) ? -one(CT) : one(CT)
-            P_phys .*= phase_lat
-            T_phys .*= phase_lat
-        end
-
-        # Compute velocity for this mode (2D)
-        ur_m, uθ_m, uφ_m = potentials_to_velocity(P_phys, T_phys;
-                                                   Dr=Dr,
-                                                   Dθ=grid_m.Dθ,
-                                                   Lθ=grid_m.Lθ,
-                                                   r=r,
-                                                   sintheta=grid_m.sinθ,
-                                                   m=m)
+        ur_m,uθ_m,uφ_m=_onset_velocity_from_coefficients(P_m,T_m,r,Dr,grid_m,m)
 
         # Add to 3D field with e^{imφ} phase
         for k in 1:Nφ

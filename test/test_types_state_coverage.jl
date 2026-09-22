@@ -58,7 +58,7 @@ const _TSC_PR  = 1.0
     # structural facts (state built, correct Nr), never coefficient values.
     bs_s = _silent_tsc() do
         basic_state(params; mode=:selfconsistent, amplitude=0.02, mmax_bs=2,
-                    lmax_bs=4, max_iterations=1, tol=1e-6)
+                    lmax_bs=4, max_iterations=1, tol=1e-6,allow_unconverged=true)
     end
     @test bs_s isa Union{Magrathea.BasicState, Magrathea.BasicState3D}
     @test bs_s.Nr == params.Nr

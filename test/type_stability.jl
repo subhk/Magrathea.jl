@@ -506,7 +506,9 @@ end
     GC.gc()
     bytes = @allocated run_build()
 
-    @test bytes < 8_000_000
+    # Full vector advection now also projects vorticity and eliminates pressure;
+    # the former scalar-only approximation's 8 MB budget excluded that work.
+    @test bytes < 16_000_000
 end
 
 @testset "Self-consistent basic state avoids avoidable vector temporaries" begin
@@ -533,7 +535,7 @@ end
     # The new solve includes a dense coupled momentum BVP and an implicit
     # spectral thermal transport matrix. Bound workspace relative to their
     # total scalar temperature dimension, rather than the old scalar ODE.
-    nthermal = 19 * length(cd.x)  # lmax=4, |m|≤2
+    nthermal = 25 * length(cd.x)  # lmax=mmax=4, including generated azimuthal modes
     @test bytes < 64 * sizeof(T) * nthermal^2
 end
 

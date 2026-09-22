@@ -95,7 +95,7 @@ end
     cd=ChebyshevDiffn(20,[.35,1.],4)
     for bc in (:fixed_temperature,:fixed_flux), m in (0,2)
         bs,info=nonaxisymmetric_basic_state_selfconsistent(cd,.35,.01,30.,1.,5,m,Dict((2,m)=>.01);
-            thermal_bc=bc,max_iterations=35,tolerance=1e-9)
+            thermal_bc=bc,max_iterations=35,tolerance=1e-9,momentum_model=:stokes)
         @test info.converged
         @test info.thermal_residual<1e-8
         # Returned velocity must use the final, rather than previous, temperature.

@@ -26,7 +26,7 @@ _silent(f) = with_logger(f, NullLogger())
 #
 #  Only structural assertions (types/dims/no-throw/zero-rows) and values of
 #  well-defined production helpers are checked; m≠0 mean-flow coupling COEFFICIENT
-#  values (known-buggy) are never asserted.
+#  values are covered by the independent tests in mean_flow_coupling.jl.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -365,22 +365,7 @@ end
     @test Magrathea.compute_gaunt_coefficient(2, 0, 2, 0, 2, 0) === g
 end
 
-@testset "θ-derivative and meridional coupling structure" begin
-    # Below the order threshold both coefficients vanish.
-    @test Magrathea._theta_derivative_coeff(0, 1) == (0.0, 0.0)
-    # l = 0 yields no coupling either way.
-    @test Magrathea._theta_derivative_coeff(0, 0) == (0.0, 0.0)
-    # Standard recurrence sign structure for l=1, m=0.
-    cp, cm = Magrathea._theta_derivative_coeff(1, 0)
-    @test cp < 0
-    @test cm > 0
-    @test cp isa Float64 && cm isa Float64
-
-    # Meridional coupling returns a finite scalar exercising c_plus/c_minus branches.
-    mc = Magrathea._meridional_coupling(1, 1, 0, 0)
-    @test mc isa Float64
-    @test isfinite(mc)
-end
+# Angular-derivative physics is tested independently in mean_flow_coupling.jl.
 
 @testset "Spherical-harmonic and azimuthal coupling builders" begin
     coeffs = Magrathea.compute_spherical_harmonic_coupling(2, 1, 0)

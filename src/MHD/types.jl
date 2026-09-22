@@ -263,6 +263,18 @@ struct MHDParams{T<:Real}
             "symm must be -1, 0, or 1, got $symm"))
         heating in (:internal, :differential) || throw(ArgumentError(
             "heating must be :internal or :differential, got :$heating"))
+        m >= 0 || throw(ArgumentError("m must be nonnegative"))
+        all(isfinite, (E, Pr, Pm, Ra, Le, B0_amplitude, Etherm, Em)) ||
+            throw(ArgumentError("MHD physical parameters must be finite"))
+        Le >= 0 || throw(ArgumentError("Le must be nonnegative"))
+        bci in (0, 1, 2) && bco in (0, 1, 2) ||
+            throw(ArgumentError("Mechanical BCs must be 0 (stress-free), 1 (no-slip), or legacy 2 (stress-free)"))
+        bci_thermal in (0, 1) && bco_thermal in (0, 1) ||
+            throw(ArgumentError("Thermal BCs must be 0 (temperature) or 1 (flux)"))
+        bci_magnetic in (0, 1, 2) && bco_magnetic in (0, 2) ||
+            throw(ArgumentError("Magnetic BCs: inner 0/1/2; outer 0 (insulating) or 2 (perfect conductor). A finite-conductivity mantle is not implemented."))
+        iszero(forcing_frequency) || throw(ArgumentError(
+            "MHD stability solves for the unknown eigenfrequency; forcing_frequency must be zero. A conducting core evolves with the eigenmode."))
 
         # Dipole field requires non-zero inner core radius
         if B0_type == dipole && ricb <= 0
@@ -582,7 +594,8 @@ function MHDStabilityOperator(params::MHDParams{T}) where {T}
     n_g = length(ll_g) * n_per_mode
     n_h = length(ll_h) * n_per_mode
 
-    matrix_size = n_u + n_v + n_f + n_g + n_h
+    n_core = params.bci_magnetic == 1 ? n_f + n_g : 0
+    matrix_size = n_u + n_v + n_f + n_g + n_h + n_core
 
     @info "MHD operator built" poloidal_modes=length(ll_u) toroidal_modes=length(ll_v) matrix_size="$(matrix_size) × $(matrix_size)" sparsity="~$(estimate_mhd_sparsity(N, ll_u, ll_v, ll_f, ll_g, ll_h))%"
 

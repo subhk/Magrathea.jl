@@ -512,15 +512,15 @@ end
 
 
 """
-Iterate the steady Stokes–Coriolis and thermal advection-diffusion equations.
-Uses rotation-time diffusivity E/Pr, both mechanical boundaries, real ±m
-harmonics, implicit thermal transport, and relaxed Picard updates. Velocity
-is recomputed from the returned temperature, including on nonconvergence.
+Solve the steady Navier–Stokes–Coriolis and thermal advection-diffusion equations.
+The default `momentum_model=:navier_stokes` includes nonlinear mean-flow inertia.
+Use `momentum_model=:stokes` explicitly for the weak-inertia approximation.
 
-Returns `(bs, info)`; check `info.converged` before using the result as a steady
-thermal state. `info.thermal_residual` is the maximum interior spectral energy-
-equation residual. Momentum inertia is neglected; this is a weak-inertia model,
-not a nonlinear Navier–Stokes equilibrium solver.
+Returns `(bs, info)`. `info.converged` requires both projected momentum and
+thermal residuals, plus boundary/gauge constraints, to satisfy `tolerance`.
+The damped Picard iteration backtracks on the actual residual; nonconvergence
+is returned explicitly through `info.termination_reason`. Increase `lmax_bs`,
+`mmax_bs` and radial resolution to check the spectral truncation independently.
 """
 function nonaxisymmetric_basic_state_selfconsistent(
     cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
@@ -528,14 +528,18 @@ function nonaxisymmetric_basic_state_selfconsistent(
     mechanical_bc::Symbol = :no_slip,
     thermal_bc::Symbol = :fixed_temperature,
     outer_fluxes::Dict{Tuple{Int,Int}, <:Real} = Dict{Tuple{Int,Int}, T}(),
-    max_iterations::Int = 20,
+    max_iterations::Int = 50,
     tolerance::T = T(1e-8),
     verbose::Bool = false,
-    coupled_thermal_wind::Bool = true
+    coupled_thermal_wind::Bool = true,
+    momentum_model::Symbol = :navier_stokes,
+    relaxation::Real = 0.5
 ) where T<:Real
 
     max_iterations > 0 || throw(ArgumentError("max_iterations must be positive"))
-    tolerance > 0 || throw(ArgumentError("tolerance must be positive"))
+    isfinite(tolerance) && tolerance > 0 || throw(ArgumentError("tolerance must be finite and positive"))
+    momentum_model in (:navier_stokes,:stokes) || throw(ArgumentError("momentum_model must be :navier_stokes or :stokes"))
+    isfinite(relaxation) && 0 < relaxation <= 1 || throw(ArgumentError("relaxation must be in (0,1]"))
     initial = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, lmax_bs, mmax_bs, amplitudes;
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc, outer_fluxes=outer_fluxes,
         coupled_thermal_wind=coupled_thermal_wind)
@@ -545,42 +549,23 @@ function nonaxisymmetric_basic_state_selfconsistent(
     # Neumann conditions on sine modes generated during the iteration.
     bc = Dict(k => (v[1], thermal_bc==:fixed_temperature ? v[end] :
         initial.dtheta_dr_coeffs[k][end], thermal_bc) for (k,v) in theta)
-    flow = initial.flow
-    residual_history = T[]; converged = false
-    for iter in 1:max_iterations
-        candidate = _mean_temperature_step(flow,D,D2,E/Pr,bc)
-        defect = maximum(maximum(abs,candidate[k]-v) for (k,v) in theta)
-        push!(residual_history,defect)
-        # Relax the nonlinear coupling between temperature and the Stokes flow.
-        for (k,v) in theta
-            v .= (v .+ candidate[k])./2
-        end
-        flow = _steady_mean_flow(theta,r,D,D2,E,Ra,Pr,lmax_bs,mmax_bs;
-                                  mechanical_bc=mechanical_bc)
-        verbose && println("  Iteration $iter: temperature fixed-point defect = $defect")
-        if defect < tolerance
-            converged=true
-            break
-        end
-    end
+    theta,flow,info=_iterate_mean_state(theta,initial.flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
+        momentum_model=momentum_model,max_iterations=max_iterations,tolerance=tolerance,
+        relaxation=relaxation,verbose=verbose)
     dtheta = Dict(k=>D*v for (k,v) in theta)
     ur,uθ,uφ,dur,duθ,duφ = _mean_flow_components(flow)
     bs = BasicState3D(lmax_bs=lmax_bs,mmax_bs=mmax_bs,Nr=N,r=r,
         theta_coeffs=theta,dtheta_dr_coeffs=dtheta,ur_coeffs=ur,utheta_coeffs=uθ,
         uphi_coeffs=uφ,dur_dr_coeffs=dur,dutheta_dr_coeffs=duθ,duphi_dr_coeffs=duφ,flow=flow)
-    adv = _mean_flow_advection(theta,dtheta,flow)
-    thermal_residual = maximum(maximum(abs, ((E/Pr).*(D2*v+2 .* (D*v)./r-
-        k[1]*(k[1]+1).*v./r.^2)-adv[k])[2:end-1]) for (k,v) in theta)
-    info = (iterations=length(residual_history),converged=converged,
-            residual_history=residual_history,thermal_residual=thermal_residual)
     return bs,info
 end
 
 
 """
-Construct a thermally self-consistent viscous mean flow from symbolic boundary
-conditions. Both axisymmetric and nonaxisymmetric forcing iterate thermal
-advection-diffusion with the complete Stokes–Coriolis velocity. Returns the
+Construct a nonlinear steady mean flow from symbolic boundary conditions.
+Both axisymmetric and nonaxisymmetric forcing iterate thermal transport and
+Navier–Stokes–Coriolis momentum balance. `momentum_model=:stokes` opts out of
+momentum inertia; 3D defaults to `mmax_bs=lmax_bs` to retain generated harmonics. Returns the
 basic state and convergence information; pure conduction returns `nothing`
 for the information. See `nonaxisymmetric_basic_state_selfconsistent`.
 """
@@ -589,16 +574,23 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
                                     flux_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
                                     mechanical_bc::Symbol=:no_slip,
                                     lmax_bs::Union{Nothing, Int}=nothing,
-                                    max_iterations::Int=20,
+                                    max_iterations::Int=50,
                                     tolerance::Float64=1e-8,
                                     verbose::Bool=false,
-                                    coupled_thermal_wind::Bool=true)
+                                    coupled_thermal_wind::Bool=true,
+                                    momentum_model::Symbol=:navier_stokes,
+                                    mmax_bs::Union{Nothing,Int}=nothing,
+                                    relaxation::Real=0.5)
 
     # Validate: can't have both temperature_bc and flux_bc
     if temperature_bc !== nothing && flux_bc !== nothing
         error("Cannot specify both temperature_bc and flux_bc. Choose one.")
     end
 
+    momentum_model in (:navier_stokes,:stokes) || throw(ArgumentError("momentum_model must be :navier_stokes or :stokes"))
+    max_iterations>0 || throw(ArgumentError("max_iterations must be positive"))
+    isfinite(tolerance) && tolerance>0 || throw(ArgumentError("tolerance must be finite and positive"))
+    isfinite(relaxation) && 0<relaxation<=1 || throw(ArgumentError("relaxation must be in (0,1]"))
     T = eltype(cd.x)
 
     # Determine thermal BC type and the boundary condition
@@ -620,11 +612,16 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
     # Use provided lmax_bs or auto-determine
     _lmax = lmax_bs === nothing ? max(bc_lmax + 2, 4) : lmax_bs
 
-    if is_axisymmetric(bc)
+    # Products generate new azimuthal harmonics. Retain the full angular band
+    # by default in 3D; callers may set mmax_bs as an explicit truncation.
+    _mmax=mmax_bs===nothing ? (is_axisymmetric(bc) ? 0 : _lmax) : mmax_bs
+    bc_mmax<=_mmax<=_lmax || throw(ArgumentError("Require boundary mmax ≤ mmax_bs ≤ lmax_bs"))
+    if is_axisymmetric(bc) && _mmax==0
         bs, info = nonaxisymmetric_basic_state_selfconsistent(cd,T(χ),T(E),T(Ra),T(Pr),
             _lmax,0,to_dict(bc); mechanical_bc=mechanical_bc,thermal_bc=thermal_bc,
             max_iterations=max_iterations,tolerance=T(tolerance),verbose=verbose,
-            coupled_thermal_wind=coupled_thermal_wind)
+            coupled_thermal_wind=coupled_thermal_wind,
+            momentum_model=momentum_model,relaxation=relaxation)
         return _axisymmetric_state(bs),info
     end
 
@@ -634,18 +631,19 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
     if thermal_bc == :fixed_temperature
         return nonaxisymmetric_basic_state_selfconsistent(
             cd, T(χ), T(E), T(Ra), T(Pr),
-            _lmax, bc_mmax, amplitudes;
+            _lmax, _mmax, amplitudes;
             mechanical_bc=mechanical_bc,
             thermal_bc=:fixed_temperature,
             max_iterations=max_iterations,
             tolerance=T(tolerance),
             verbose=verbose,
-            coupled_thermal_wind=coupled_thermal_wind
+            coupled_thermal_wind=coupled_thermal_wind,
+            momentum_model=momentum_model,relaxation=relaxation
         )
     else  # fixed_flux
         return nonaxisymmetric_basic_state_selfconsistent(
             cd, T(χ), T(E), T(Ra), T(Pr),
-            _lmax, bc_mmax,
+            _lmax, _mmax,
             Dict{Tuple{Int,Int},T}();  # empty amplitudes
             mechanical_bc=mechanical_bc,
             thermal_bc=:fixed_flux,
@@ -653,7 +651,8 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
             max_iterations=max_iterations,
             tolerance=T(tolerance),
             verbose=verbose,
-            coupled_thermal_wind=coupled_thermal_wind
+            coupled_thermal_wind=coupled_thermal_wind,
+            momentum_model=momentum_model,relaxation=relaxation
         )
     end
 end

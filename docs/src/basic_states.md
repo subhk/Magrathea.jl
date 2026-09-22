@@ -189,7 +189,7 @@ The `mode` keyword selects the construction strategy:
 |--------|---------|-------------|
 | `:conduction` | `BasicState` | Pure conductive profile, no flow |
 | `:meridional` | `BasicState` | Y₂₀ thermal wind (axisymmetric) |
-| `:selfconsistent` | `BasicState` or `BasicState3D` | Coupled Stokes–Coriolis and thermal transport |
+| `:selfconsistent` | `BasicState` or `BasicState3D` | Nonlinear Navier–Stokes–Coriolis and thermal transport |
 | `:nonaxisymmetric` | `BasicState3D` | Laplace-approximation 3D state |
 
 !!! note "Low-level API"
@@ -295,7 +295,9 @@ even when the temperature has no azimuthal dependence.
 
 ### Thermal Wind Balance
 
-The constructors solve the steady **Stokes–Coriolis** equations:
+The noniterated constructors (`meridional_basic_state`,
+`nonaxisymmetric_basic_state`, and `basic_state(cd, ...)`) solve the steady
+**Stokes–Coriolis** equations:
 
 ```math
 2\hat{\mathbf z}\times\bar{\mathbf u}
@@ -306,8 +308,9 @@ The constructors solve the steady **Stokes–Coriolis** equations:
 Both inner and outer mechanical boundaries are enforced. The thermal-wind
 balance is an interior approximation to these equations; it is insufficient
 to impose both boundaries by itself. The model neglects momentum inertia.
-The noniterated constructors also neglect temperature advection, so their
-conductive temperature approximation requires a small thermal Péclet number.
+They also neglect temperature advection, so their conductive temperature
+approximation requires a small thermal Péclet number. Use the self-consistent
+solver below to include both nonlinear momentum and thermal transport.
 
 The public Rayleigh number uses shell thickness, while radius and time use
 outer radius and inverse rotation rate. The conversion ``Ra/(1-\chi)^3`` is
@@ -510,20 +513,44 @@ When a non-axisymmetric basic state is present, perturbation modes couple throug
 Y_{\ell_1, m_1} \times Y_{\ell_2, m_2} = \sum_{\ell'} G_{\ell_1 \ell_2 \ell'}^{m_1 m_2 m'} Y_{\ell', m_1+m_2}
 ```
 
-Where ``G`` is the Gaunt coefficient computed from Wigner 3j symbols:
+For complex orthonormal harmonics the scalar product coefficient is
 
 ```math
-G_{\ell_1 \ell_2 \ell_3}^{m_1 m_2 m_3} = \sqrt{\frac{(2\ell_1+1)(2\ell_2+1)(2\ell_3+1)}{4\pi}}
-\begin{pmatrix} \ell_1 & \ell_2 & \ell_3 \\ 0 & 0 & 0 \end{pmatrix}
-\begin{pmatrix} \ell_1 & \ell_2 & \ell_3 \\ m_1 & m_2 & m_3 \end{pmatrix}
+G_{123}=(-1)^{m_3}\sqrt{\frac{(2\ell_1+1)(2\ell_2+1)(2\ell_3+1)}{4\pi}}
+\begin{pmatrix}\ell_1&\ell_2&\ell_3\\0&0&0\end{pmatrix}
+\begin{pmatrix}\ell_1&\ell_2&\ell_3\\m_1&m_2&-m_3\end{pmatrix}.
 ```
 
-This coupling is handled automatically by `BasicStateOperators`:
+The stability assembly evaluates the full vector products by angular quadrature,
+using native mean-flow potentials when available. Both 2D and 3D use
+
+```math
+\mathcal F=\mathbf U\times(\nabla\times\mathbf u)
+            +\mathbf u\times(\nabla\times\mathbf U),\qquad
+\mathcal G=-\mathbf U\cdot\nabla\Theta-\mathbf u\cdot\nabla\overline T.
+```
+
+``\mathcal F`` differs from the linearized momentum-advection force only by a
+pressure gradient. If its vector-harmonic components are ``F_R,F_S,F_T``, the
+onset matrix receives ``-\ell(\ell+1)r^3[F_R-\partial_r(rF_S)]`` in the poloidal
+row and ``\ell(\ell+1)r^2F_T`` in the toroidal row. The heat contribution is
+``r^k\mathcal G``, with the same ``k=3`` or ``k=2`` used in the temperature mass
+matrix. Radial differentiation applies the product rule to the mean coefficient
+before differentiating perturbations, avoiding aliasing of the highest polynomial.
+
+For an axisymmetric `bs` and matching `OnsetParams`:
 
 ```julia
-bs_ops = build_basic_state_operators(bs3d, params)
-add_basic_state_operators!(A, B, bs_ops, block_indices)
+op = LinearStabilityOperator(params)
+bs_ops = build_basic_state_operators(bs, op, params.m)
+# Complete blocks: (l_output, field_output, l_input, field_input)
+blocks = bs_ops.blocks
 ```
+
+Normal matrix assembly includes these blocks automatically. Triglobal assembly
+uses the same projection for each pair of signed azimuthal modes. The older
+`BasicStateOperators` two-index dictionaries are inspection aliases; use `blocks`
+for the complete field couplings.
 
 ## Saving and Loading
 
@@ -544,21 +571,21 @@ params = OnsetParams(..., basic_state = bs_loaded)
 
 ## Reality Conditions
 
-For real physical fields, spectral coefficients must satisfy:
+`BasicState3D` stores **real** cosine coefficients at ``(\ell,+m)`` and independent
+real sine coefficients at ``(\ell,-m)``. A missing sine coefficient means zero;
+it must not be filled with a conjugate of the cosine coefficient.
+
+For ``m>0``, let ``A`` and ``B`` be the stored cosine and sine coefficients and
+``s_{\ell m}=\sqrt{(\ell+m)!/(\ell-m)!}`` the public no-factorial to orthonormal
+conversion. The complex coefficients used internally are
 
 ```math
-\bar{f}_{\ell,-m} = (-1)^m \bar{f}_{\ell,m}^*
+c_{\ell,m}=s_{\ell m}(A-iB)/\sqrt2,\qquad
+c_{\ell,-m}=(-1)^m s_{\ell m}(A+iB)/\sqrt2.
 ```
 
-When constructing `BasicState3D` manually, ensure this condition holds:
-
-```julia
-for l in 0:lmax_bs
-    for m in 1:min(l, mmax_bs)
-        theta_coeffs[(l, -m)] = (-1)^m * conj(theta_coeffs[(l, m)])
-    end
-end
-```
+These automatically satisfy ``c_{\ell,-m}=(-1)^m c_{\ell,m}^*``. Native vector
+potentials are already orthonormal, so their conversion uses ``s_{\ell m}=1``.
 
 ## Examples
 
@@ -636,18 +663,25 @@ bs3d = basic_state(cd, χ, E, Ra, Pr; flux_bc=flux)
 
 ## Self-Consistent Basic States with Advection
 
-Both axisymmetric and nonaxisymmetric viscous flows can advect temperature.
-The self-consistent solver couples the momentum equation above to
+The self-consistent solver includes nonlinear mean-flow inertia by default
+(`momentum_model=:navier_stokes`) in both 2D and 3D. It solves
 
 ```math
-\frac{E}{Pr}\nabla^2\bar T = \bar{\mathbf u}\cdot\nabla\bar T.
+(\bar{\mathbf u}\cdot\nabla)\bar{\mathbf u}
++2\hat{\mathbf z}\times\bar{\mathbf u}
+=-\nabla\bar p+\frac{Ra E^2}{Pr(1-\chi)^3}\,r\bar T\hat{\mathbf r}
++E\nabla^2\bar{\mathbf u},\qquad \nabla\cdot\bar{\mathbf u}=0,
+\qquad \frac{E}{Pr}\nabla^2\bar T=\bar{\mathbf u}\cdot\nabla\bar T.
 ```
 
-It solves thermal transport implicitly at fixed velocity, relaxes the
-resulting temperature update, and recomputes the entire velocity from the
-updated temperature. Advection uses the vector-harmonic flow directly.
-Momentum inertia is still omitted; this is not a nonlinear Navier–Stokes
-steady-state solver.
+The damped Picard iteration solves thermal transport implicitly at fixed
+velocity, then solves momentum with frozen nonlinear forcing. It uses
+``-({\mathbf U}\cdot\nabla){\mathbf U}={\mathbf U}\times(\nabla\times{\mathbf U})
+-\nabla(|{\mathbf U}|^2/2)`` and absorbs the gradient in pressure. Angular
+products use an oversampled grid and the native vector-harmonic flow.
+Backtracking accepts updates that reduce the coupled residual.
+`momentum_model=:stokes` explicitly retains the earlier weak-inertia model
+while still solving thermal transport.
 
 ```julia
 cd = ChebyshevDiffn(32, [0.35, 1.0], 4)
@@ -655,21 +689,34 @@ bs, info = basic_state_selfconsistent(cd, 0.35, 0.01, 30.0, 1.0;
     temperature_bc=Y20(0.01) + Y22(0.01),
     lmax_bs=8, max_iterations=50, tolerance=1e-9)
 @assert info.converged
-println(info.thermal_residual)
+println((info.momentum_residual, info.thermal_residual, info.boundary_residual))
 v = mean_flow_velocity(bs, 0.7, pi/3, pi/8)
 ```
 
-`info.residual_history` records the unrelaxed temperature fixed-point defect.
-`info.thermal_residual` measures the maximum interior spectral energy-equation
-residual of the returned state. `info.converged=false` means the requested
-thermal tolerance was not reached. The returned velocity is nevertheless
-computed from the returned temperature, including on an iteration limit.
-Failure to converge does not by itself establish physical instability.
+`info.converged` requires momentum, heat, and boundary/gauge residuals to meet
+`tolerance`. Residuals are maximum absolute orthonormal spectral coefficients
+in the nondimensional equations, at the retained collocation equations.
+`info.residual_history` records their maximum, and
+`info.momentum_residual_history`, `info.thermal_residual_history`, and
+`info.step_history` record each accepted update (a zero step indicates a
+failed line search). `info.termination_reason` is `:converged`,
+`:max_iterations`, or `:stagnation`.
+
+When `info.converged=false`, the returned state is an incomplete iterate and
+must not be treated as a steady equilibrium. Strong forcing may require
+smaller `relaxation` or more iterations; Picard convergence is not guaranteed.
+Failure to converge does not establish
+physical instability. The convenience call `basic_state(params;
+mode=:selfconsistent)` throws on nonconvergence unless
+`allow_unconverged=true` is explicitly requested.
 
 Boundary conditions apply to every retained real harmonic, including sine
 modes generated by transport. Fixed-flux problems retain homogeneous flux on
 unforced modes. The purely conductive convenience path returns `nothing` for
-`info`; axisymmetric forced states run the thermal iteration too.
+`info`; axisymmetric forced states run the coupled iteration too. For 3D,
+`basic_state_selfconsistent` defaults to `mmax_bs=lmax_bs`, since nonlinear
+products generate azimuthal orders absent from the boundary forcing. An
+explicit `mmax_bs` may be used to control that truncation.
 
 ## Full Geostrophic Balance with Meridional Circulation
 
@@ -697,9 +744,9 @@ keywords are accepted for source compatibility; all values now construct the
 complete viscous flow. The old diagonal approximation is no longer used.
 
 For quantitative work, increase radial resolution and `lmax_bs` until the
-physical velocity, temperature, and balance residuals converge. In a nonlinear
-thermal calculation, also increase `mmax_bs` using
-`nonaxisymmetric_basic_state_selfconsistent`, since transport can generate
+physical velocity, temperature, and balance residuals converge. Small equation
+residuals establish convergence only at the chosen truncation. In a nonlinear
+calculation, also increase `mmax_bs`, since transport can generate
 azimuthal orders above those in the prescribed boundary forcing. Small Ekman
 numbers require enough radial nodes to resolve the viscous boundary layers.
 

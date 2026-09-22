@@ -67,13 +67,15 @@ end
 
 """
 Solve 2 ẑ×u = -∇π + β r T r̂ + E∇²u, ∇·u=0, with β=Ra E²/[Pr(1-χ)³].
-Ra is shell-gap based; radius and time use r_o and Ω⁻¹. Inertia is neglected.
+Ra is shell-gap based; radius and time use r_o and Ω⁻¹. Optional `inertia`
+adds a frozen projection of u×curl(u) to the right-hand side for Picard updates.
 Both boundaries are impermeable and no-slip or stress-free. The stress-free
 axisymmetric solid-rotation nullspace is fixed by zero axial angular momentum.
 Input temperature coefficients use the public no-factorial normalization.
 """
 function _steady_mean_flow(theta, r::Vector{T}, D1, D2, E, Ra, Pr, lmax, mmax;
-                           mechanical_bc=:no_slip) where T
+                           mechanical_bc=:no_slip, inertia=nothing,
+                           systems=Dict{Int,Any}()) where T
     E > 0 || throw(ArgumentError("The viscous mean-flow solve requires E > 0"))
     Pr > 0 || throw(ArgumentError("Pr must be positive"))
     mechanical_bc in (:no_slip,:stress_free) || throw(ArgumentError("Invalid mechanical_bc"))
@@ -87,61 +89,24 @@ function _steady_mean_flow(theta, r::Vector{T}, D1, D2, E, Ra, Pr, lmax, mmax;
             abs(m)<=l<=lmax && abs(m)<=mmax || throw(ArgumentError("Temperature mode ($l,$m) is outside the retained harmonic range"))
         end
     end
-    N=length(r); D=Matrix{T}(D1); D²=Matrix{T}(D2); D4=D²*D²
+    N=length(r); D=Matrix{T}(D1); D²=Matrix{T}(D2)
     β=T(Ra*E^2/(Pr*(last(r)-first(r))^3))
     θ=_sh_rescale(theta,+1)
     p=Dict{Tuple{Int,Int},Vector{T}}(); t=empty(p)
     for am in 0:mmax
-        any(l>0 && abs(m)==am && any(!iszero,v) for ((l,m),v) in θ) || continue
-        modes,C=_mean_coriolis(lmax,am,T); n=length(modes)
-        A=zeros(T,2n*N,2n*N); f=zeros(T,2n*N)
-        for (a,(l,m)) in enumerate(modes)
-            rows=(a-1)*N+1:a*N; rt=n*N .+ rows
-            f[rows] .= β .* r .* get(θ,(l,m),zeros(T,N))
-            q=T(l*(l+1))
-            A[rows,rows] .+= E .* (D4 - 2q .* (D² ./ r.^2) +
-                4q .* (D ./ r.^3) + Diagonal(q*(q-6) ./ r.^4))
-            A[rt,rt] .-= E .* ((D²-Diagonal(q ./ r.^2)) ./ r)
-            for (b,(L,M)) in enumerate(modes)
-                cols=(b-1)*N+1:b*N; ct=n*N .+ cols
-                R=Diagonal(T(L*(L+1)) ./ r.^2); S=D ./ r; U=Diagonal(one(T) ./ r)
-                CRp=C[a,b]*R+C[a,n+b]*S
-                CSp=C[n+a,b]*R+C[n+a,n+b]*S
-                A[rows,cols] .+= CRp-D*(r .* CSp)
-                A[rows,ct] .+= C[a,2n+b]*U-D*(r .* (C[n+a,2n+b]*U))
-                A[rt,cols] .+= C[2n+a,b]*R+C[2n+a,n+b]*S
-                A[rt,ct] .+= C[2n+a,2n+b]*U
-            end
-            # Four conditions on p and two on t. Boundary rows replace equations.
-            for (row,node,kind) in ((first(rows),1,:p),(first(rows)+1,1,:dp),
-                                    (last(rows)-1,N,:dp),(last(rows),N,:p),
-                                    (first(rt),1,:t),(last(rt),N,:t))
-                A[row,:] .= 0; f[row]=0
-                if kind==:p
-                    A[row,rows[node]]=1
-                elseif kind==:dp
-                    A[row,rows] .= mechanical_bc==:no_slip ? D[node,:] : D²[node,:]-2D[node,:]/r[node]
-                elseif mechanical_bc==:no_slip
-                    A[row,rt[node]]=1
-                else
-                    A[row,rt] .= D[node,:]
-                    A[row,rt[node]] -= 2/r[node]
-                end
-            end
+        active=any(l>0 && abs(m)==am && any(!iszero,v) for ((l,m),v) in θ)
+        if inertia!==nothing
+            active |= any(abs(m)==am && any(!iszero,v) for d in (inertia.p,inertia.t) for ((l,m),v) in d)
         end
-        if mechanical_bc==:stress_free && am==0
-            # Bordered solve preserves both stress conditions; the multiplier
-            # is the net axial torque and vanishes for radial thermal forcing.
-            gauge=zeros(T,2n*N); torque=copy(gauge)
-            a=findfirst(==((1,0)),modes); rt=n*N .+ ((a-1)*N+1:a*N)
-            gauge[rt] .= _mean_radial_weights(r).*r.^2
-            torque[rt[2:end-1]] .= r[2:end-1]
-            A=[A torque; gauge' zero(T)]; f=[f;zero(T)]
+        active || continue
+        system=get!(systems,am) do
+            _mean_momentum_system(r,D,D²,E,lmax,am,mechanical_bc)
         end
-        scales=maximum(abs,A;dims=2)
-        x=(A ./ scales) \ (f ./ vec(scales))
+        f=_mean_momentum_rhs(system,θ,inertia,r,β)
+        x=system.factor \ (f./system.scales)
         all(isfinite,x) || error("Non-finite steady mean-flow solution")
-        for (a,key) in enumerate(modes)
+        n=length(system.modes)
+        for (a,key) in enumerate(system.modes)
             rows=(a-1)*N+1:a*N
             p[key]=x[rows]; t[key]=x[n*N .+ rows]
         end
@@ -149,6 +114,79 @@ function _steady_mean_flow(theta, r::Vector{T}, D1, D2, E, Ra, Pr, lmax, mmax;
     SolenoidalMeanFlow(lmax,mmax,r,p,t,Dict(k=>D*v for (k,v) in p),
         Dict(k=>D²*v for (k,v) in p),Dict(k=>D*v for (k,v) in t))
 end
+
+# Each fixed-temperature/Picard update has the same Stokes matrix. Reuse its
+# row-scaled factorization throughout a nonlinear solve, without a global cache.
+function _mean_momentum_system(r::Vector{T},D,D²,E,lmax,am,mechanical_bc) where T
+    N=length(r); D4=D²*D²
+    modes,C=_mean_coriolis(lmax,am,T); n=length(modes)
+    A=zeros(T,2n*N,2n*N)
+    for (a,(l,m)) in enumerate(modes)
+        rows=(a-1)*N+1:a*N; rt=n*N .+ rows
+        q=T(l*(l+1))
+        A[rows,rows] .+= E .* (D4 - 2q .* (D² ./ r.^2) +
+            4q .* (D ./ r.^3) + Diagonal(q*(q-6) ./ r.^4))
+        A[rt,rt] .-= E .* ((D²-Diagonal(q ./ r.^2)) ./ r)
+        for (b,(L,M)) in enumerate(modes)
+            cols=(b-1)*N+1:b*N; ct=n*N .+ cols
+            R=Diagonal(T(L*(L+1)) ./ r.^2); S=D ./ r; U=Diagonal(one(T) ./ r)
+            CRp=C[a,b]*R+C[a,n+b]*S
+            CSp=C[n+a,b]*R+C[n+a,n+b]*S
+            A[rows,cols] .+= CRp-D*(r .* CSp)
+            A[rows,ct] .+= C[a,2n+b]*U-D*(r .* (C[n+a,2n+b]*U))
+            A[rt,cols] .+= C[2n+a,b]*R+C[2n+a,n+b]*S
+            A[rt,ct] .+= C[2n+a,2n+b]*U
+        end
+        # Four conditions on p and two on t. Boundary rows replace equations.
+        for (row,node,kind) in ((first(rows),1,:p),(first(rows)+1,1,:dp),
+                                (last(rows)-1,N,:dp),(last(rows),N,:p),
+                                (first(rt),1,:t),(last(rt),N,:t))
+            A[row,:] .= 0
+            if kind==:p
+                A[row,rows[node]]=1
+            elseif kind==:dp
+                A[row,rows] .= mechanical_bc==:no_slip ? D[node,:] : D²[node,:]-2D[node,:]/r[node]
+            elseif mechanical_bc==:no_slip
+                A[row,rt[node]]=1
+            else
+                A[row,rt] .= D[node,:]
+                A[row,rt[node]] -= 2/r[node]
+            end
+        end
+    end
+    if mechanical_bc==:stress_free && am==0
+        # Bordered solve preserves both stress conditions; the multiplier
+        # is the net axial torque and vanishes for radial thermal forcing.
+        gauge=zeros(T,2n*N); torque=copy(gauge)
+        a=findfirst(==((1,0)),modes); rt=n*N .+ ((a-1)*N+1:a*N)
+        gauge[rt] .= _mean_radial_weights(r).*r.^2
+        torque[rt[2:end-1]] .= r[2:end-1]
+        A=[A torque; gauge' zero(T)]
+    end
+    scales=vec(maximum(abs,A;dims=2))
+    physical=Int[]
+    for a in 1:n
+        append!(physical,(a-1)*N .+ (3:N-2))
+        append!(physical,n*N+(a-1)*N .+ (2:N-1))
+    end
+    (modes=modes,matrix=A,scales=scales,factor=lu(A./scales),physical=physical)
+end
+
+function _mean_momentum_rhs(system,theta,inertia,r,β)
+    T=eltype(r); N=length(r); n=length(system.modes)
+    f=zeros(T,size(system.matrix,1))
+    for (a,key) in enumerate(system.modes)
+        rows=(a-1)*N+1:a*N; rt=n*N .+ rows
+        haskey(theta,key) && (f[rows] .= β.*r.*theta[key])
+        if inertia!==nothing
+            f[rows] .+= inertia.p[key]
+            f[rt] .+= inertia.t[key]
+        end
+        f[[first(rows),first(rows)+1,last(rows)-1,last(rows),first(rt),last(rt)]] .= 0
+    end
+    f
+end
+
 
 # Implicit advection-diffusion at fixed velocity, in the orthonormal scalar
 # basis. Solving transport implicitly avoids the diffusion-only Picard update

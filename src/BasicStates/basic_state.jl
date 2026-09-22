@@ -526,7 +526,7 @@ The outer anomaly is `amplitude * P₂(cosθ)` for fixed temperature, or
 All three velocity components solve the steady Stokes–Coriolis equations in a
 solenoidal vector-harmonic basis, with both mechanical boundaries enforced.
 `Ra` is shell-gap based. This neglects momentum inertia and temperature
-advection; use `basic_state_selfconsistent` to include temperature advection.
+advection; use `basic_state_selfconsistent` to include both nonlinear effects.
 Use `mean_flow_velocity` to evaluate the full vector field.
 """
 function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
@@ -894,7 +894,7 @@ amplitudes multiply the associated Legendre function and its real azimuthal
 factor; stored coefficients use the historical no-factorial normalization.
 
 `Ra` is shell-gap based. Momentum inertia and thermal advection are omitted;
-`nonaxisymmetric_basic_state_selfconsistent` includes thermal advection.
+`nonaxisymmetric_basic_state_selfconsistent` includes both nonlinear effects.
 `coupled_thermal_wind` and `include_meridional_flow` are compatibility keywords:
 all values now use the complete viscous velocity solve.
 

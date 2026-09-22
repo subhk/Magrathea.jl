@@ -209,51 +209,11 @@ end
 SAME row layout as `_mhd_index_map` (sections u, v, f, g, h, each a contiguous
 `(N+1)` block). Deterministic and identical on every rank.
 
-Per-section rows overwritten (matching the serial code exactly):
-- u: row_base+1, row_base+2, row_base+(N+1)-1, row_base+(N+1)
-- v: row_base+1, row_base+(N+1)
-- f: row_base+1, row_base+(N+1); additionally row_base+(N+1)-1 when bci_magnetic == 2
-      (the perfect-conductor ICB second constraint, `row_icb2 = row_icb - 1`)
-- g: row_base+1, row_base+(N+1)
-- h: row_base+1, row_base+(N+1)
+The row indices come from the shared coefficient-space boundary specification.
 """
 function _mhd_bc_rows(op)
-    params = op.params
-    N = params.N
-    n_per_mode = N + 1
-    nb_u = length(op.ll_u); nb_v = length(op.ll_v)
-    nb_f = length(op.ll_f); nb_g = length(op.ll_g); nb_h = length(op.ll_h)
-
-    rows = Int[]
-    # u section
-    for k in 1:nb_u
-        rb = (k - 1) * n_per_mode
-        push!(rows, rb + 1, rb + 2, rb + n_per_mode - 1, rb + n_per_mode)
-    end
-    # v section
-    for k in 1:nb_v
-        rb = (nb_u + k - 1) * n_per_mode
-        push!(rows, rb + 1, rb + n_per_mode)
-    end
-    # f section (poloidal magnetic)
-    for k in 1:nb_f
-        rb = (nb_u + nb_v + k - 1) * n_per_mode
-        push!(rows, rb + 1, rb + n_per_mode)
-        if params.bci_magnetic == 2
-            push!(rows, rb + n_per_mode - 1)   # row_icb2 second perfect-conductor BC
-        end
-    end
-    # g section (toroidal magnetic)
-    for k in 1:nb_g
-        rb = (nb_u + nb_v + nb_f + k - 1) * n_per_mode
-        push!(rows, rb + 1, rb + n_per_mode)
-    end
-    # h section (temperature)
-    for k in 1:nb_h
-        rb = (nb_u + nb_v + nb_f + nb_g + k - 1) * n_per_mode
-        push!(rows, rb + 1, rb + n_per_mode)
-    end
-    return rows
+    rows, _ = Magrathea._compute_mhd_bc(op)
+    return sort!(collect(rows))
 end
 
 """Apply the MHD tau boundary conditions on the distributed matrices `Amat`, `Bmat`,

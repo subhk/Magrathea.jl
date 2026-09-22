@@ -1,51 +1,18 @@
-# =============================================================================
-#  Basic State Operators for Linear Stability Analysis
-#
-#  Implements the linearized operators for stability analysis on an
-#  axisymmetric basic state with thermal wind-balanced zonal flow.
-#
-#  Theory:
-#  -------
-#  Basic state: θ̄(r,θ) = Σ_ℓ θ̄_ℓ0(r) Y_ℓ0(θ)
-#               ū_φ(r,θ) = Σ_ℓ ū_φ,ℓ0(r) Y_ℓ0(θ)
-#
-#  Perturbations: θ'(r,θ,φ,t) = Σ_ℓ θ'_ℓm(r,t) Y_ℓm(θ,φ)
-#
-#  Linearized equations add four types of terms:
-#  1. Advection: (ū · ∇)θ' = (ū_φ/(r sin θ)) ∂θ'/∂φ  (scalar transport)
-#  2. Shear: (u' · ∇)ū_φ = u'_r ∂ū_φ/∂r + (u'_θ/r) ∂ū_φ/∂θ  (into toroidal eq)
-#  3. Temperature gradient: (u' · ∇)θ̄ = u'_r ∂θ̄/∂r + (u'_θ/r) ∂θ̄/∂θ  (into temp eq)
-#  4. Metric terms: (ū · ∇)u' has curvilinear metric terms that couple T → P:
-#       -ū_φ u'_φ / r  and  -ū_φ u'_φ cot(θ) / r  (into poloidal eq)
-#
-#  Note: u'_θ from poloidal potential P is:
-#        u'_θ = (1/r) dP/dr × ∂Y/∂θ
-#
-#  These couple different ℓ modes through spherical harmonic products.
-# =============================================================================
+# Mean-state operators for linear stability. Physical vector linearization and
+# pressure elimination are implemented in Stability/mean_flow_coupling.jl.
+# The scalar harmonic utilities below are also used by legacy analysis helpers.
 
 using LinearAlgebra
 using SparseArrays
 using WignerSymbols
 
 """
-    BasicStateOperators{T<:Real}
+    BasicStateOperators{T}
 
-Container for precomputed basic state linearized operators.
-
-Fields:
-- `advection_blocks::Dict{Tuple{Int,Int}, Matrix{T}}` - Advection operators A[ℓ_pert, ℓ_bs]
-- `shear_blocks::Dict{Tuple{Int,Int}, Matrix{T}}` - Shear production operators
-- `temp_grad_blocks::Dict{Tuple{Int,Int}, Matrix{T}}` - Temperature gradient operators
-- `coupling_structure::Vector{Tuple{Int,Int}}` - List of (ℓ_pert, ℓ_bs) pairs that couple
-
-The blocks represent coupling between perturbation mode ℓ_pert and basic state mode ℓ_bs.
-
-Note: The metric_poloidal_blocks handle the curvilinear metric terms that arise when
-advecting vector fields by azimuthal flow:
-    (ū · ∇)u'_r contains: -ū_φ u'_φ / r
-    (ū · ∇)u'_θ contains: -ū_φ u'_φ cot(θ) / r
-These couple the toroidal velocity (T) to the poloidal equation (P).
+Linearized mean-state blocks keyed by `(l_output, field_output, l_input, field_input)`.
+`blocks` is authoritative and includes all velocity/temperature couplings. The
+older two-index dictionaries remain inspection aliases for the complete matching
+field blocks; they no longer split vector advection into scalar approximations.
 """
 struct BasicStateOperators{T<:Real}
     advection_blocks::Dict{Tuple{Int,Int}, Matrix{Complex{T}}}
@@ -55,8 +22,9 @@ struct BasicStateOperators{T<:Real}
     temp_grad_radial_blocks::Dict{Tuple{Int,Int}, Matrix{Complex{T}}}
     temp_grad_theta_blocks::Dict{Tuple{Int,Int}, Matrix{Complex{T}}}
     temp_grad_theta_toroidal_blocks::Dict{Tuple{Int,Int}, Matrix{Complex{T}}}
-    metric_poloidal_blocks::Dict{Tuple{Int,Int}, Matrix{Complex{T}}}  # T → P coupling from metric terms
+    metric_poloidal_blocks::Dict{Tuple{Int,Int}, Matrix{Complex{T}}}
     coupling_structure::Vector{Tuple{Int,Int}}
+    blocks::Dict{Tuple{Int,Symbol,Int,Symbol},Matrix{Complex{T}}}
 end
 
 """Return the existing coupling block for `key`, or allocate a typed zero block."""
@@ -218,62 +186,6 @@ function _compute_gaunt_coefficient(ℓ1::Int, m1::Int, ℓ2::Int, m2::Int, ℓ3
 end
 
 
-"""
-    _theta_derivative_coeff(l::Int, m::Int)
-
-Compute spherical harmonic θ-derivative coupling coefficients.
-
-For ∂Y_ℓm/∂θ → Y_{ℓ±1,m}, the standard recurrence relations give:
-- c_plus (coupling to ℓ+1): -(ℓ+1) × √[((ℓ+1)²-m²)/((2ℓ+1)(2ℓ+3))]
-- c_minus (coupling to ℓ-1): +ℓ × √[(ℓ²-m²)/((2ℓ-1)(2ℓ+1))]
-
-These follow from the associated Legendre recurrence:
-  (1-x²) dP_ℓ^m/dx = -ℓx P_ℓ^m + (ℓ+m) P_{ℓ-1}^m
-
-Returns (c_plus, c_minus).
-"""
-function _theta_derivative_coeff(l::Int, m::Int)
-    if l < abs(m)
-        return (0.0, 0.0)
-    end
-
-    c_plus = 0.0
-    c_minus = 0.0
-
-    # Coupling to ℓ+1: coefficient = -(ℓ+1) × √[((ℓ+1)²-m²)/((2ℓ+1)(2ℓ+3))]
-    if l > 0
-        num_plus = (l + 1)^2 - m^2
-        den_plus = (2l + 1) * (2l + 3)
-        c_plus = -(l + 1) * sqrt(num_plus / den_plus)
-    end
-
-    # Coupling to ℓ-1: coefficient = +ℓ × √[(ℓ²-m²)/((2ℓ-1)(2ℓ+1))]
-    if l > abs(m)
-        num_minus = l^2 - m^2
-        den_minus = (2l - 1) * (2l + 1)
-        c_minus = l * sqrt(num_minus / den_minus)
-    end
-
-    return (c_plus, c_minus)
-end
-
-"""Couple a meridional derivative of an axisymmetric basic-state mode into output l."""
-function _meridional_coupling(l_input::Int, l_bs::Int, l_output::Int, m::Int)
-    c_plus, c_minus = _theta_derivative_coeff(l_bs, 0)
-    coupling = 0.0
-
-    if abs(c_plus) > 1e-14
-        l_temp = l_bs + 1
-        coupling += c_plus * compute_gaunt_coefficient(l_input, m, l_temp, 0, l_output, m)
-    end
-    if abs(c_minus) > 1e-14 && l_bs > 0
-        l_temp = l_bs - 1
-        coupling += c_minus * compute_gaunt_coefficient(l_input, m, l_temp, 0, l_output, m)
-    end
-
-    return coupling
-end
-
 """Quadrature cache for repeated azimuthal coupling integrals at fixed m."""
 struct AzimuthalCouplingCache{T<:Real}
     m::Int
@@ -283,7 +195,7 @@ struct AzimuthalCouplingCache{T<:Real}
 end
 
 # Note: _double_factorial, _associated_legendre_table, and _normalization_table
-# are defined in get_velocity.jl which is included before this file.
+# are defined in Stability/velocity.jl and resolved when these helpers are called.
 
 """Precompute normalized Legendre tables used by azimuthal coupling matrices."""
 function _build_azimuthal_coupling_cache(m::Int, lmax_m::Int, lmax_0::Int)
@@ -322,540 +234,32 @@ function _azimuthal_coupling_matrix(cache::AzimuthalCouplingCache{T}, l_bs::Int)
     return (cache.y_m * weighted') .* (T(2) * T(pi) * cache.weight)
 end
 
-"""
-    build_basic_state_operators(basic_state::BasicState{T},
-                                 op::LinearStabilityOperator{T},
-                                 m::Int) where T
-
-Build all linearized operators for stability analysis on a basic state.
-
-Arguments:
-- `basic_state` - The axisymmetric basic state (θ̄, ū_φ)
-- `op` - Linear stability operator structure (contains radial operators)
-- `m` - Azimuthal wavenumber of perturbation
-
-Returns:
-- `BasicStateOperators` - Precomputed operator blocks for all ℓ couplings
-
-The operators are organized as blocks connecting perturbation mode ℓ_pert
-to basic state mode ℓ_bs.
-"""
-function build_basic_state_operators(basic_state::BasicState{T},
-                                      op,
-                                      m::Int) where T
-
-    # Extract radial operators
-    r = op.r  # Vector{T} — no copy needed
-    Nr = length(r)
-    inv_r = one(T) ./ r
-    CT = Complex{T}
-
-    # Radial differentiation operator (from Chebyshev differentiation structure)
-    Dr = op.cd.D1
-    temperature_radial_weight = op.params.use_sparse_weighting ? r .^ 2 : r .^ 4
-
-    # Storage for operator blocks
-    # Key: (ℓ_output, ℓ_input) - coupling from input mode to output mode
-    advection_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    shear_radial_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    shear_theta_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    shear_theta_toroidal_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    temp_grad_radial_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    temp_grad_theta_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    temp_grad_theta_toroidal_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()
-    metric_poloidal_blocks = Dict{Tuple{Int,Int}, Matrix{CT}}()  # T → P from metric terms
-    coupling_structure = Tuple{Int,Int}[]
-    coupling_set = Set{Tuple{Int,Int}}()
-
-    # Get basic state modes
-    ℓ_bs_modes = sort(collect(keys(basic_state.theta_coeffs)))
-
-    # Get perturbation modes from operator
-    perturbation_modes = sort(collect(keys(op.index_map)))
-    ℓ_pert_modes = unique([ℓ for (ℓ, field) in perturbation_modes])
-    ℓ_pert_set = Set(ℓ_pert_modes)
-    lmax_pert = maximum(ℓ_pert_modes)
-    lmax_bs = maximum(ℓ_bs_modes)
-    coupling_tol = T(1e-14)
-
-    azimuthal_cache = _build_azimuthal_coupling_cache(m, lmax_pert, lmax_bs, T)
-
-    @info "Building basic state operators" ℓ_bs_modes=ℓ_bs_modes ℓ_pert_modes=ℓ_pert_modes m=m
-
-    # Loop over all basic state modes
-    for ℓ_bs in ℓ_bs_modes
-        # Get basic state coefficients
-        theta_coeff = basic_state.theta_coeffs[ℓ_bs]
-        uphi_coeff = basic_state.uphi_coeffs[ℓ_bs]
-        duphi_dr = basic_state.duphi_dr_coeffs[ℓ_bs]
-        dtheta_dr = basic_state.dtheta_dr_coeffs[ℓ_bs]
-
-        uphi_max = maximum(abs, uphi_coeff)
-        theta_max = maximum(abs, theta_coeff)
-
-        # Skip if this mode is negligible
-        if theta_max < 1e-14 && uphi_max < 1e-14
-            continue
-        end
-
-        adv_coupling_matrix = nothing
-        if azimuthal_cache !== nothing && uphi_max > coupling_tol
-            adv_coupling_matrix = _azimuthal_coupling_matrix(azimuthal_cache, ℓ_bs)
-        end
-
-        # Loop over input perturbation modes
-        for ℓ_input in ℓ_pert_modes
-            if ℓ_input < m
-                continue
-            end
-
-            # Compute spherical harmonic coupling:
-            # Product Y_ℓ_input,m × Y_ℓ_bs,0 → Σ_ℓ' coupling[ℓ'] × Y_ℓ',m
-            coupling_coeffs = compute_spherical_harmonic_coupling(ℓ_input, ℓ_bs, m)
-
-            # Loop over all OUTPUT modes that receive coupling
-            for (ℓ_output, coupling_coeff) in coupling_coeffs
-                # Only include output modes that exist in the perturbation basis
-                if !(ℓ_output in ℓ_pert_set) || ℓ_output < m
-                    continue
-                end
-
-                # Record this coupling
-                if !((ℓ_output, ℓ_input) in coupling_set)
-                    push!(coupling_set, (ℓ_output, ℓ_input))
-                    push!(coupling_structure, (ℓ_output, ℓ_input))
-                end
-
-                # Angular momentum quantum number for input mode
-                L_input = T(ℓ_input * (ℓ_input + 1))
-                coupling = T(coupling_coeff)
-
-                # =====================================================================
-                # 2. Radial shear: -u'_r × ∂ū_φ/∂r
-                # =====================================================================
-                if uphi_max > 1e-14
-                    block = _operator_block!(
-                        shear_radial_blocks, (ℓ_output, ℓ_input), Nr, CT)
-                    _add_diagonal_block!(block, -L_input * coupling, duphi_dr)
-                end
-
-                # =====================================================================
-                # 4. Radial temperature gradient: -u'_r × ∂θ̄/∂r
-                # =====================================================================
-                # Use the same radial equation weighting as the built-in
-                # conduction term in assemble_matrices.
-                if theta_max > 1e-14
-                    block = _operator_block!(
-                        temp_grad_radial_blocks, (ℓ_output, ℓ_input), Nr, CT)
-                    _add_diagonal_product_block!(
-                        block, -L_input * coupling,
-                        temperature_radial_weight, dtheta_dr)
-                end
-
-            end
-
-            # =====================================================================
-            # 1. Azimuthal advection: (ū_φ/(r sin θ)) ∂/∂φ = im·m × ū_φ/(r sin θ)
-            #    The 1/sinθ factor is accounted for by the quadrature-based coupling.
-            # =====================================================================
-            if adv_coupling_matrix !== nothing && m != 0
-                idx_in = ℓ_input - m + 1
-                for ℓ_output in ℓ_pert_modes
-                    if ℓ_output < m
-                        continue
-                    end
-                    idx_out = ℓ_output - m + 1
-                    adv_coupling = adv_coupling_matrix[idx_out, idx_in]
-                    abs(adv_coupling) < coupling_tol && continue
-
-                    if !((ℓ_output, ℓ_input) in coupling_set)
-                        push!(coupling_set, (ℓ_output, ℓ_input))
-                        push!(coupling_structure, (ℓ_output, ℓ_input))
-                    end
-
-                    block = _operator_block!(
-                        advection_blocks, (ℓ_output, ℓ_input), Nr, CT)
-                    _add_diagonal_product_block!(
-                        block, im * m * T(adv_coupling), uphi_coeff, inv_r)
-                end
-            end
-
-            # =====================================================================
-            # 1b. Metric terms for vector advection: -ū_φ u'_φ / r (and cot(θ) terms)
-            #     These couple toroidal velocity T to poloidal equation P.
-            #     The full curvilinear advection (ū · ∇)u' has metric terms:
-            #       (ū · ∇)u'_r contains: -ū_φ u'_φ / r
-            #       (ū · ∇)u'_θ contains: -ū_φ u'_φ cot(θ) / r
-            #     These project onto the poloidal equation through angular integrals.
-            # =====================================================================
-            if uphi_max > coupling_tol
-                # The metric coupling coefficient involves angular integrals similar
-                # to the azimuthal advection but with different weighting.
-                # Use the same azimuthal coupling structure.
-                if adv_coupling_matrix !== nothing
-                    idx_in = ℓ_input - m + 1
-                    for ℓ_output in ℓ_pert_modes
-                        if ℓ_output < m
-                            continue
-                        end
-                        idx_out = ℓ_output - m + 1
-                        metric_coupling = adv_coupling_matrix[idx_out, idx_in]
-                        abs(metric_coupling) < coupling_tol && continue
-
-                        if !((ℓ_output, ℓ_input) in coupling_set)
-                            push!(coupling_set, (ℓ_output, ℓ_input))
-                            push!(coupling_structure, (ℓ_output, ℓ_input))
-                        end
-
-                        # Metric term: -ū_φ / r × u'_φ
-                        # This couples T (source of u'_φ) to P (poloidal equation)
-                        block = _operator_block!(
-                            metric_poloidal_blocks, (ℓ_output, ℓ_input), Nr, CT)
-                        _add_diagonal_product_block!(
-                            block, -T(metric_coupling), uphi_coeff, inv_r)
-                    end
-                end
-            end
-
-            # =====================================================================
-            # 3/5. Meridional shear and temperature-gradient terms
-            #
-            # u'_θ from poloidal potential P' is:
-            #   u'_θ = (1/r) dP'/dr × ∂Y/∂θ
-            #
-            # The advection term (u'_θ/r) × ∂ū_φ/∂θ contributes to the toroidal eq.
-            # After multiplying by the r² weighting in the equation:
-            #   r² × (1/r²) dP'/dr × angular_part = dP'/dr × angular
-            # =====================================================================
-            if uphi_max > coupling_tol || theta_max > coupling_tol
-                for ℓ_output in ℓ_pert_modes
-                    if ℓ_output < m
-                        continue
-                    end
-                    meridional_coeff = _meridional_coupling(ℓ_input, ℓ_bs, ℓ_output, m)
-                    abs(meridional_coeff) < coupling_tol && continue
-                    meridional = T(meridional_coeff)
-
-                    if !((ℓ_output, ℓ_input) in coupling_set)
-                        push!(coupling_set, (ℓ_output, ℓ_input))
-                        push!(coupling_structure, (ℓ_output, ℓ_input))
-                    end
-
-                    if uphi_max > coupling_tol
-                        block = _operator_block!(
-                            shear_theta_blocks, (ℓ_output, ℓ_input), Nr, CT)
-                        _add_left_diagonal_matrix_block!(
-                            block, -meridional, uphi_coeff, Dr)
-
-                        if m != 0
-                            block = _operator_block!(
-                                shear_theta_toroidal_blocks,
-                                (ℓ_output, ℓ_input), Nr, CT)
-                            _add_diagonal_product_block!(
-                                block, -meridional * im * m, uphi_coeff, inv_r)
-                        end
-                    end
-
-                    if theta_max > coupling_tol
-                        block = _operator_block!(
-                            temp_grad_theta_blocks, (ℓ_output, ℓ_input), Nr, CT)
-                        _add_left_diagonal_matrix_block!(
-                            block, -meridional, theta_coeff, Dr)
-
-                        if m != 0
-                            block = _operator_block!(
-                                temp_grad_theta_toroidal_blocks,
-                                (ℓ_output, ℓ_input), Nr, CT)
-                            _add_diagonal_product_block!(
-                                block, -meridional * im * m, theta_coeff, inv_r)
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    # Count non-zero blocks
-    n_nonzero_adv = count(block -> maximum(abs, block) > 1e-14, values(advection_blocks))
-    @info "Basic state operators built" blocks=length(coupling_structure) nonzero_advection=n_nonzero_adv
-
-    return BasicStateOperators{T}(
-        advection_blocks,
-        shear_radial_blocks,
-        shear_theta_blocks,
-        shear_theta_toroidal_blocks,
-        temp_grad_radial_blocks,
-        temp_grad_theta_blocks,
-        temp_grad_theta_toroidal_blocks,
-        metric_poloidal_blocks,
-        coupling_structure
-    )
+"""Build the complete linearized physical equations about an axisymmetric state."""
+function build_basic_state_operators(bs::BasicState{T}, op, m::Int) where T
+    blocks=_mean_state_blocks(bs,op,op,m,m)
+    select(fo,fi)=Dict((lo,li)=>b for ((lo,a,li,c),b) in blocks if a===fo && c===fi)
+    emptyblocks()=Dict{Tuple{Int,Int},Matrix{Complex{T}}}()
+    pairs=sort!(unique([(lo,li) for (lo,fo,li,fi) in keys(blocks)]))
+    BasicStateOperators{T}(select(:Θ,:Θ),select(:T,:P),emptyblocks(),
+        select(:T,:T),select(:Θ,:P),emptyblocks(),select(:Θ,:T),
+        select(:P,:T),pairs,blocks)
 end
 
-
-"""
-    add_basic_state_operators!(A::Matrix, B::Matrix,
-                                basic_state_ops::BasicStateOperators,
-                                op::LinearStabilityOperator,
-                                m::Int)
-
-Add basic state operators to the assembled A matrix.
-
-Modifies A in place to include:
-- Advection by zonal flow
-- Shear production
-- Temperature gradient advection
-
-The coupling pairs are indexed as (ℓ_output, ℓ_input), meaning the operator
-couples from input mode ℓ_input to output mode ℓ_output through the basic state.
-
-Arguments:
-- `A` - Operator matrix (modified in place)
-- `B` - Mass matrix (not modified, included for consistency)
-- `basic_state_ops` - Precomputed basic state operators
-- `op` - Linear stability operator structure
-- `m` - Azimuthal wavenumber
-"""
+"""Add mean-state blocks to A; B is unchanged."""
 function add_basic_state_operators!(A::Matrix, B::Matrix,
-                                     basic_state_ops::BasicStateOperators,
-                                     op,
-                                     m::Int)
-
-    @debug "Adding basic state operators to A matrix..."
-
-    # Loop over all coupling pairs (ℓ_output, ℓ_input)
-    for (ℓ_output, ℓ_input) in basic_state_ops.coupling_structure
-
-        # Get indices for output and input modes
-        if !haskey(op.index_map, (ℓ_output, :P)) || !haskey(op.index_map, (ℓ_input, :P))
-            continue
-        end
-
-        # Output mode indices (row indices in A)
-        P_out_idx = op.index_map[(ℓ_output, :P)]
-        Θ_out_idx = haskey(op.index_map, (ℓ_output, :Θ)) ? op.index_map[(ℓ_output, :Θ)] : nothing
-        T_out_idx = haskey(op.index_map, (ℓ_output, :T)) ? op.index_map[(ℓ_output, :T)] : nothing
-
-        # Input mode indices (column indices in A)
-        P_in_idx = op.index_map[(ℓ_input, :P)]
-        Θ_in_idx = haskey(op.index_map, (ℓ_input, :Θ)) ? op.index_map[(ℓ_input, :Θ)] : nothing
-        T_in_idx = haskey(op.index_map, (ℓ_input, :T)) ? op.index_map[(ℓ_input, :T)] : nothing
-
-        # =====================================================================
-        # 1. Add advection operator to scalar fields (P, T, Θ)
-        #    (ū_φ/(r sin θ)) ∂/∂φ acts as im·m × ū_φ/(r sin θ)
-        # =====================================================================
-        if haskey(basic_state_ops.advection_blocks, (ℓ_output, ℓ_input))
-            adv_block = basic_state_ops.advection_blocks[(ℓ_output, ℓ_input)]
-            if P_out_idx !== nothing && P_in_idx !== nothing
-                A[P_out_idx, P_in_idx] .+= adv_block
-            end
-            if T_out_idx !== nothing && T_in_idx !== nothing
-                A[T_out_idx, T_in_idx] .+= adv_block
-            end
-            if Θ_out_idx !== nothing && Θ_in_idx !== nothing
-                A[Θ_out_idx, Θ_in_idx] .+= adv_block
-            end
-        end
-
-        # =====================================================================
-        # 2. Add radial temperature gradient term
-        #    ∂θ'_ℓ_output/∂t term: -u'_r,ℓ_input × ∂θ̄/∂r
-        #    This couples P_ℓ_input → θ'_ℓ_output (u_r from poloidal)
-        # =====================================================================
-        if Θ_out_idx !== nothing
-            if haskey(basic_state_ops.temp_grad_radial_blocks, (ℓ_output, ℓ_input))
-                temp_grad_block = basic_state_ops.temp_grad_radial_blocks[(ℓ_output, ℓ_input)]
-                A[Θ_out_idx, P_in_idx] .+= temp_grad_block
-            end
-        end
-
-        # =====================================================================
-        # 2b. Add meridional temperature gradient term
-        #     ∂θ'_ℓ_output/∂t term: -(u'_θ/r) × ∂θ̄/∂θ
-        # =====================================================================
-        if Θ_out_idx !== nothing
-            if haskey(basic_state_ops.temp_grad_theta_blocks, (ℓ_output, ℓ_input))
-                temp_grad_theta_block = basic_state_ops.temp_grad_theta_blocks[(ℓ_output, ℓ_input)]
-                A[Θ_out_idx, P_in_idx] .+= temp_grad_theta_block
-            end
-            if T_in_idx !== nothing && haskey(basic_state_ops.temp_grad_theta_toroidal_blocks, (ℓ_output, ℓ_input))
-                temp_grad_theta_t_block = basic_state_ops.temp_grad_theta_toroidal_blocks[(ℓ_output, ℓ_input)]
-                A[Θ_out_idx, T_in_idx] .+= temp_grad_theta_t_block
-            end
-        end
-
-        # =====================================================================
-        # 3. Add radial shear to toroidal equation
-        #    ∂u'_φ,ℓ_output/∂t term: -u'_r,ℓ_input × ∂ū_φ/∂r
-        #    This couples P_ℓ_input → T_ℓ_output
-        # =====================================================================
-        if T_out_idx !== nothing
-            if haskey(basic_state_ops.shear_radial_blocks, (ℓ_output, ℓ_input))
-                shear_block = basic_state_ops.shear_radial_blocks[(ℓ_output, ℓ_input)]
-                A[T_out_idx, P_in_idx] .+= shear_block
-            end
-        end
-
-        # =====================================================================
-        # 3b. Add meridional shear to toroidal equation
-        #     ∂u'_φ,ℓ_output/∂t term: -(u'_θ/r) × ∂ū_φ/∂θ
-        # =====================================================================
-        if T_out_idx !== nothing
-            if haskey(basic_state_ops.shear_theta_blocks, (ℓ_output, ℓ_input))
-                shear_theta_block = basic_state_ops.shear_theta_blocks[(ℓ_output, ℓ_input)]
-                A[T_out_idx, P_in_idx] .+= shear_theta_block
-            end
-            if T_in_idx !== nothing && haskey(basic_state_ops.shear_theta_toroidal_blocks, (ℓ_output, ℓ_input))
-                shear_theta_t_block = basic_state_ops.shear_theta_toroidal_blocks[(ℓ_output, ℓ_input)]
-                A[T_out_idx, T_in_idx] .+= shear_theta_t_block
-            end
-        end
-
-        # =====================================================================
-        # 4. Add metric terms to poloidal equation (curvilinear vector advection)
-        #    The metric terms from (ū · ∇)u' couple T (toroidal) to P (poloidal):
-        #      (ū · ∇)u'_r contains: -ū_φ u'_φ / r
-        #      (ū · ∇)u'_θ contains: -ū_φ u'_φ cot(θ) / r
-        #    These are essential for correct momentum advection by mean flow.
-        # =====================================================================
-        if P_out_idx !== nothing && T_in_idx !== nothing
-            if haskey(basic_state_ops.metric_poloidal_blocks, (ℓ_output, ℓ_input))
-                metric_block = basic_state_ops.metric_poloidal_blocks[(ℓ_output, ℓ_input)]
-                A[P_out_idx, T_in_idx] .+= metric_block
-            end
-        end
+        bs_ops::BasicStateOperators, op, m::Int)
+    for ((lo,fo,li,fi),block) in bs_ops.blocks
+        A[op.index_map[(lo,fo)],op.index_map[(li,fi)]] .+= block
     end
-
-    @debug "Basic state operators added successfully"
-
-    return nothing
+    nothing
 end
 
-"""
-    add_basic_state_operators_coo!(A_rows, A_cols, A_vals, B_rows, B_cols, B_vals,
-                                   basic_state_ops, op, m; owned_julia_rows=nothing)
-
-COO-emitting counterpart of [`add_basic_state_operators!`](@ref). Mirrors it exactly,
-but instead of dense `A[out_idx, in_idx] .+= block` accumulation it pushes each block
-into the COO triplet arrays via `_emit_block!`. When `owned_julia_rows` is a `UnitRange`,
-only triplets whose global row lies in that range are emitted (non-owned rows dropped by
-`_emit_block!`). The basic-state contribution writes only to the A arrays (the B arrays
-are accepted for symmetry/future use but unmodified).
-"""
-function add_basic_state_operators_coo!(A_rows, A_cols, A_vals, B_rows, B_cols, B_vals,
-                                        basic_state_ops::BasicStateOperators,
-                                        op,
-                                        m::Int;
-                                        owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing)
-
-    @debug "Adding basic state operators to A COO arrays..."
-
-    # Loop over all coupling pairs (ℓ_output, ℓ_input)
-    for (ℓ_output, ℓ_input) in basic_state_ops.coupling_structure
-
-        # Get indices for output and input modes
-        if !haskey(op.index_map, (ℓ_output, :P)) || !haskey(op.index_map, (ℓ_input, :P))
-            continue
-        end
-
-        # Output mode indices (row indices in A)
-        P_out_idx = op.index_map[(ℓ_output, :P)]
-        Θ_out_idx = haskey(op.index_map, (ℓ_output, :Θ)) ? op.index_map[(ℓ_output, :Θ)] : nothing
-        T_out_idx = haskey(op.index_map, (ℓ_output, :T)) ? op.index_map[(ℓ_output, :T)] : nothing
-
-        # Input mode indices (column indices in A)
-        P_in_idx = op.index_map[(ℓ_input, :P)]
-        Θ_in_idx = haskey(op.index_map, (ℓ_input, :Θ)) ? op.index_map[(ℓ_input, :Θ)] : nothing
-        T_in_idx = haskey(op.index_map, (ℓ_input, :T)) ? op.index_map[(ℓ_input, :T)] : nothing
-
-        # =====================================================================
-        # 1. Add advection operator to scalar fields (P, T, Θ)
-        #    (ū_φ/(r sin θ)) ∂/∂φ acts as im·m × ū_φ/(r sin θ)
-        # =====================================================================
-        if haskey(basic_state_ops.advection_blocks, (ℓ_output, ℓ_input))
-            adv_block = basic_state_ops.advection_blocks[(ℓ_output, ℓ_input)]
-            if P_out_idx !== nothing && P_in_idx !== nothing
-                _emit_block!(A_rows, A_cols, A_vals, P_out_idx, P_in_idx, adv_block; owned=owned_julia_rows)
-            end
-            if T_out_idx !== nothing && T_in_idx !== nothing
-                _emit_block!(A_rows, A_cols, A_vals, T_out_idx, T_in_idx, adv_block; owned=owned_julia_rows)
-            end
-            if Θ_out_idx !== nothing && Θ_in_idx !== nothing
-                _emit_block!(A_rows, A_cols, A_vals, Θ_out_idx, Θ_in_idx, adv_block; owned=owned_julia_rows)
-            end
-        end
-
-        # =====================================================================
-        # 2. Add radial temperature gradient term
-        #    ∂θ'_ℓ_output/∂t term: -u'_r,ℓ_input × ∂θ̄/∂r
-        #    This couples P_ℓ_input → θ'_ℓ_output (u_r from poloidal)
-        # =====================================================================
-        if Θ_out_idx !== nothing
-            if haskey(basic_state_ops.temp_grad_radial_blocks, (ℓ_output, ℓ_input))
-                temp_grad_block = basic_state_ops.temp_grad_radial_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, Θ_out_idx, P_in_idx, temp_grad_block; owned=owned_julia_rows)
-            end
-        end
-
-        # =====================================================================
-        # 2b. Add meridional temperature gradient term
-        #     ∂θ'_ℓ_output/∂t term: -(u'_θ/r) × ∂θ̄/∂θ
-        # =====================================================================
-        if Θ_out_idx !== nothing
-            if haskey(basic_state_ops.temp_grad_theta_blocks, (ℓ_output, ℓ_input))
-                temp_grad_theta_block = basic_state_ops.temp_grad_theta_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, Θ_out_idx, P_in_idx, temp_grad_theta_block; owned=owned_julia_rows)
-            end
-            if T_in_idx !== nothing && haskey(basic_state_ops.temp_grad_theta_toroidal_blocks, (ℓ_output, ℓ_input))
-                temp_grad_theta_t_block = basic_state_ops.temp_grad_theta_toroidal_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, Θ_out_idx, T_in_idx, temp_grad_theta_t_block; owned=owned_julia_rows)
-            end
-        end
-
-        # =====================================================================
-        # 3. Add radial shear to toroidal equation
-        #    ∂u'_φ,ℓ_output/∂t term: -u'_r,ℓ_input × ∂ū_φ/∂r
-        #    This couples P_ℓ_input → T_ℓ_output
-        # =====================================================================
-        if T_out_idx !== nothing
-            if haskey(basic_state_ops.shear_radial_blocks, (ℓ_output, ℓ_input))
-                shear_block = basic_state_ops.shear_radial_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, T_out_idx, P_in_idx, shear_block; owned=owned_julia_rows)
-            end
-        end
-
-        # =====================================================================
-        # 3b. Add meridional shear to toroidal equation
-        #     ∂u'_φ,ℓ_output/∂t term: -(u'_θ/r) × ∂ū_φ/∂θ
-        # =====================================================================
-        if T_out_idx !== nothing
-            if haskey(basic_state_ops.shear_theta_blocks, (ℓ_output, ℓ_input))
-                shear_theta_block = basic_state_ops.shear_theta_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, T_out_idx, P_in_idx, shear_theta_block; owned=owned_julia_rows)
-            end
-            if T_in_idx !== nothing && haskey(basic_state_ops.shear_theta_toroidal_blocks, (ℓ_output, ℓ_input))
-                shear_theta_t_block = basic_state_ops.shear_theta_toroidal_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, T_out_idx, T_in_idx, shear_theta_t_block; owned=owned_julia_rows)
-            end
-        end
-
-        # =====================================================================
-        # 4. Add metric terms to poloidal equation (curvilinear vector advection)
-        #    The metric terms from (ū · ∇)u' couple T (toroidal) to P (poloidal):
-        #      (ū · ∇)u'_r contains: -ū_φ u'_φ / r
-        #      (ū · ∇)u'_θ contains: -ū_φ u'_φ cot(θ) / r
-        #    These are essential for correct momentum advection by mean flow.
-        # =====================================================================
-        if P_out_idx !== nothing && T_in_idx !== nothing
-            if haskey(basic_state_ops.metric_poloidal_blocks, (ℓ_output, ℓ_input))
-                metric_block = basic_state_ops.metric_poloidal_blocks[(ℓ_output, ℓ_input)]
-                _emit_block!(A_rows, A_cols, A_vals, P_out_idx, T_in_idx, metric_block; owned=owned_julia_rows)
-            end
-        end
+"""Emit the same physical blocks as the dense path, restricted to owned rows."""
+function add_basic_state_operators_coo!(A_rows,A_cols,A_vals,B_rows,B_cols,B_vals,
+        bs_ops::BasicStateOperators,op,m::Int;owned_julia_rows=nothing)
+    for ((lo,fo,li,fi),block) in bs_ops.blocks
+        _emit_block!(A_rows,A_cols,A_vals,op.index_map[(lo,fo)],op.index_map[(li,fi)],
+                     block;owned=owned_julia_rows)
     end
-
-    @debug "Basic state operators added to COO successfully"
-
-    return nothing
+    nothing
 end

@@ -2,43 +2,23 @@
 
 Triglobal stability analysis handles the most general case: fully three-dimensional basic states with non-axisymmetric (``m \neq 0``) components. This introduces **mode coupling** between perturbations at different azimuthal wavenumbers, requiring simultaneous solution of coupled modes.
 
-!!! warning "Validation status (read first)"
-    The non-axisymmetric basic-state machinery has been **reimplemented on a unified
-    vector-spherical-harmonic basis** and is **internally validated**, but it is **not
-    yet validated against an external published triglobal benchmark** (none with a
-    matching non-dimensionalization has been located). The onset (exact, benchmarked)
-    and biglobal-axisymmetric (reduction-validated) paths remain the absolute
-    references. Current state of the machinery:
+!!! note "Mathematical model and validation"
+    The 2D and 3D stability assemblies use the same physical linearization:
+    ``-\mathbf U\cdot\nabla\Theta-\mathbf u\cdot\nabla\overline T`` for heat,
+    and ``-\mathbf U\cdot\nabla\mathbf u-\mathbf u\cdot\nabla\mathbf U``
+    for momentum. Vector-harmonic projection includes the spherical metric terms
+    and eliminates pressure before applying the onset equation weights.
 
-    - **Advection `ū·∇T̄` is exact (divergence form).** Computed as `∇·(ūT̄)` for
-      incompressible `ū` via a vector-SH transform (`vecsh_advection`), capturing the
-      full triadic (Gaunt) coupling with no scalar-`∂_θ` aliasing. MMS-validated to
-      `<1e-10`; the `m=0` axisymmetric path is bit-identical to before.
-    - **Azimuthal (φ) advection is captured.** The basic state carries a full real-SH
-      `±m` representation (`cos mφ` at `+m`, `sin mφ` at `-m`); the self-consistent
-      solver develops the `sin` modes that `ū_φ·∂_φT̄` produces.
-    - **One normalization convention.** The real basic state enters the complex-SH
-      Gaunt coupling through a single hinge (`_basic_state_complex_profile`,
-      `ĉ_{ℓ,m}=(A∓iB)/√2`); the no-factorial ↔ orthonormal mismatch is resolved by a
-      boundary rescale (`_sh_rescale`). `m=0` is identity, so the validated paths are
-      unchanged.
-    - **Coupling convention validated by symmetry.** The real→complex map is verified
-      via φ-rotation invariance: a `sin` basic-state mode produces a coupling block of
-      the same magnitude as the corresponding `cos` mode (= `-i ×` it), and a rotated
-      basic state rephases the block by `e^{-i m_bs φ₀}` without changing its norm
-      (test: *"Real→complex coupling: φ-rotation invariance + sin modes"*). This is an
-      internal-consistency proof, not an absolute-growth-rate reference.
+    The tests include exact rigid rotation (Doppler shift plus Coriolis change),
+    Cartesian polynomial momentum forcing, non-axisymmetric temperature transport,
+    both radial heat-equation weightings, signed Fourier phases, and normalization
+    conversion. These are independent operator checks; they do not replace an
+    external benchmark for absolute triglobal growth rates.
 
-    - **Meridional circulation carries the `sin` partner.** The solver
-      (`solve_meridional_circulation_toroidal_poloidal!`) runs over signed `m`, so a
-      `sin`-phase temperature mode (`m<0`) drives its meridional flow (`u_r, u_θ`) with
-      the same radial profile as the cosine partner (verified by φ-rotation symmetry,
-      test *"Meridional sin partner is the φ-rotation of the cos mode"*); the `m≥0`
-      path is bit-identical.
-
-    Treat absolute triglobal growth rates as research-grade pending an external
-    benchmark (none convention-matched exists; the published "non-axisymmetric"
-    rotating-convection results are onset problems, already validated here).
+    Noniterated mean-state constructors use the Stokes–Coriolis approximation.
+    `basic_state_selfconsistent` includes nonlinear momentum inertia by default;
+    `momentum_model=:stokes` opts out. Check `info.converged` and spatial
+    resolution before interpreting the mean state as a steady equilibrium.
 
 ## Physical Motivation
 
@@ -257,9 +237,9 @@ See [Basic States: Full Geostrophic Balance](../basic_states.md#full-geostrophic
 ### Method 1: Self-Consistent Solver (Recommended)
 
 For non-axisymmetric cases, use `basic_state_selfconsistent` which:
-- Iteratively solves the advection-diffusion equation
+- Iteratively solves nonlinear momentum and thermal advection-diffusion
 - Computes full meridional circulation using toroidal-poloidal decomposition
-- Handles mode coupling exactly
+- Retains generated harmonics within the chosen spectral truncation
 
 ```julia
 using Magrathea
@@ -272,12 +252,13 @@ cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
 # Non-axisymmetric heat flux BC
 flux = Y00(-1.0) + Y22(-0.2)
 
-# Self-consistent solver with full geostrophic balance
+# Self-consistent nonlinear steady state
 bs3d, info = basic_state_selfconsistent(
     cd, χ, E, Ra, Pr;
     flux_bc = flux,
     verbose = true
 )
+@assert info.converged
 
 # All three velocity components are computed
 println("Zonal modes: ", keys(bs3d.uphi_coeffs))
