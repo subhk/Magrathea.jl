@@ -103,13 +103,13 @@ println("Assembling MHD matrices...")
 A_full, B_full, interior_dofs, info = assemble_mhd_matrices(op)
 println()
 
-# Extract interior problem
-A = A_full[interior_dofs, interior_dofs]
-B = B_full[interior_dofs, interior_dofs]
+# Retain boundary constraints in the full coefficient-space pencil
+A = A_full
+B = B_full
 
 println("System information:")
 println("  Full matrix size:     $(size(A_full))")
-println("  Interior matrix size: $(size(A))")
+println("  Solve matrix size: $(size(A))")
 println("  A sparsity: $(nnz(A)) nonzeros ($(100*nnz(A)/length(A))%)")
 println("  B sparsity: $(nnz(B)) nonzeros ($(100*nnz(B)/length(B))%)")
 println()
@@ -182,7 +182,7 @@ try
         println("  - Can lead to magnetic buoyancy instabilities")
         println("  - Enables dynamo action (self-sustaining fields)")
     else
-        println("No background field (Le = 0): kinematic dynamo problem")
+        println("No background field (Le = 0): hydrodynamic stability problem")
     end
     println()
 

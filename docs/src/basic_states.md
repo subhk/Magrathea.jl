@@ -1,5 +1,8 @@
 # Basic States
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 <div class="magrathea-hero">
   <div class="magrathea-eyebrow">Base states</div>
   <h1>Separate the background state from the perturbations.</h1>
@@ -166,9 +169,9 @@ bc = Y20(0.1) + Y22(0.05) + Y21(0.03)
 bs = basic_state(cd, χ, E, Ra, Pr; temperature_bc=bc)
 ```
 
-## v2.0 Unified API
+## Unified API
 
-In v2.0, all basic state types are accessible through a single `basic_state(params; mode=...)` function. This eliminates the need to manage `ChebyshevDiffn` objects and dispatch manually:
+With the unified API, all basic state types are accessible through a single `basic_state(params; mode=...)` function. This eliminates the need to manage `ChebyshevDiffn` objects and dispatch manually:
 
 ```julia
 using Magrathea
@@ -203,22 +206,7 @@ Axisymmetric cases keep only spherical harmonic modes with azimuthal index ``m =
 
 ### Structure
 
-```julia
-struct BasicState{T}
-    lmax_bs::Int
-    Nr::Int
-    r::Vector{T}
-    theta_coeffs::Dict{Int, Vector{T}}
-    uphi_coeffs::Dict{Int, Vector{T}}
-    dtheta_dr_coeffs::Dict{Int, Vector{T}}
-    duphi_dr_coeffs::Dict{Int, Vector{T}}
-    ur_coeffs::Dict{Int, Vector{T}}
-    utheta_coeffs::Dict{Int, Vector{T}}
-    dur_dr_coeffs::Dict{Int, Vector{T}}
-    dutheta_dr_coeffs::Dict{Int, Vector{T}}
-    flow::Union{Nothing, SolenoidalMeanFlow{T}}
-end
-```
+See [`BasicState`](@ref) in the API reference for the current fields. Temperature and component dictionaries use radial collocation values. The `flow` field stores the authoritative divergence-free vector representation; use [`mean_flow_velocity`](@ref) for physical velocity components.
 
 ### Conduction Basic State
 
@@ -366,29 +354,7 @@ Magrathea.jl automatically augments the linearized operator with advection terms
 
 ### Structure
 
-```julia
-struct BasicState3D{T}
-    # Grid
-    r::Vector{T}
-    Nr::Int
-    lmax_bs::Int
-    mmax_bs::Int
-
-    # Temperature: θ̄_ℓm(r)
-    theta_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    dtheta_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-
-    # Velocity: ū_r,ℓm(r), ū_θ,ℓm(r), ū_φ,ℓm(r)
-    ur_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    utheta_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    uphi_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-
-    # Velocity derivatives
-    dur_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    dutheta_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    duphi_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-end
-```
+See [`BasicState3D`](@ref) in the API reference for the current fields. Temperature and component dictionaries use radial collocation values. The `flow` field stores the authoritative divergence-free vector representation; use [`mean_flow_velocity`](@ref) for physical velocity components.
 
 ### Creating 3-D Basic States
 

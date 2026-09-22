@@ -1,4 +1,7 @@
-# MHD Module User Guide
+# MHD User Guide
+
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
 **Magrathea.jl MHD Implementation - Comprehensive Usage Documentation**
 
@@ -6,25 +9,25 @@
 
 ## Table of Contents
 
-1. [Introduction](#introduction)
-2. [Quick Start](#quick-start)
-3. [Physical Parameters](#physical-parameters)
-4. [Boundary Conditions](#boundary-conditions)
-5. [Complete Workflow](#complete-workflow)
-6. [Common Use Cases](#common-use-cases)
-7. [Troubleshooting](#troubleshooting)
-8. [Reference Tables](#reference-tables)
+1. [Introduction](#Introduction)
+2. [Quick Start](#Quick-Start)
+3. [Physical Parameters](#Physical-Parameters)
+4. [Boundary Conditions](#Boundary-Conditions)
+5. [Complete Workflow](#Complete-Workflow)
+6. [Common Use Cases](#Common-Use-Cases)
+7. [Troubleshooting](#Troubleshooting)
+8. [Reference Tables](#Reference-Tables)
 
 ---
 
 ## Introduction
 
-The MHD module in Magrathea.jl solves the **magnetohydrodynamic eigenvalue problem** for rotating spherical shells. This is used to study:
+The MHD implementation in Magrathea.jl solves the **magnetohydrodynamic eigenvalue problem** for rotating spherical shells. This is used to study:
 
 - **Convection onset** in planetary cores
-- **Dynamo instabilities** with background magnetic fields
+- **Magnetic modification of convection onset** with imposed axial or dipole fields
 - **Magnetoconvection** in laboratory experiments
-- **Linear stability** of MHD flows
+- **Linear stability** about motionless conductive MHD backgrounds
 
 ### Mathematical Problem
 
@@ -45,7 +48,7 @@ Where:
 ✅ **Spectral accuracy**: Ultraspherical (Gegenbauer) method
 ✅ **Flexible BCs**: No-slip, stress-free, insulating, perfect conductor
 ✅ **Background fields**: Axial and dipolar magnetic fields
-✅ **Validated**: Matches published benchmarks (Christensen & Wicht 2015)
+✅ **Physics checks**: Independent Lorentz/induction, diffusion, wall, and core-matching tests; see [Codebase Structure](codebase_structure.md) for the validation files
 
 ---
 
@@ -73,7 +76,7 @@ params = MHDParams(
 )
 
 # Solve via the high-level API. Le=0 (no field) ⇒ tau-free ultraspherical-Galerkin
-# assembly: spurious-free, so which=:LR picks the convective mode with no σ-targeting.
+# assembly: with boundary constraints built into its trial basis.
 result = solve(MHDProblem(params); nev=20, tol=1e-6, which=:LR)
 
 growth_rates = real.(result.eigenvalues)
@@ -89,29 +92,46 @@ println("Critical mode frequency: ", frequencies[argmax(growth_rates)])
 
 ---
 
-## Eigensolver and spurious eigenvalues
+## Eigensolver and model scope
 
-`solve(MHDProblem(params))` is the recommended entry point.
+`solve(MHDProblem(params))` is the recommended entry point. Hydro and axial-field
+problems with insulating magnetic walls use ultraspherical-Galerkin assembly.
+Dipole fields and conducting walls use tau assembly with fluid residuals in
+`C⁽⁴⁾` (poloidal velocity) or `C⁽²⁾` (other fields). Only the highest residual
+coefficients are replaced by boundary constraints; unknowns remain Chebyshev
+coefficients. This projection avoids the artificial growing poloidal modes of
+the former `C⁽⁰⁾` residual formulation. Tau pencils
+have infinite algebraic boundary eigenvalues; shift-invert targeting with
+`sigma=0.0` can select finite modes near onset. Check radial and angular convergence
+for the physical parameters being studied.
 
-**Hydrodynamic case** (no background field, `B0_type = no_field`): `solve` uses a
-tau-free **ultraspherical-Galerkin** assembly. Boundary conditions are built into a
-recombined trial basis, so the generalized eigenproblem has a full-rank mass matrix
-and **no spurious modes**. The default `which = :LR` selects the convective mode
-directly — no `sigma`-targeting needed — and the spectrum matches the validated
-collocation onset benchmark (`m = 4`, `E = 4.225×10⁻⁴`: `Raᶜ ≈ 55.905`) to ~1×10⁻¹².
+The tests compare shell magnetic free decay against independent collocation,
+and an equal-diffusivity conducting core against analytical full-sphere decay.
+They also check parity separation, current-free Lorentz force, axial induction,
+and physical field reconstruction. Independent boundary tests evaluate spherical
+strain and the tangential electric field on computed eigenmodes. The slip-wall
+EMF uses analytical degree-one harmonic coefficients so forbidden angular
+couplings remain exactly zero, including in `Float32`.
 
-**Magnetic case** (`Le > 0`): `solve` uses the Chebyshev-tau method, which emits
-spurious positive-real eigenvalues. Select the physical mode by shift-targeting
-(`solve(prob; sigma = 0.0, which = :LM)`) rather than `:LR`.
+The solver linearizes about a **motionless conductive state** with a prescribed,
+current-free axial or dipolar field. It does not couple the hydrodynamic nonlinear
+mean-flow solver into MHD; explicit `MHDProblem.basic_state` objects are rejected.
+`no_field` is hydrodynamic stability, with no magnetic degrees of freedom.
 
-!!! warning "Magnetic diffusion operator — sign under review"
-    A Galerkin port of the magnetic sector revealed that the *decoupled*
-    magnetic-diffusion modes come out **growing** (Re > 0), which is unphysical for a
-    purely dissipative process. `operator_magnetic_diffusion_poloidal/toroidal` share
-    the form of the viscous operator but enter the system matrix with the opposite
-    sign. Whether this is a sign error or a no-curl-formulation subtlety is unresolved
-    (the magnetic operators have no external benchmark). Treat magnetic (`Le > 0`)
-    growth rates with caution pending verification against a reference.
+Both imposed fields have spherical-harmonic degree one. Same-type poloidal or
+toroidal magnetic/velocity couplings change degree by ±1; mixed-type couplings
+preserve degree. Consequently `symm=0` is the direct sum of the two parity sectors.
+
+Native potentials use ``\mathbf{b}=\nabla\times\nabla\times(rf\hat{\mathbf r})+\nabla\times(rg\hat{\mathbf r})`` and harmonics ``Y_l^m/\sqrt{2l+1}``.
+The reconstruction routines use this convention for velocity, magnetic field,
+and temperature. `N` is the maximum Chebyshev degree (`N+1` coefficients).
+`Le` sets the field strength; `B0_amplitude` is a legacy display tag and does not
+rescale the field.
+
+`interior_dofs` returned by tau assembly denotes differential **rows** only.
+Solve the full `(A,B)` pencil. Slicing both matrices to these indices removes the
+boundary equations without imposing them. Reconstruction requires all coefficients;
+Galerkin eigenvectors must first be expanded using their recombination layout.
 
 ---
 
@@ -270,38 +290,38 @@ params = MHDParams(
 )
 ```
 
-#### Perfect Conductor (bci_magnetic=2)
+#### Perfect conductor (`bci_magnetic=2` or `bco_magnetic=2`)
 
-**Physics:** Infinite electrical conductivity, E_tangential = 0
+A stationary ideal conductor imposes ``f=0`` and zero tangential electric field.
+For no-slip velocity this gives ``g'+g/r=0``. There is one constraint for each
+magnetic potential at each wall. An extra poloidal diffusion constraint would
+overconstrain the second-order radial equation.
 
-**Mathematical conditions:**
-- Poloidal: f = 0 and Em·(-f'' - 2/r·f' + L/r²·f) = 0 (2 rows!)
-- Toroidal: Em·(-g' - 1/r·g) = 0
+For stress-free velocity, the toroidal condition includes the spheroidal
+projection of ``\mathbf{u}\times\mathbf{B}_0``:
 
-**When to use:**
-- **Highly conducting inner core** (solid iron, σ >> outer core)
-- Earth's core with solid iron inner core
-- Modeling dynamo boundary layer effects
-
-**Example:**
-```julia
-params = MHDParams(
-    ...,
-    bci_magnetic = 2,  # Perfect conductor ICB (Earth-like)
-    bco_magnetic = 0   # Insulating CMB
-)
+```math
+E_m(g'+g/r) - [\mathbf{u}\times\mathbf{B}_0]_{\mathrm{sph}}=0.
 ```
 
-**Important:** Perfect conductor ICB is the most realistic for Earth's core!
+#### Finite-conductivity core (`bci_magnetic=1`)
 
-#### Conducting with Finite Conductivity (bci_magnetic=1)
+This option evolves the perturbation field in a **stationary solid core with the
+same diffusivity and permeability as the fluid**. With no slip at the interface,
+``f,f',g,g'`` are continuous. With slip, continuity of tangential electric field
+adds the fluid motional EMF to the toroidal derivative condition.
 
-**Physics:** Finite conductivity with magnetic diffusion skin depth
+Core potentials have the regular basis
+``(r/r_i)^l a_l(x)``, ``x=2(r/r_i)^2-1``, with `N+1` Chebyshev coefficients for
+``a_l``. The full vector appends `:fi` and `:gi` sections after the five fluid
+sections. The core diffusion equation and the shell equations share the unknown
+eigenvalue; no prescribed skin-depth frequency is used. `forcing_frequency` must
+remain zero. The imposed dipole is prescribed in the shell; only its perturbation
+is continued regularly through the core.
 
-**Status:** ✅ Implemented (requires `forcing_frequency` and `Em > 0`)
-
-**Usage:** Provide the non-dimensional forcing frequency when constructing
-`MHDParams`, e.g. `MHDParams(..., bci_magnetic=1, forcing_frequency=1.0)`.
+A finite-conductivity mantle (`bco_magnetic=1`) and unequal core/shell diffusivities
+are not implemented. For the physical matching conditions, see the
+[MagIC inner-core equations](https://magic-sph.github.io/numerics.html#magnetic-boundary-conditions-and-inner-core).
 
 ---
 
@@ -371,13 +391,11 @@ println("  Sparsity: ", nnz(A), " / ", size(A,1)^2,
 #### Using the eigenvalue solver
 
 ```julia
-# Extract interior problem
-A_int = A[interior_dofs, interior_dofs]
-B_int = B[interior_dofs, interior_dofs]
+# Keep the full coefficient-space pencil, including boundary constraints.
 
 # Find eigenvalues with largest real part
 σ, v, history = solve_eigenvalue_problem(
-    A_int, B_int;
+    A, B;
     nev=20,      # Number of eigenvalues
     tol=1e-6,    # Tolerance
     which=:LR,   # Largest real part
@@ -445,8 +463,8 @@ op = MHDStabilityOperator(params)
 A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
 σ, _, _ = solve_eigenvalue_problem(
-    A[interior_dofs, interior_dofs],
-    B[interior_dofs, interior_dofs];
+    A,
+    B;
     nev=10, which=:LR,
 )
 
@@ -497,8 +515,8 @@ for Le in Le_values
     A, B, interior_dofs, _ = assemble_mhd_matrices(op)
 
     σ, _, _ = solve_eigenvalue_problem(
-        A[interior_dofs, interior_dofs],
-        B[interior_dofs, interior_dofs];
+        A,
+        B;
         nev=5, which=:LR,
     )
 
@@ -513,7 +531,7 @@ end
 
 ### Use Case 3: Perfect Conductor Inner Core
 
-**Goal:** Study Earth-like configuration with conducting inner core
+**Goal:** Study an ideal perfectly conducting inner wall
 
 ```julia
 params = MHDParams(
@@ -532,13 +550,13 @@ op = MHDStabilityOperator(params)
 A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
 println("Perfect conductor IC boundary:")
-println("  Uses 2-row BC for poloidal magnetic field")
+println("  Uses one constraint per magnetic potential at each wall")
 println("  Interior DOFs: ", length(interior_dofs))
 
 # Solve eigenvalue problem
 σ, _, _ = solve_eigenvalue_problem(
-    A[interior_dofs, interior_dofs],
-    B[interior_dofs, interior_dofs];
+    A,
+    B;
     nev=10, which=:LR,
 )
 
@@ -567,7 +585,7 @@ end
 ```julia
 # More robust solving
 σ, v, history = solve_eigenvalue_problem(
-    A_int, B_int;
+    A, B;
     nev=30,       # More eigenvalues
     tol=1e-4,     # Relaxed tolerance
     maxiter=1000, # More iterations
@@ -634,7 +652,8 @@ end
 | Fixed flux | bci/bco_thermal = 1 | Insulating | ∂T/∂r = 0 |
 | **Magnetic** |
 | Insulating | bci/bco_magnetic = 0 | Silicate mantle | (l+1)f + r·f' = 0 (CMB) |
-| Perfect conductor | bci_magnetic = 2 | Solid iron IC | f=0, Em(-f''-2f'/r+Lf/r²)=0 |
+| Perfect conductor | bci/bco_magnetic = 2 | Ideal stationary wall | f=0, tangential E=0 |
+| Conducting core | bci_magnetic = 1 | Equal diffusivity/permeability | Core diffusion and interface matching |
 
 ### Table 3: Matrix Size Estimates
 
@@ -657,13 +676,13 @@ end
 
 **Examples:**
 - `test_mhd_basic.jl` - Basic validation
-- `test_perfect_conductor.jl` - Perfect conductor BC test
+- `test/mhd_physics.jl` - Analytical magnetic physics regressions
 - `example/mhd_dynamo_example.jl` - Full workflow
 
 **References:**
 - Christensen & Wicht (2015), Treatise on Geophysics, Vol. 8
 - Dormy & Soward (2007), "Mathematical Aspects of Natural Dynamos"
-- Kore documentation: https://github.com/..."
+- Kore documentation: https://github.com/repepo/kore
 
 **Issues:**
 - Report bugs: https://github.com/subhk/Magrathea.jl/issues

@@ -217,7 +217,7 @@ end
             @test eltype(blk) === Float64
             @test size(blk) == (n, n)
         end
-        @test_throws ErrorException Magrathea.operator_induction_poloidal_from_u(op, 3, m, 3)
+        @test iszero(Magrathea.operator_induction_poloidal_from_u(op, 3, m, 3))
 
         # poloidal-from-v: complex, offsets -1:1; out-of-range -> complex zero.
         for o in -1:1
@@ -233,7 +233,7 @@ end
             @test eltype(blk) === ComplexF64
             @test size(blk) == (n, n)
         end
-        @test_throws ErrorException Magrathea.operator_induction_toroidal_from_u(op, 3, m, 2)
+        @test iszero(Magrathea.operator_induction_toroidal_from_u(op, 3, m, 2))
 
         # toroidal-from-v: real, offsets -2:2; out-of-range -> real zero.
         for o in -2:2

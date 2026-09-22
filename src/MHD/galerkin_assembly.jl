@@ -2,7 +2,7 @@
 #  Tau-free ultraspherical-Galerkin assembly of the MHD eigenproblem.
 #
 #  Boundary conditions are carried by a recombined trial basis (no tau rows →
-#  full-rank B → no spurious eigenvalues).
+#  full-rank B → no infinite boundary eigenvalues).
 #
 #   - Hydro (u, v, h): pure-banded (B2) via `banded_radial_term`. Matches the
 #     collocation onset spectrum to ~1e-12 with zero spurious.
@@ -10,7 +10,7 @@
 #     REUSING the audited C^0 operator functions, lifting each block to the row
 #     equation's C^(q) basis, then projecting (`gbC0`). Magnetic DIFFUSION uses the
 #     corrected MINUS sign (matches the viscous convention; free-decay dissipates —
-#     see assembly.jl + test/mhd_galerkin.jl "Magnetic diffusion sign"). The dipole
+#     see assembly.jl and test/mhd_physics.jl). The dipole
 #     case is deferred (errors → caller routes to the tau path).
 #
 #  ADDITIVE: does not modify the tau path (`assemble_mhd_matrices`).
@@ -92,13 +92,10 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
         (ℓ+1) in Vls && (A[P, idx[(:v, ℓ+1)]] += gb(2 * (ℓ*(ℓ+2) * sqrt(max(zero(T), T((ℓ+m+1)*(ℓ-m+1)))) / (2ℓ+3)) * (-(ℓ+2) * bt(3,0,4) - bt(4,1,4)), :u, :v, ℓ+1))
         ℓ in Hls && (A[P, idx[(:h, ℓ)]] += gb(beyonce * L * bt(4,0,4), :u, :h, ℓ))
         if Le > 0                                        # Lorentz: u ← magnetic
-            for o in -2:2
+            for o in (-1, 1)
                 (ℓ+o) in Fls && (A[P, idx[(:f, ℓ+o)]] += gbC0(operator_lorentz_poloidal_from_bpol(op, ℓ, m, o, Le), :u, :f, ℓ+o))
             end
             ℓ in Gls && (A[P, idx[(:g, ℓ)]] += gbC0(operator_lorentz_poloidal_diagonal(op, ℓ, Le), :u, :g, ℓ))
-            for o in (-1, 1)
-                (ℓ+o) in Gls && (A[P, idx[(:g, ℓ+o)]] += gbC0(operator_lorentz_poloidal_offdiag(op, ℓ, m, o, Le), :u, :g, ℓ+o))
-            end
         end
     end
 
@@ -126,10 +123,10 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
         (ℓ-1) in Uls && (A[V, idx[(:u, ℓ-1)]] += gb(2 * ((ℓ^2-1) * sqrt(max(zero(T), T(ℓ^2-m^2))) / (2ℓ-1)) * ((ℓ-1) * bt(1,0,2) - bt(2,1,2)), :v, :u, ℓ-1))
         (ℓ+1) in Uls && (A[V, idx[(:u, ℓ+1)]] += gb(2 * (ℓ*(ℓ+2) * sqrt(max(zero(T), T((ℓ+m+1)*(ℓ-m+1)))) / (2ℓ+3)) * (-(ℓ+2) * bt(1,0,2) - bt(2,1,2)), :v, :u, ℓ+1))
         if Le > 0                                        # Lorentz: v ← magnetic
-            for o in -1:1
+            for o in (0,)
                 (ℓ+o) in Fls && (A[V, idx[(:f, ℓ+o)]] += gbC0(operator_lorentz_toroidal_from_bpol(op, ℓ, m, o, Le), :v, :f, ℓ+o))
             end
-            for o in -2:2
+            for o in (-1, 1)
                 (ℓ+o) in Gls && (A[V, idx[(:g, ℓ+o)]] += gbC0(operator_lorentz_toroidal_from_btor(op, ℓ, m, o, Le), :v, :g, ℓ+o))
             end
         end
@@ -141,10 +138,10 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
         B[F, F] += gbC0(-operator_b_poloidal(op, ℓ), :f, :f, ℓ)
         A[F, F] += gbC0(-operator_magnetic_diffusion_poloidal(op, ℓ, Em), :f, :f, ℓ)
         if Le > 0
-            for o in -2:2
+            for o in (-1, 1)
                 (ℓ+o) in Uls && (A[F, idx[(:u, ℓ+o)]] += gbC0(operator_induction_poloidal_from_u(op, ℓ, m, o), :f, :u, ℓ+o))
             end
-            for o in -1:1
+            for o in (0,)
                 (ℓ+o) in Vls && (A[F, idx[(:v, ℓ+o)]] += gbC0(operator_induction_poloidal_from_v(op, ℓ, m, o), :f, :v, ℓ+o))
             end
         end
@@ -156,10 +153,10 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
         B[G, G] += gbC0(-operator_b_toroidal(op, ℓ), :g, :g, ℓ)
         A[G, G] += gbC0(-operator_magnetic_diffusion_toroidal(op, ℓ, Em), :g, :g, ℓ)
         if Le > 0
-            for o in -2:2
+            for o in (-1, 1)
                 (ℓ+o) in Vls && (A[G, idx[(:v, ℓ+o)]] += gbC0(operator_induction_toroidal_from_v(op, ℓ, m, o), :g, :v, ℓ+o))
             end
-            for o in -1:1
+            for o in (0,)
                 (ℓ+o) in Uls && (A[G, idx[(:u, ℓ+o)]] += gbC0(operator_induction_toroidal_from_u(op, ℓ, m, o), :g, :u, ℓ+o))
             end
         end

@@ -90,12 +90,13 @@ end
 
 Magnetohydrodynamic instability problem.
 
-Loosely typed to avoid circular dependencies with the `CompleteMHD` module.
-`basic_state` may be `nothing` for problems without an explicit background field.
+The supported basic state is motionless thermal conduction with the imposed
+field specified by `params`. Explicit mean-state objects are rejected because
+their velocity and magnetic couplings are not implemented in this solver.
 
 # Fields
 - `params` — MHD parameters (e.g., `MHDParams`)
-- `basic_state::BS` — background state, or `nothing`
+- `basic_state::BS` — currently must be `nothing`
 """
 struct MHDProblem{T, BS}
     params::MHDParams{T}

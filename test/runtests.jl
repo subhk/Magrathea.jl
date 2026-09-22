@@ -7,6 +7,8 @@ include("legacy_api.jl")
 # Existing tests
 include("boundary_conditions.jl")
 include("mhd_boundary_conditions.jl")
+include("mhd_physics.jl")
+include("boundary_physics.jl")
 include("mhd_stress_free_bc.jl")
 include("meridional_boundary_conditions.jl")
 include("chebyshev.jl")

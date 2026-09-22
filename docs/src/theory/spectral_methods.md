@@ -82,20 +82,12 @@ Where ``c_j = 2`` for ``j = 0, N-1`` and ``c_j = 1`` otherwise.
 
 ### ChebyshevDiffn Structure
 
-```julia
-struct ChebyshevDiffn{T<:AbstractFloat}
-    n::Int              # Number of points
-    domain::Tuple{T,T}  # Physical domain [a, b]
-    max_order::Int      # Highest derivative order
-    x::Vector{T}        # Collocation points
-    D1::Matrix{T}       # First derivative matrix
-    D2::Matrix{T}       # Second derivative matrix
-    D3::Matrix{T}       # Third derivative matrix
-    D4::Matrix{T}       # Fourth derivative matrix
-end
-```
+See [`ChebyshevDiffn`](@ref) for the current fields. `x` contains the radial
+nodes; `D1` through `D4` contain collocation differentiation matrices when
+requested by the constructor.
 
-Higher derivatives are computed by matrix multiplication: ``D_2 = D_1 \times D_1``, etc.
+The implementation differentiates Chebyshev coefficients and transforms back
+to values; see `src/Spectral/chebyshev.jl` for the construction.
 
 ## Ultraspherical Spectral Method
 
@@ -216,19 +208,22 @@ Where ``P_\ell^m`` are associated Legendre functions.
 
 ## Boundary Condition Implementation
 
-### Tau Method
+### Boundary enforcement paths
 
-Magrathea.jl uses the Tau method for boundary conditions:
+Hydrodynamic collocation replaces boundary equations at the endpoint-related
+rows, then reduces the pencil with a basis satisfying those constraints.
+Insulating axial MHD uses a boundary-recombined Galerkin trial basis.
+Dipole and conducting-wall MHD use coefficient-tau constraints: highest-order
+residual rows are replaced, while all unknown coefficient columns remain.
+The MHD poloidal velocity residual is in a different ultraspherical basis
+from the second-order residuals; these are equation coefficients, not radial
+grid points.
 
-1. Replace the last few rows of the operator matrix with BC constraints
-2. The replaced rows correspond to highest polynomial degrees
-3. Interior accuracy is preserved
-
-For example, no-slip velocity BCs on poloidal potential:
-- Replace row ``N-1`` with: ``P(r_i) = 0``
-- Replace row ``N`` with: ``P(r_o) = 0``
-- Replace row ``N+1`` with: ``P'(r_i) = 0``
-- Replace row ``N+2`` with: ``P'(r_o) = 0``
+No-slip constrains the poloidal potential and its derivative at both walls,
+and the toroidal potential at both walls. Exact row locations and derivative
+scalings depend on the representation. See the
+[boundary equations](mathematical_foundations.md#Boundary-Conditions) and
+[source map](../codebase_structure.md) for the corresponding implementations.
 
 ### BC Matrix Form
 
@@ -239,7 +234,7 @@ P(r_b) = \sum_{n=0}^{N-1} a_n T_n(x_b) = \sum_{n=0}^{N-1} \mathcal{B}^{(0)}_n a_
 ```
 
 ```math
-P'(r_b) = \sum_{n=0}^{N-1} a_n T_n'(x_b) = \sum_{n=0}^{N-1} \mathcal{B}^{(1)}_n a_n
+P'(r_b) = \sum_{n=0}^{N-1} a_n \frac{2}{r_o-r_i}T_n'(x_b) = \sum_{n=0}^{N-1} \mathcal{B}^{(1)}_n a_n
 ```
 
 Where ``\mathcal{B}^{(k)}`` is the BC evaluation row for the ``k``-th derivative.

@@ -33,27 +33,8 @@ end
         end
     end
 
-    # ----- #3: conducting magnetic ICB reduces to insulating as ω→0 ----------
-    function _mag_op_f(; bci_magnetic, bco_magnetic=0, forcing_frequency=1.0)
-        params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1.0, ricb=0.35,
-                           m=1, lmax=3, symm=1, N=8,
-                           bci_magnetic=bci_magnetic, bco_magnetic=bco_magnetic,
-                           forcing_frequency=forcing_frequency)
-        return (params=params, ll_u=Int[], ll_v=Int[], ll_f=[2], ll_g=[2], ll_h=Int[])
-    end
-
-    @testset "#3 conducting ICB steady limit == insulating ICB row" begin
-        npm = 8 + 1
-        function f_icb_row(op)
-            A = spzeros(ComplexF64, 2 * npm, 2 * npm)
-            B = spzeros(ComplexF64, 2 * npm, 2 * npm)
-            Magrathea.apply_magnetic_boundary_conditions!(A, B, op, :f)
-            Vector(A[npm, 1:npm])           # poloidal-f ICB row
-        end
-        insulating = f_icb_row(_mag_op_f(bci_magnetic=0))
-        conducting_steady = f_icb_row(_mag_op_f(bci_magnetic=1, forcing_frequency=0.0))
-        @test conducting_steady ≈ insulating
-    end
+    # Conducting-core matching is now tested against analytic full-sphere decay
+    # modes in mhd_physics.jl, rather than a prescribed-frequency Robin row.
 
     # ----- #4: triglobal reconstruction passes SIGNED m (not abs) ------------
     # Plant identical reduced blocks in m=+1 and m=−1. Pre-fix (abs m) the two

@@ -1,13 +1,17 @@
 using Documenter
 using Magrathea
 
+include("check_structure.jl")
+check_source_map()
+
 makedocs(
     sitename = "Magrathea.jl",
     authors  = "Subhajit Kar",
     modules  = [Magrathea],
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
-        canonical  = "https://subhk.github.io/Magrathea.jl/stable",
+        canonical  = "https://subhk.github.io/Magrathea.jl/" *
+                     (startswith(get(ENV, "GITHUB_REF", ""), "refs/tags/") ? "stable/" : "dev/"),
         assets     = ["assets/magrathea.css"],
         collapselevel = 2,
         sidebar_sitename = false,
@@ -38,17 +42,18 @@ makedocs(
         "Reference" => [
             "API Reference" => "reference.md",
             "Codebase Structure" => "codebase_structure.md",
-            "Migration Guide (v2.0)" => "migration-v2.md",
+            "Migration Guide" => "migration-v2.md",
             "FAQ" => "faq.md",
         ],
     ],
-    # First migration: keep the build green while content/docstrings are converted.
-    # These are tightened (removed) in Task 7 once conversion is complete.
+    # Some low-level helpers are intentionally outside the curated API reference.
     warnonly = [:missing_docs],
 )
 
-deploydocs(
-    repo = "github.com/subhk/Magrathea.jl",
-    devbranch = "main",
-    push_preview = false,
-)
+if "--deploy" in ARGS
+    deploydocs(
+        repo = "github.com/subhk/Magrathea.jl",
+        devbranch = "main",
+        push_preview = false,
+    )
+end

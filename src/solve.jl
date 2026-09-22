@@ -264,7 +264,7 @@ function solve(problem::MHDProblem{T, BS};
             evecs_full = [reconstruct_mhd_galerkin_full(op, layout, F.vectors[:, keep[s]]) for s in sel]
         end
         evec_matrix = _eigvecs_to_matrix(eigenvalues, evecs_full, T)
-        info = (method = "MHD ultraspherical-Galerkin (hydro)", n_reduced = layout.nred)
+        info = (method = "MHD ultraspherical-Galerkin", n_reduced = layout.nred)
         return StabilityResult(
             convert(Vector{Complex{T}}, eigenvalues),
             evec_matrix,

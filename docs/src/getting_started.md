@@ -1,260 +1,162 @@
 # Getting Started
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Install &amp; first run</div>
-  <h1>From a fresh clone to your first eigenvalue.</h1>
-  <p>
-    Install Magrathea.jl on Linux, macOS, or Windows (WSL), then assemble and solve a
-    rotating-convection onset problem &mdash; follow the steps in order.
-  </p>
-  <div class="magrathea-actions">
-    <a class="magrathea-button primary" href="../problem_setup/">First problem</a>
-    <a class="magrathea-button secondary" href="../examples/">Examples</a>
-  </div>
-</div>
-
-## Prerequisites
-
-### Required
-
-- **Julia 1.10 or newer** - Magrathea.jl is developed and tested against Julia 1.10.x and 1.11.x
-- **Git** - For cloning and pulling updates
-
-### Optional but Recommended
-
-- **Documenter.jl** - For building the documentation locally (`julia --project=docs docs/make.jl`)
-- **VS Code with Julia extension** - For a richer REPL and plot experience
-- **C/Fortran toolchain** - For building dependencies such as MKL or FFTW if Julia requests them
+Install the core package first, then configure SLEPc for sparse eigenvalue
+solves. Basic-state construction, matrix assembly, and the documentation
+build work without PETSc.
 
 ## Installation
 
-### Step 1: Clone the Repository
+Use a Julia version allowed by `Project.toml` (Julia 1.9 or later in the 1.x
+series) and clone the repository:
 
 ```bash
 git clone https://github.com/subhk/Magrathea.jl.git
 cd Magrathea.jl
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-### Step 2: Instantiate the Julia Environment
-
-Open Julia inside the project folder and instantiate the dependencies:
+Alternatively, install into an existing Julia environment:
 
 ```julia
-julia> using Pkg
-julia> Pkg.activate(".")
-julia> Pkg.instantiate()
+using Pkg
+Pkg.add(url="https://github.com/subhk/Magrathea.jl")
 ```
 
-The first run downloads packages including:
+The [source map](codebase_structure.md) describes the package, extensions,
+examples, and tests. The problem/solve interface is documented in the
+[API reference](reference.md).
 
-| Package | Purpose |
-|---------|---------|
-| `LinearAlgebra` | Standard Julia linear algebra |
-| `SparseArrays` | Sparse matrix operations |
-| `LinearMaps` | Linear operator abstractions |
-| `SpecialFunctions` | Special mathematical functions |
-| `JLD2` | HDF5-based file I/O |
-| `WignerSymbols` | Wigner 3j symbols for mode coupling |
-| `Parameters` | Keyword argument macros |
+## SLEPc setup
 
-!!! tip "Subsequent Sessions"
-    Once instantiated, subsequent Julia sessions only need `Pkg.activate(".")` to use the pre-compiled dependencies.
+The supported sparse eigensolver is `backend=:slepc`. Its Julia wrappers are
+weak dependencies, so instantiating the core package does not install them.
 
-### Step 3: Run the Test Suite
+Install matching PETSc/SLEPc libraries using complex scalars. The shift-invert
+configuration below also requires MUMPS. Configure `PETSC_DIR`, `PETSC_ARCH`,
+and `SLEPC_DIR` for those installations before loading the wrappers; follow
+the [PetscWrap installation instructions](https://github.com/bmxam/PetscWrap.jl#how-to-install-it)
+and [SlepcWrap installation instructions](https://github.com/bmxam/SlepcWrap.jl#how-to-install-it)
+for library discovery. MPI must match the libraries used by the wrappers.
 
-Before creating new problems, verify your installation passes the regression tests:
+Add the wrappers to the environment in which you run Magrathea:
 
 ```julia
-julia> using Pkg
-julia> Pkg.activate(".")
-julia> Pkg.test()
+using Pkg
+Pkg.add(["PetscWrap", "SlepcWrap"])
 ```
 
-The tests assemble small eigenvalue problems to verify that matrix blocks and solver wrappers agree with stored benchmarks.
-
-### Step 4: Verify an Example Script
-
-For a basic smoke test, run the linear stability demo:
-
-```bash
-julia --project=. example/linear_stability_demo.jl
-```
-
-You should see output similar to:
-
-```
-m    Re(λ₁)          Im(λ₁)          iterations
-------------------------------------------------
- 1  -1.23456e-02   5.67890e-01      24
- 2  -8.76543e-03   6.12345e-01      28
-...
-```
-
-## Package Structure
-
-After installation, the project has the following structure:
-
-```
-Magrathea.jl/
-├── src/                      # Source code
-│   ├── Magrathea.jl              # Main module entry point
-│   ├── validation.jl         # Input validation  [v2.0]
-│   ├── types.jl              # Problem/result types, estimate_size  [v2.0]
-│   ├── solve.jl              # Unified solve() API  [v2.0]
-│   ├── show.jl               # Pretty-printing  [v2.0]
-│   ├── Spectral/             # Chebyshev, ultraspherical, Galerkin discretization
-│   ├── BasicStates/          # Basic states, SH transforms, coupling operators
-│   ├── Stability/            # Onset / biglobal / triglobal + eigensolver
-│   ├── Operators/            # Sparse operators + boundary conditions
-│   └── MHD/                  # MHD extension (see Codebase Structure for the full tree)
-├── example/                  # Example scripts
-│   ├── linear_stability_demo.jl
-│   ├── mhd_dynamo_example.jl
-│   ├── triglobal_analysis_demo.jl
-│   ├── basic_state_onset_example.jl
-│   └── ...
-├── test/                     # Test suite
-├── docs/                     # Documentation
-├── Project.toml              # Package dependencies
-└── Manifest.toml             # Locked dependency versions
-```
-
-!!! note "Public API"
-    Magrathea.jl uses `OnsetParams`, typed problem wrappers such as `OnsetProblem`, `solve`, and `estimate_size` as the public stability-analysis interface.
-
-## Julia Configuration
-
-### Recommended Startup Configuration
-
-Add the following to `~/.julia/config/startup.jl` for a better REPL experience:
-
-```julia
-atreplinit() do repl
-    try
-        @eval using Revise
-    catch err
-        @warn "Revise not available" err
-    end
-end
-```
-
-This enables [Revise.jl](https://github.com/timholy/Revise.jl) to pick up changes as you edit source files - essential for iterative development.
-
-### Environment Variables
-
-Magrathea.jl recognizes several environment variables:
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `MAGRATHEA_VERBOSE` | Enable verbose output | `"1"` |
-| `MAGRATHEA_THETA_POINTS` | Default meridional resolution | `"96"` |
-
-## Building Documentation Locally
-
-The documentation uses [Documenter.jl](https://documenter.juliadocs.org/). To preview locally:
-
-### Step 1: Instantiate the docs environment
-
-```bash
-julia --project=docs -e '
-    using Pkg
-    Pkg.develop(PackageSpec(path=pwd()))
-    Pkg.instantiate()'
-```
-
-### Step 2: Build the site
-
-```bash
-julia --project=docs docs/make.jl
-```
-
-Open `docs/build/index.html` in your browser to see the rendered site.
-
-## Your First Calculation
-
-Let's compute the growth rate for a rotating convection problem:
+At the start of each solver session:
 
 ```julia
 using Magrathea
+import PetscWrap, SlepcWrap
 
-# 1. Define parameters
-params = OnsetParams(E=1e-3, Pr=1.0, Ra=1e5, χ=0.35,
-                     m=4, lmax=20, Nr=32)
+slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
+            "-st_pc_factor_mat_solver_type mumps")
+```
 
-# 2. Create and solve
+Use `import` for the wrappers to avoid bringing their exported names into
+the same namespace as Magrathea's API. The import activates
+`MagratheaSlepcExt`. Call `slepc_finalize!()` once all solves in the session
+have finished. For a script, a `try ... finally` block can ensure cleanup.
+
+All eigenvalue examples in this documentation assume this setup unless they
+explicitly show initialization themselves.
+
+## Verify construction and assembly
+
+This example is executed during the documentation build and needs no PETSc:
+
+```@example installation
+using Magrathea
+params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35,
+                     m=2, lmax=6, Nr=16)
 problem = OnsetProblem(params)
-result = solve(problem; nev=6)
+estimate_size(problem)
+op = LinearStabilityOperator(params)
+A, B = assemble_matrices(op)
+@assert size(A) == size(B) == (op.total_dof, op.total_dof)
+nothing # hide
+```
 
-# 3. View results
+For core regression tests, run from the checkout:
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
+```
+
+Tests include boundary conditions, mean-flow balances, assembly, and
+reconstruction. PETSc/MPI runtime checks are conditional; skipped runtime
+checks do not validate a PETSc installation.
+
+## Your first calculation
+
+After initializing SLEPc above:
+
+```julia
+params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35,
+                     m=2, lmax=8, Nr=24)
+result = solve(OnsetProblem(params); nev=6, sigma=0.0)
 println("Growth rate: ", result.growth_rate)
 println("Frequency: ", result.frequency)
 ```
 
-### Understanding the Output
+A positive real part of an eigenvalue indicates growth. Its imaginary part
+is the temporal frequency; for a mode proportional to
+`exp(λ*t + im*φ)`, the phase angular velocity is `-imag(λ)/m` when `m ≠ 0`.
 
-The eigenvalues ``\lambda = \sigma + i\omega`` represent:
+Small truncations are suitable for learning the API. Check resolution,
+eigenpair residuals, and spectral targeting for a quantitative result.
+See [First Problem](problem_setup.md) for critical searches and reconstruction.
 
-- **Growth rate (``\sigma``)**: Positive values indicate instability (convection onset)
-- **Drift frequency (``\omega``)**: Rate at which the pattern rotates azimuthally
+## Running repository examples
 
-For Earth-like parameters at the onset of convection:
+Several research scripts assume an initialized solver session. Run them with:
 
-- ``\sigma \approx 0`` (marginal stability)
-- ``\omega > 0`` (prograde drift with rotation)
+```julia
+using Magrathea
+import PetscWrap, SlepcWrap
+slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
+            "-st_pc_factor_mat_solver_type mumps")
+try
+    include("example/mhd_dynamo_example.jl")
+finally
+    slepc_finalize!()
+end
+```
+
+See [Examples](examples.md) for the available files and their scope.
+
+## Building Documentation Locally
+
+From the repository root:
+
+```bash
+julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+julia --project=docs docs/make.jl
+```
+
+Open `docs/build/index.html`. A normal local build does not deploy.
+CI passes `--deploy` explicitly when publishing. To check the directory-style
+URLs used on the website without deploying:
+
+```bash
+CI=true julia --project=docs docs/make.jl
+```
+
+Serve `docs/build/` through a local HTTP server for that preview.
 
 ## Troubleshooting
 
-### Package Refuses to Precompile
+- **Missing SLEPc extension:** install and import both wrappers, then initialize
+  SLEPc. `using Magrathea` alone is sufficient for assembly, but not a sparse solve.
+- **Library or scalar-type errors:** check the wrapper library paths and that
+  PETSc/SLEPc use compatible complex scalars and MPI.
+- **Factorization errors:** confirm MUMPS is present for the options above.
+- **Insufficient memory:** reduce radial/angular resolution and inspect
+  `estimate_size(problem)` before increasing it.
+- **No converged eigenpairs:** inspect SLEPc diagnostics and adjust target,
+  tolerance, or iteration limit. Do not treat an unconverged solve as stability.
 
-```julia
-julia> Pkg.update()
-julia> Pkg.instantiate()
-```
-
-If issues persist, delete `Manifest.toml` and re-instantiate.
-
-### Out-of-Memory Errors
-
-Reduce `lmax` or `Nr` in the examples. Start with smaller values:
-
-```julia
-params = OnsetParams(
-    ...,
-    lmax = 30,    # Reduced from 60
-    Nr = 32,      # Reduced from 64
-)
-```
-
-### Solver Doesn't Converge
-
-Try adjusting solver parameters:
-
-```julia
-result = solve(OnsetProblem(params);
-    nev = 4,
-    tol = 1e-5,       # Relaxed tolerance
-    maxiter = 200,    # More iterations
-)
-```
-
-### Julia Version Mismatch
-
-Ensure you're using Julia 1.10 or newer:
-
-```julia
-julia> VERSION
-v"1.10.0"
-```
-
-## Next Steps
-
-Now that Magrathea.jl is installed and working, proceed to:
-
-1. **[Setting Up Your First Problem](problem_setup.md)** - Learn to configure and solve onset problems
-2. **[Basic States](basic_states.md)** - Create custom background temperature and flow profiles
-3. **[Examples](examples.md)** - Explore the example scripts in the `example/` directory
-
----
-
-!!! success "Installation Complete"
-    You're ready to start computing convection onset in rotating spherical shells!
+Solver options are documented in the [API reference](reference.md);
+mean-state convergence is covered in [Basic States](basic_states.md).

@@ -1,5 +1,8 @@
 # FAQ & Troubleshooting
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 <div class="magrathea-hero">
   <div class="magrathea-eyebrow">Help</div>
   <h1>FAQ &amp; troubleshooting.</h1>
@@ -152,21 +155,18 @@ using Magrathea
 
 1. **Add a small shift:**
    ```julia
-   eigenvalues, _, _ = solve_eigenvalue_problem(op; which = :LM)
+   eigenvalues, _, _ = solve_eigenvalue_problem(op; sigma=0.0, which=:LM)
    ```
 
-2. **Check matrix condition:**
-   ```julia
-   using LinearAlgebra
-   cond_A = cond(Matrix(A[interior_dofs, interior_dofs]))
-   println("Condition number: ", cond_A)
-   ```
+2. **Check eigenpair residuals and solver convergence:** inspect the information
+   returned by the solver and test the residual in the assembled pencil.
+   A small growth rate can be physical at marginal stability; NaNs require
+   investigating convergence or the pencil.
 
-3. **Verify boundary conditions:**
-   ```julia
-   println("Interior DOFs: ", length(interior_dofs))
-   # Should be > 0
-   ```
+3. **Preserve boundary constraints:** use the operator-aware solve. In particular,
+   MHD `interior_dofs` selects equation rows, not coefficient columns; slicing
+   a square submatrix with it discards essential constraints. See
+   [MHD assembly](mhd_user_guide.md).
 
 ---
 
@@ -411,11 +411,7 @@ If you're still stuck:
    - Minimal reproducing script
    - Complete error message
 
-3. **Enable verbose output:**
-   ```julia
-   ENV["MAGRATHEA_VERBOSE"] = "1"
-   # Run your code
-   ```
+3. **Include solver diagnostics:** pass `verbose=true` to APIs that document it, or configure SLEPc monitoring through `slepc_init!`. See [solver setup](getting_started.md#SLEPc-setup).
 
 ---
 

@@ -1,170 +1,102 @@
 # Analysis Modes
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Three ways to analyze stability</div>
-  <h1>Pick the mode that matches your background flow.</h1>
-  <p>
-    From classical onset with no mean flow, through axisymmetric biglobal analysis,
-    to fully 3-D mode-coupled triglobal analysis &mdash; each tuned to a different
-    physical scenario.
-  </p>
-</div>
+Choose the problem from the symmetry and physics of the background state.
+All eigenvalue examples assume an initialized
+[SLEPc session](../getting_started.md#SLEPc-setup).
 
-## Overview
+## Supported problems
 
-<div class="magrathea-card-grid">
-  <div class="magrathea-card">
-    <strong><a href="onset_convection/">Onset convection</a></strong>
-    <p>Conductive base state, no mean flow. Each azimuthal mode <em>m</em> is independent. Classical convection onset.</p>
-  </div>
-  <div class="magrathea-card">
-    <strong><a href="biglobal_stability/">Biglobal</a></strong>
-    <p>Axisymmetric (<em>m</em> = 0) mean flow &mdash; thermal wind, zonal jets. Perturbation modes stay decoupled.</p>
-  </div>
-  <div class="magrathea-card">
-    <strong><a href="triglobal_stability/">Triglobal</a></strong>
-    <p>Non-axisymmetric mean flow. Modes couple via Gaunt coefficients. CMB heterogeneity, tidal forcing.</p>
-  </div>
-</div>
+| Problem | Mean velocity | Magnetic background | Azimuthal structure |
+|---------|---------------|---------------------|---------------------|
+| `OnsetProblem` | Zero | None | Independent single `m` |
+| `BiglobalProblem` | Axisymmetric, three components | None | Independent single `m` |
+| `TriglobalProblem` | Nonaxisymmetric, three components | None | Coupled signed `m_range` |
+| `MHDProblem` | Zero | Imposed axial/dipole, or hydrodynamic `no_field` | Independent single `m` |
 
-## Choosing the Right Analysis Mode
+The MHD solver currently does not combine an imposed magnetic field with a
+prescribed hydrodynamic mean flow.
 
-```mermaid
-flowchart TD
-    A[Start] --> B{Background flow?}
-    B -->|No| C[Onset Convection]
-    B -->|Yes| D{Axisymmetric?}
-    D -->|Yes| E[Biglobal]
-    D -->|No| F[Triglobal]
+## Onset convection
 
-    C --> G[Single m analysis]
-    E --> G
-    F --> H[Coupled m analysis]
-```
-
-### Onset Convection (No Mean Flow)
-
-**Physical scenario**: Pure thermal convection in a rotating shell with a conductive temperature profile and no pre-existing flows.
-
-**Key characteristics**:
-
-- Base state: ``\bar{T}(r)`` conductive profile, ``\bar{\mathbf{u}} = 0``
-- Each azimuthal mode ``m`` is independent
-- Seek critical Rayleigh number ``Ra_c(m)`` and minimum over ``m``
-- Thermal Rossby waves with prograde drift
-
-**Typical applications**:
-
-- Planetary core convection onset
-- Laboratory rotating convection experiments
-- Fundamental scaling law verification
-
-[Learn more about Onset Convection](onset_convection.md)
-
----
-
-### Biglobal (Axisymmetric Mean Flow)
-
-**Physical scenario**: Stability analysis when the background has latitudinal (but not longitudinal) structure, such as thermal wind driven by pole-equator temperature differences.
-
-**Key characteristics**:
-
-- Base state: ``\bar{T}(r, \theta)``, ``\bar{u}_\phi(r, \theta)`` with ``m = 0`` components only
-- Each perturbation mode ``m`` still independent
-- Mean flow advection modifies growth rates and drift
-- Zonal flow can stabilize or destabilize
-
-**Typical applications**:
-
-- Earth's core with CMB heat flux variations (axisymmetric part)
-- Differentially rotating boundaries
-- Thermal wind studies
-
-[Learn more about Biglobal Analysis](biglobal_stability.md)
-
----
-
-### Triglobal (Non-Axisymmetric Mean Flow)
-
-**Physical scenario**: Full 3D stability when the background breaks longitudinal symmetry, introducing mode coupling between different azimuthal wavenumbers.
-
-**Key characteristics**:
-
-- Base state: ``\bar{T}(r, \theta, \phi)``, ``\bar{\mathbf{u}}(r, \theta, \phi)`` with ``m \neq 0``
-- Perturbation modes couple: ``m \leftrightarrow m \pm m_{bs}``
-- Block matrix structure with coupling through Gaunt coefficients
-- Significantly larger computational cost
-
-**Typical applications**:
-
-- Earth's core with full CMB heat flux heterogeneity
-- Mercury's 3:2 spin-orbit resonance
-- Tidally forced bodies (Io, Europa)
-- Stars with active regions
-
-[Learn more about Triglobal Analysis](triglobal_stability.md)
-
----
-
-## Comparison Summary
-
-### Mathematical Complexity
-
-| Aspect | Onset | Biglobal | Triglobal |
-|--------|-------|----------|-----------|
-| Basic state ``m`` values | 0 | 0 | 0, ``\pm 1``, ``\pm 2``, ... |
-| Advection terms | ``u'_r \cdot \nabla \bar{T}`` | + ``\bar{\mathbf{u}} \cdot \nabla \mathbf{u}'`` | + mode coupling |
-| Matrix structure | Block diagonal | Block diagonal | Block tridiagonal (or wider) |
-| Independent problems | One per ``m`` | One per ``m`` | One coupled system |
-
-### Computational Requirements
-
-| Aspect | Onset | Biglobal | Triglobal |
-|--------|-------|----------|-----------|
-| Memory | ~100 MB | ~100 MB | ~10-100 GB |
-| Single solve time | Seconds | Seconds-minutes | Minutes-hours |
-| Parallelization | Over ``m`` | Over ``m`` | Within coupled solve |
-
-### Physical Effects Captured
-
-| Effect | Onset | Biglobal | Triglobal |
-|--------|-------|----------|-----------|
-| Thermal Rossby waves | Yes | Yes | Yes |
-| Coriolis coupling | Yes | Yes | Yes |
-| Mean flow advection | No | Yes | Yes |
-| Thermal wind | No | Yes | Yes |
-| Zonal flow shear | No | Yes | Yes |
-| Longitudinal heterogeneity | No | No | Yes |
-| Mode energy transfer | No | No | Yes |
-
-## Quick Start Examples
-
-### Onset Convection
+Use a conductive temperature and zero mean velocity to study classical
+convection onset. A fixed `m` solve gives that order's stability;
+determining global onset requires scanning azimuthal orders and resolving
+each candidate mode.
 
 ```julia
 using Magrathea
-
-params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, m=10, lmax=60, Nr=64)
-result = solve(OnsetProblem(params); nev=6)
-result.growth_rate
+params = OnsetParams(E=1e-3, Pr=1.0, Ra=100.0, χ=0.35,
+                     m=2, lmax=8, Nr=24)
+result = solve(OnsetProblem(params); nev=6, sigma=0.0)
+Ra_c, ω_c, eigenvector_c = find_critical_Ra(OnsetProblem(params); Ra_guess=100.0)
 ```
 
-### Biglobal
+[Onset guide](onset_convection.md)
+
+## Biglobal stability
+
+Axisymmetric boundary heating and mean flow preserve each perturbation
+azimuthal order. The current linearization includes all mean-velocity
+components, their shear, and thermal advection.
 
 ```julia
-using Magrathea
-
-params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, m=10, lmax=60, Nr=64)
-bs = basic_state(params; mode=:meridional, amplitude=0.05)
+params = OnsetParams(E=1e-2, Pr=1.0, Ra=30.0, χ=0.35,
+                     m=1, lmax=6, Nr=24)
+bs = basic_state(params; mode=:meridional, amplitude=0.01)
 result = solve(BiglobalProblem(params, bs); nev=6)
 ```
 
-### Triglobal
+This constructor uses the conductive-temperature/Stokes approximation.
+For a nonlinear steady mean state, use `basic_state_selfconsistent`
+with axisymmetric forcing and verify its convergence.
+
+[Biglobal guide](biglobal_stability.md)
+
+## Triglobal stability
+
+A nonaxisymmetric background couples perturbation orders through sums with
+the background's azimuthal orders. Both signs of perturbation `m` are
+supported. The mean-flow coupling uses the same physical vector
+linearization as biglobal.
 
 ```julia
-using Magrathea
-
-params = OnsetParams(E=1e-5, Pr=1.0, Ra=1e7, χ=0.35, lmax=40, Nr=48)
-bs3d = basic_state(params; mode=:nonaxisymmetric, mmax_bs=2)
-result = solve(TriglobalProblem(params, bs3d, -5:5); nev=6)
+params = OnsetParams(E=1e-2, Pr=1.0, Ra=30.0, χ=0.35,
+                     m=0, lmax=6, Nr=24)
+bs3d = basic_state(params; mode=:nonaxisymmetric, amplitude=0.01, mmax_bs=2)
+problem = TriglobalProblem(params, bs3d, -2:2)
+estimate_size(problem)
+result = solve(problem; nev=6)
 ```
+
+The background truncation and perturbation `m_range` are separate choices.
+Nonlinear transport can generate background orders beyond those present in
+the boundary forcing. Check both truncations when refining a calculation.
+
+[Triglobal guide](triglobal_stability.md)
+
+## Rotating MHD
+
+```julia
+params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=0.01,
+    ricb=0.35, m=1, lmax=6, N=16, B0_type=axial)
+result = solve(MHDProblem(params); nev=6, sigma=0.0)
+```
+
+Insulating axial cases use boundary-recombined Galerkin assembly. Dipole or
+conducting-wall cases use the coefficient-tau formulation, with extra
+evolving coefficients for a finite conducting inner core. `no_field`
+requires `Le=0` and omits magnetic unknowns.
+
+[MHD guide](../mhd_user_guide.md)
+
+## Numerical cost and interpretation
+
+Use `estimate_size` before solving. Triglobal size increases with the
+number of azimuthal blocks, their harmonic counts, and radial resolution.
+Sparse-factorization fill and coupling density also affect memory and runtime.
+
+An eigenvalue with positive real part establishes growth about the selected
+background at the selected truncation. Quantitative conclusions require
+converged mean states, radial/angular refinement, and adequate sampling of
+the spectrum. See [Examples](../examples.md) for executable setup examples
+and the [source map](../codebase_structure.md) for implementation details.

@@ -61,13 +61,10 @@ using Magrathea
         full = randn(ComplexF64, ndof)
         @test Magrathea._mhd_full_vector(full, op, nothing) == full
 
-        # interior scatter: zeros on non-interior rows
+        # A tau boundary row is not a coefficient that can be zero-filled.
         interior = collect(1:2:ndof)
         evec_int = randn(ComplexF64, length(interior))
-        scattered = Magrathea._mhd_full_vector(evec_int, op, interior)
-        @test length(scattered) == ndof
-        @test scattered[interior] == evec_int
-        @test all(scattered[setdiff(1:ndof, interior)] .== 0)
+        @test_throws DimensionMismatch Magrathea._mhd_full_vector(evec_int, op, interior)
 
         # block slice
         idx_map = Magrathea._mhd_index_map(op)
@@ -99,7 +96,7 @@ using Magrathea
         θfield, r_grid, grid = perturbation_temperature(full, op)
         @test size(θfield) == (length(r_grid), length(grid.θ))
         # constant radial profile (=1) times Y_{l0}^m(θ): proportional to Ylm along θ.
-        ylm = grid.Ylm[l0]
+        ylm = grid.Ylm[l0] ./ sqrt(2l0+1)
         for j in eachindex(grid.θ)
             @test θfield[2, j] ≈ ylm[j] atol=1e-10
         end

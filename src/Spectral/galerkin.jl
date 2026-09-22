@@ -208,11 +208,15 @@ Trial recombination for the poloidal magnetic scalar `f` at degree `ℓ` (order 
 Insulating boundaries (`bci=bco=0`) impose the ℓ-dependent Robin conditions used by
 `apply_magnetic_boundary_conditions!`: outer `(ℓ+1)·f + ro·f' = 0`, inner
 `ℓ·f − ri·f' = 0`. Built as the nullspace of those functionals (ℓ-dependent ⇒ rebuilt
-per ℓ). Non-insulating falls back to `f = 0` (perfect/conducting variants TODO).
+per ℓ). Perfect-conductor boundaries (`2`) impose `f = 0` for this potential.
+A finite-conductivity core requires its own unknowns and interface equations;
+it cannot be represented by this shell-only recombination and is rejected.
 Size (N+1)×(N−1).
 """
 function recomb_magnetic_poloidal(::Type{T}, N::Int, ℓ::Int, ri::Real, ro::Real;
                                   bci::Int=0, bco::Int=0) where {T<:Real}
+    bci in (0, 2) && bco in (0, 2) || throw(ArgumentError(
+        "Magnetic poloidal recombination supports insulating (0) or perfect-conductor (2) walls. Use MHD tau assembly for an evolving conducting core."))
     scale = T(_radial_scale(ri, ro))
     rb_o = T(_boundary_radius(ri, ro, :outer)); rb_i = T(_boundary_radius(ri, ro, :inner))
     val_o = _chebyshev_boundary_values(N, :outer, T)

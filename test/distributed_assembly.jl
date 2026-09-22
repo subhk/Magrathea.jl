@@ -4,7 +4,7 @@ using Magrathea
 
 @testset "_mhd_index_map tiles rows by section" begin
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
-                       m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0)
+                       m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0, bci_magnetic=1)
     op = MHDStabilityOperator(params)
     im = Magrathea._mhd_index_map(op)
     n_per_mode = params.N + 1
@@ -32,7 +32,7 @@ end
 
 @testset "distributed interior COO partition-reassembles to full pre-BC matrix" begin
     params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=1.0, ricb=0.35,
-                       m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0)
+                       m=1, lmax=3, N=8, B0_type=dipole, B0_amplitude=1.0, bci_magnetic=1)
     op = MHDStabilityOperator(params)
     full = Magrathea._assemble_mhd_coo(op)
     n = full.n

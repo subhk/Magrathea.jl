@@ -1,16 +1,16 @@
 # =============================================================================
 #  Physical-space reconstruction of MHD perturbation fields from an eigenvector.
 #
-#  Native to the MHD spectral (Chebyshev-coefficient) basis: scatter an interior
-#  eigenvector back to the full DOF layout, slice the per-(field, ℓ) coefficient
+#  Native to the MHD spectral (Chebyshev-coefficient) basis: slice the
+#  full eigenvector into per-(field, ℓ) coefficient
 #  blocks, evaluate each Chebyshev series on a radial grid via direct
 #  T_n(x) = cos(n·acos(x)) (accurate for the small N used here), then
 #  synthesize physical fields on a meridional (r, θ) grid.  The poloidal-toroidal
-#  curl mirrors `potentials_to_velocity` exactly (velocity and magnetic field
+#  curl uses the onset solver convention (velocity and magnetic field
 #  share the same B = ∇×∇×(r P r̂) + ∇×(r T r̂) form).
 # =============================================================================
 
-"""Total (pre-BC) MHD degrees of freedom: all five sections × `(N+1)` radial coeffs."""
+"""Full MHD coefficient count, including the conducting core when present."""
 function _mhd_reconstruction_dof(op::MHDStabilityOperator)
     return op.matrix_size
 end
@@ -19,8 +19,8 @@ end
     _mhd_full_vector(evec, op, interior_dofs)
 
 Return a full-length DOF vector. If `evec` already has `_mhd_reconstruction_dof(op)`
-entries it is returned unchanged. If `evec` matches `length(interior_dofs)`,
-its entries are scattered into a zero full vector at `interior_dofs`.
+entries it is copied. Reduced vectors need their basis transformation, not
+zero insertion at boundary-equation indices. `interior_dofs` is accepted for API compatibility.
 """
 function _mhd_full_vector(evec::AbstractVector{<:Complex},
                           op::MHDStabilityOperator,
@@ -28,15 +28,10 @@ function _mhd_full_vector(evec::AbstractVector{<:Complex},
     ndof = _mhd_reconstruction_dof(op)
     if length(evec) == ndof
         return Vector{ComplexF64}(evec)
-    elseif interior_dofs !== nothing && length(evec) == length(interior_dofs)
-        full = zeros(ComplexF64, ndof)
-        full[interior_dofs] .= evec
-        return full
     else
-        error("_mhd_full_vector: eigenvector length $(length(evec)) matches neither " *
-              "the reconstruction DOF count $ndof nor length(interior_dofs)=" *
-              "$(interior_dofs === nothing ? "nothing" : length(interior_dofs)). " *
-              "Pass interior_dofs from assemble_mhd_matrices.")
+        throw(DimensionMismatch("MHD reconstruction requires all $ndof Chebyshev coefficients. " *
+            "Tau boundary rows are equations, not removable coefficients. Use full eigenvectors " *
+            "from solve(MHDProblem(...)), or reconstruct_mhd_galerkin_full with its layout."))
     end
 end
 
@@ -85,7 +80,7 @@ end
                              Nθ=nothing, Nr=nothing, interior_dofs=nothing, grid=nothing)
 
 Reconstruct the physical perturbation temperature field
-`θ(r,θ) = Σ_ℓ h_ℓ(r) Y_ℓ^m(θ)/√(2ℓ+1)` from an MHD eigenvector (interior or full).
+`θ(r,θ) = Σ_ℓ h_ℓ(r) Y_ℓ^m(θ)/√(2ℓ+1)` from a full MHD eigenvector.
 Returns `(θfield, r_grid, grid)`.
 """
 function perturbation_temperature(evec::AbstractVector{<:Complex},
@@ -156,7 +151,8 @@ end
     perturbation_magnetic(evec, op::MHDStabilityOperator; kwargs...)
 
 Reconstruct physical perturbation magnetic field `(B_r, B_θ, B_φ)` from an MHD
-eigenvector (poloidal `:f`, toroidal `:g`). Returns `(Br, Bθ, Bφ, r_grid, grid)`.
+full eigenvector (shell poloidal `:f`, toroidal `:g`). Core coefficients remain
+in the vector but this function reconstructs only the fluid shell. Returns `(Br, Bθ, Bφ, r_grid, grid)`.
 """
 function perturbation_magnetic(evec::AbstractVector{<:Complex},
                                op::MHDStabilityOperator;

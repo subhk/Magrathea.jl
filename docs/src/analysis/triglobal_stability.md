@@ -1,5 +1,8 @@
 # Triglobal Stability Analysis with Non-Axisymmetric Mean Flow
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](../getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 Triglobal stability analysis handles the most general case: fully three-dimensional basic states with non-axisymmetric (``m \neq 0``) components. This introduces **mode coupling** between perturbations at different azimuthal wavenumbers, requiring simultaneous solution of coupled modes.
 
 !!! note "Mathematical model and validation"
@@ -156,28 +159,7 @@ The sum couples modes ``m`` and ``m - m'`` through basic state component ``m'``.
 
 ## The `BasicState3D` Structure
 
-```julia
-struct BasicState3D{T}
-    lmax_bs::Int
-    mmax_bs::Int
-    Nr::Int
-    r::Vector{T}
-
-    # Temperature: θ̄_ℓm(r) indexed by (ℓ, m)
-    theta_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    dtheta_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-
-    # Velocity components: ū_r,ℓm(r), ū_θ,ℓm(r), ū_φ,ℓm(r)
-    ur_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    utheta_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    uphi_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-
-    # Velocity derivatives
-    dur_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    dutheta_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-    duphi_dr_coeffs::Dict{Tuple{Int,Int}, Vector{T}}
-end
-```
+See [`BasicState3D`](@ref) in the API reference for the current fields. Temperature and component dictionaries use radial collocation values. The `flow` field stores the authoritative divergence-free vector representation; use [`mean_flow_velocity`](@ref) for physical velocity components.
 
 ### Reality Conditions
 
@@ -191,9 +173,9 @@ This is automatically enforced when constructing `BasicState3D` from physical da
 
 ## Creating 3D Basic States
 
-### v2.0 Unified API
+### Unified API
 
-In v2.0 you build an `OnsetParams`, construct a 3-D basic state with `basic_state(params; mode=…)`, wrap both in a `TriglobalProblem`, and call `solve`. Call `estimate_size` before large triglobal solves:
+With the unified API you build an `OnsetParams`, construct a 3-D basic state with `basic_state(params; mode=…)`, wrap both in a `TriglobalProblem`, and call `solve`. Call `estimate_size` before large triglobal solves:
 
 ```julia
 using Magrathea
@@ -213,26 +195,24 @@ println("Growth rate: ", result.growth_rate)
 println("Frequency:   ", result.frequency)
 ```
 
-For the self-consistent solver with full geostrophic balance:
+For the self-consistent nonlinear steady solver:
 
 ```julia
 bs3d = basic_state(params; mode=:selfconsistent, max_iterations=50)
 result = solve(TriglobalProblem(params, bs3d, -5:5); nev=6)
 ```
 
-### The Full Geostrophic Basic State
+### The Full Mean Velocity
 
-For non-axisymmetric basic states, Magrathea.jl computes the **complete velocity field** including:
+The mean flow is a divergence-free vector-harmonic field with radial,
+meridional, and zonal components. The viscous Coriolis solve enforces both
+walls and couples spherical degrees. Axisymmetric states can also have
+meridional circulation. The nonlinear solver additionally couples azimuthal
+orders through momentum and thermal transport.
 
-1. **Zonal flow** ``\bar{u}_\phi`` from thermal wind balance (∂T/∂θ forcing)
-2. **Meridional circulation** ``\bar{u}_\theta``, ``\bar{u}_r`` from the φ-component of thermal wind (∂T/∂φ forcing)
-
-The key insight is that for **m ≠ 0** modes:
-- ``\partial \bar{T}/\partial \phi \propto im \bar{T} \neq 0`` drives meridional flow
-- The operator ``(\hat{z}\cdot\nabla)`` couples modes ``\ell`` to ``\ell\pm1``
-- A block-tridiagonal solve is required for full accuracy
-
-See [Basic States: Full Geostrophic Balance](../basic_states.md#full-geostrophic-balance-with-meridional-circulation) for detailed theory.
+Use `mean_flow_velocity` to reconstruct physical components. See
+[Basic States](../basic_states.md#Full-Geostrophic-Balance-with-Meridional-Circulation)
+for the native representation and convergence requirements.
 
 ### Method 1: Self-Consistent Solver (Recommended)
 
@@ -463,7 +443,7 @@ println("  Drift frequency: ω = $ω₁")
 println("  Status: ", σ₁ > 0 ? "UNSTABLE" : "STABLE")
 ```
 
-**v2.0 API** — use `TriglobalProblem` + `solve`. Always call `estimate_size` before large triglobal solves:
+**unified API** — use `TriglobalProblem` + `solve`. Always call `estimate_size` before large triglobal solves:
 
 ```julia
 # Build params + a 3-D basic state
@@ -480,7 +460,7 @@ estimate_size(problem)
 # Solve
 result = solve(problem; nev=12)
 
-println("\nLeading triglobal mode (v2.0):")
+println("\nLeading triglobal mode (unified API):")
 println("  Growth rate: σ = ", result.growth_rate)
 println("  Drift frequency: ω = ", result.frequency)
 println("  Status: ", result.growth_rate > 0 ? "UNSTABLE" : "STABLE")

@@ -10,12 +10,12 @@ Named for the planet-building world in *The Hitchhiker's Guide to the Galaxy* �
 
 ## Features
 
-- **Ultra-sparse spectral discretization** — banded ultraspherical operators
+- **Spectral discretization** — Chebyshev collocation for hydrodynamic stability and ultraspherical operators for MHD
 - **Three analysis modes** — onset convection, biglobal (axisymmetric mean flow), and triglobal (non-axisymmetric, mode-coupled) stability
-- **Spurious-free eigenvalues** — a banded Galerkin (BC-recombined) discretization for the onset, hydro, and insulating-axial-MHD pencils eliminates the spurious-mode swarm produced by the tau method
+- **Boundary enforcement** — hydrodynamic constraint reduction, insulating-axial-MHD Galerkin recombination, and MHD tau constraints for dipole or conducting walls
 - **Unified solver API** — one `solve(problem)` entry point across all problem types, returning a `StabilityResult`.
 - **Critical-parameter search** — automated bracketing for critical Rayleigh numbers
-- **Flexible basic states** — conductive, meridional, non-axisymmetric, and self-consistent (advection-balanced) states
+- **Flexible basic states** — conductive, meridional, non-axisymmetric, and self-consistent nonlinear momentum/thermal steady states
 
 ## Installation
 
@@ -26,7 +26,7 @@ using Pkg
 Pkg.add(url="https://github.com/subhk/Magrathea.jl")
 ```
 
-Requires Julia 1.10 or newer.
+See `Project.toml` for Julia compatibility (Julia 1.9 or later in the 1.x series). Sparse eigensolves require complex PETSc/SLEPc libraries and the `PetscWrap`/`SlepcWrap` weak dependencies; follow the [solver setup](https://subhk.github.io/Magrathea.jl/dev/getting_started/#SLEPc-setup).
 
 ## Quick Start
 
@@ -34,6 +34,9 @@ Onset of rotating convection — find the leading eigenvalues at fixed parameter
 
 ```julia
 using Magrathea
+import PetscWrap, SlepcWrap
+slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
+            "-st_pc_factor_mat_solver_type mumps")
 
 # Ekman, Prandtl, Rayleigh, radius ratio, azimuthal wavenumber, truncations
 params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35, m=4, lmax=30, Nr=64)
@@ -50,7 +53,7 @@ result.eigenvalues              # full returned spectrum
 Find the critical Rayleigh number for the onset of convection:
 
 ```julia
-Ra_c = find_critical_Ra(OnsetProblem(params))
+Ra_c, ω_c, eigenvector_c = find_critical_Ra(OnsetProblem(params))
 ```
 
 ## Analysis Modes
@@ -60,7 +63,7 @@ Ra_c = find_critical_Ra(OnsetProblem(params))
 | Onset convection | `OnsetProblem` | none (conductive) | fundamental onset, no background flow |
 | Biglobal | `BiglobalProblem` | axisymmetric ($m=0$) | latitudinal structure, modes decoupled |
 | Triglobal | `TriglobalProblem` | non-axisymmetric | longitudinal structure, modes coupled via Gaunt coefficients |
-| MHD | `MHDProblem` | background magnetic field | magnetoconvection / kinematic dynamo |
+| MHD | `MHDProblem` | none; imposed magnetic field | magnetoconvection about a conductive state |
 
 Biglobal and triglobal analyses run on a basic state built with `basic_state`:
 
@@ -75,11 +78,10 @@ result = solve(BiglobalProblem(params, bs))
 
 ## MHD Example
 
-Magnetoconvection with an axial background field (insulating magnetic boundaries, the default, route through the spurious-free Galerkin solver):
+Magnetoconvection with an axial background field (insulating magnetic boundaries, the default, route through the boundary-recombined Galerkin solver):
 
 ```julia
-using Magrathea
-
+# In the initialized SLEPc session above:
 params = MHDParams(E=4.225e-4, Pr=1.0, Pm=1.0, Ra=55.905, ricb=0.35,
                    m=4, lmax=8, N=32,
                    B0_type=axial, B0_amplitude=1.0, Le=1e-3)
@@ -89,3 +91,5 @@ result.growth_rate
 ```
 
 A background field requires `Le > 0`. Dipole fields and perfectly-conducting / finite-conductivity magnetic boundaries are solved via the tau method.
+
+Call `slepc_finalize!()` after the final solve in a session. See the [source map](https://subhk.github.io/Magrathea.jl/dev/codebase_structure/) for the current implementation paths.

@@ -109,6 +109,9 @@ where ∇² in spherical harmonics becomes:
     d²/dr² + (2/r)d/dr - ℓ(ℓ+1)/r² = f_ℓm(r)
 
 Returns T̄_ℓm(r) and ∂T̄_ℓm/∂r.
+Flux values denote the radial derivative, not outward-normal heat flux.
+For ℓ=0, two flux conditions leave the temperature constant undetermined;
+this helper requires at least one fixed-temperature boundary in that case.
 """
 function solve_poisson_mode(
     ℓ::Int, m::Int,
@@ -121,6 +124,11 @@ function solve_poisson_mode(
     inner_bc::Symbol = :fixed_temperature
 ) where T<:Real
 
+    inner_bc in (:fixed_temperature, :fixed_flux) &&
+        outer_bc in (:fixed_temperature, :fixed_flux) ||
+        throw(ArgumentError("Thermal boundaries must be :fixed_temperature or :fixed_flux"))
+    ℓ == 0 && inner_bc == outer_bc == :fixed_flux && throw(ArgumentError(
+        "The degree-zero Poisson problem with two flux boundaries needs a compatibility condition and a temperature gauge. Specify at least one fixed-temperature boundary."))
     Nr = length(r)
 
     # Build the dense radial Laplacian directly.  The equivalent Diagonal-based

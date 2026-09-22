@@ -49,6 +49,8 @@ conduction_basic_state
 meridional_basic_state
 nonaxisymmetric_basic_state
 basic_state_selfconsistent
+nonaxisymmetric_basic_state_selfconsistent
+mean_flow_velocity
 create_thermal_wind_basic_state
 BasicState
 BasicState3D
@@ -68,4 +70,17 @@ assemble_matrices
 ```@docs
 MHDStabilityOperator
 assemble_mhd_matrices
+```
+
+## Eigensolver lifecycle and field reconstruction
+
+Sparse eigensolves require the [SLEPc setup](getting_started.md#SLEPc-setup).
+
+```@docs
+slepc_init!
+slepc_finalize!
+solve_eigenvalue_problem
+perturbation_velocity
+perturbation_temperature
+perturbation_magnetic
 ```

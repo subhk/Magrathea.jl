@@ -26,7 +26,7 @@
 Background magnetic field types supported by the code.
 
 Options:
-- `:none` - No background field (kinematic dynamo)
+- `:none` - No background field (hydrodynamic stability)
 - `:axial` - Uniform axial field B₀ = B₀ẑ
 - `:dipole` - Dipolar field B₀ ~ (2cosθ r̂ + sinθ θ̂)/r³
 """
@@ -69,6 +69,7 @@ MHD linear stability analysis or dynamo onset calculations.
 
 - `Le::T`: **Lehnert number** = B₀/(√(μρ)ΩL)
   - Measure of background magnetic field strength
+  - Must be finite and nonnegative; imposed fields require Le > 0.
   - Le = 0: Pure hydrodynamic case
   - Typical values: 10⁻⁴ to 10⁻² for planetary dynamos
 
@@ -94,15 +95,15 @@ MHD linear stability analysis or dynamo onset calculations.
   - symm = 0: Include both parities (full system)
   - Affects mode parity selection
 
-- `N::Int`: **Number of radial collocation points**
-  - Must be even and ≥ 4
+- `N::Int`: **Maximum radial Chebyshev degree** (`N+1` coefficients)
+  - Must be even and ≥ 8
   - Determines radial resolution
   - Typical values: 24-64 for onset, 128+ for turbulence
 
 # Background Magnetic Field
 
 - `B0_type::BackgroundField`: Type of imposed field
-  - `no_field`: Pure hydrodynamic (kinematic dynamo)
+  - `no_field`: Pure hydrodynamic stability; no magnetic perturbation blocks
   - `axial`: Uniform B₀ = B₀ẑ (simplest MHD case)
   - `dipole`: Dipolar field (requires ricb > 0)
 
@@ -118,7 +119,7 @@ MHD linear stability analysis or dynamo onset calculations.
 
 ## Mechanical (Velocity)
 - `bci::Int`: Inner core mechanical BC
-  - 0 = **stress-free**: u = 0, ∂²u/∂r² = 0 (poloidal); ∂v/∂r = 0 (toroidal)
+  - 0 = **stress-free**: u = 0, ∂²u/∂r² = 0 (poloidal); v - r∂v/∂r = 0 (toroidal)
   - 1 = **no-slip**: u = 0, ∂u/∂r = 0 (poloidal); v = 0 (toroidal)
 
 - `bco::Int`: Outer boundary (CMB) mechanical BC
@@ -137,15 +138,15 @@ MHD linear stability analysis or dynamo onset calculations.
 ## Magnetic
 - `bci_magnetic::Int`: Inner core magnetic BC
   - 0 = **insulating**: B·n̂ continuous, no currents
-  - 1 = **conducting** (finite conductivity): uses Bessel functions
+  - 1 = **conducting**: a stationary core with the same diffusivity and permeability as the fluid; its regular magnetic perturbations evolve with the eigenmode
   - 2 = **perfect conductor**: tangential E = 0
 
 - `bco_magnetic::Int`: Outer boundary (CMB) magnetic BC
   - 0 = **insulating**: Most common (electrically insulating mantle)
-  - 1,2 = conducting/perfect (rarely used at CMB)
+  - 2 = **perfect conductor**; finite-conductivity mantle (`1`) is unsupported
 
-- `forcing_frequency::T`: Dimensionless forcing frequency (ωτ) used for conducting
-  magnetic boundary conditions (only needed when `bci_magnetic==1` or thin-wall BCs)
+- `forcing_frequency::T`: Legacy keyword, must be zero. The stability eigenfrequency
+  is unknown and is solved simultaneously in the fluid and conducting core.
 
 # Heating Mode
 

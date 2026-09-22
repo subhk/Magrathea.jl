@@ -53,7 +53,7 @@ The radial operators are built on ``r \in [\chi, 1]``, i.e. the **outer radius `
 | Time | ``1/\Omega`` | Rotation period |
 | Velocity | ``\Omega r_o`` | Rotational velocity |
 | Temperature | ``\Delta T`` | Temperature contrast |
-| Pressure | ``\rho_0 \Omega r_o^2`` | Rotational pressure |
+| Pressure | ``\rho_0 \Omega^2 r_o^2`` | Rotational pressure |
 
 This yields the dimensionless parameters:
 
@@ -92,11 +92,13 @@ This yields the dimensionless parameters:
 
 ### Non-Dimensional Equations
 
-After non-dimensionalization:
+For linearization about the conductive state, the implemented gravity profile
+is proportional to radius, ``g(r)=g_o r/r_o``. Using the public shell-thickness
+Rayleigh number gives:
 
 **Momentum:**
 ```math
-\frac{\partial \mathbf{u}}{\partial t} + 2 \hat{\mathbf{z}} \times \mathbf{u} = -\nabla p + E \nabla^2 \mathbf{u} + \frac{Ra \cdot E^2}{Pr} \Theta \hat{\mathbf{r}}
+\frac{\partial \mathbf{u}}{\partial t} + 2 \hat{\mathbf{z}} \times \mathbf{u} = -\nabla p + E \nabla^2 \mathbf{u} + \frac{Ra \cdot E^2}{Pr(1-\chi)^3} r\Theta \hat{\mathbf{r}}
 ```
 
 **Continuity:**
@@ -247,23 +249,59 @@ Where:
 
 ### Mechanical Conditions
 
-**No-slip:** ``\mathbf{u} = 0`` at ``r = r_i, r_o``
+Both walls are impermeable. No-slip also sets both tangential velocities to zero;
+stress-free sets both tangential viscous tractions to zero. The radial formulas
+must use the potential convention of the solver:
 
-In terms of potentials:
-- Poloidal: ``P = 0``, ``\frac{\partial P}{\partial r} = 0``
-- Toroidal: ``T = 0``
+| Potentials | No-slip at each wall | Stress-free at each wall |
+|---|---|---|
+| Onset/MHD, with ``rP`` and ``rT`` inside the curls | ``P=P'=T=0`` | ``P=P''=0``, ``T'-T/r=0`` |
+| Native mean flow, with unit-vector potentials ``p,t`` | ``p=p'=t=0`` | ``p=0``, ``p''-2p'/r=0``, ``t'-2t/r=0`` |
 
-**Stress-free:** Zero tangential stress
-
-In terms of potentials:
-- Poloidal: ``P = 0``, ``\frac{\partial^2 P}{\partial r^2} - \frac{2P}{r^2} = 0``
-- Toroidal: ``\frac{\partial T}{\partial r} - \frac{T}{r} = 0``
+Primes denote physical radial derivatives. For example, the onset poloidal
+radial velocity is ``\ell(\ell+1)P/r`` and its tangential strain amplitude is
+``P''+[\ell(\ell+1)-2]P/r^2``. Impermeability reduces the latter to ``P''``.
+The additional radius factors in the mean-flow table follow from ``p=rP``
+(up to angular normalization). These conditions agree with the
+[standard spherical mechanical conditions](https://magic-sph.github.io/numerics.html#mechanical-boundary-conditions)
+after converting potentials.
 
 ### Thermal Conditions
 
-**Fixed temperature:** ``\Theta = 0`` at boundaries
+Perturbations satisfy ``\Theta=0`` for fixed temperature, or ``\Theta'=0`` for
+fixed flux. Nonzero `flux` values in the boundary APIs mean the **radial temperature
+derivative**, at either wall. Physical outward heat flux is
+``q_n=-\kappa n_r\Theta'``, with ``n_r=-1`` at the inner wall and ``n_r=+1`` at the
+outer wall. Thus a negative outer `flux` corresponds to positive outward heat loss.
 
-**Fixed flux:** ``\frac{\partial \Theta}{\partial r} = 0`` at boundaries
+The steady `solve_poisson_mode` helper rejects degree-zero problems with flux
+specified at both walls: these require compatible forcing/fluxes and a temperature
+gauge. Higher-degree modes can have two flux conditions.
+
+### Magnetic Conditions
+
+For the MHD convention ``\mathbf b=\nabla\times\nabla\times(rf\hat r)+\nabla\times(rg\hat r)``:
+
+| Wall model | Radial conditions |
+|---|---|
+| Insulating inner cavity | ``rf'-\ell f=0``, ``g=0`` |
+| Insulating exterior | ``rf'+(\ell+1)f=0``, ``g=0`` |
+| Stationary perfect conductor, no-slip fluid | ``f=0``, ``g'+g/r=0`` |
+| Equal-diffusivity/permeability stationary conducting core, no-slip fluid | Continuous ``f,f',g,g'`` with diffusion solved in the core |
+
+When the fluid slips, use the full tangential electric field
+``\mathbf E_t=[E_m\nabla\times\mathbf b-\mathbf u\times\mathbf B_0]_t``:
+it vanishes at a perfect conductor and is continuous at a conducting-core
+interface. The toroidal wall equation includes this motional EMF; the other
+component follows from the poloidal induction equation and converges with radial
+resolution. See the [MHD guide](../mhd_user_guide.md#Magnetic-Boundary-Conditions)
+for the core assumptions and supported options.
+
+`test/boundary_physics.jl` independently evaluates polynomial derivatives,
+physical velocity/strain, and electric fields of computed eigenmodes. It checks
+mixed mechanical/thermal walls, both radial orderings, 2D/3D mean flows,
+insulating matching, and radial convergence of the retained magnetic boundary
+harmonics. Conditions on unretained harmonics require angular convergence too.
 
 ## Critical Rayleigh Number
 
@@ -283,7 +321,7 @@ At onset:
 For MHD problems, the magnetic field is similarly decomposed:
 
 ```math
-\mathbf{B} = \nabla \times \nabla \times (f \hat{\mathbf{r}}) + \nabla \times (g \hat{\mathbf{r}})
+\mathbf{B} = \nabla \times \nabla \times (rf \hat{\mathbf{r}}) + \nabla \times (rg \hat{\mathbf{r}})
 ```
 
 Adding the Lorentz force to momentum:
@@ -296,7 +334,7 @@ And the induction equation:
 \frac{\partial \mathbf{B}}{\partial t} = \nabla \times (\mathbf{u} \times \mathbf{B}_0) + E_m \nabla^2 \mathbf{B}
 ```
 
-This doubles the number of field variables: ``(P, T, f, g, \Theta)``.
+This adds two magnetic field variables: ``(P, T, f, g, \Theta)``.
 
 ---
 

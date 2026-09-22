@@ -189,7 +189,8 @@ function operator_thermal_advection(op::MHDStabilityOperator{T}, l::Int) where {
 end
 
 """Row layout of the MHD tau matrix as a Phase-1 index_map: keys `(ℓ, section)` for
-sections `:u,:v,:f,:g,:h` in order, each a contiguous `(N+1)`-row range."""
+sections `:u,:v,:f,:g,:h` in order, followed by `:fi,:gi` for a conducting
+core, each a contiguous `(N+1)`-row range."""
 function _mhd_index_map(op::MHDStabilityOperator)
     n_per_mode = op.params.N + 1
     im = Dict{Tuple{Int,Symbol}, UnitRange{Int}}()
@@ -236,7 +237,9 @@ end
 
 Assemble the full MHD matrices A and B for the generalized eigenvalue problem.
 
-Returns: (A, B, interior_dofs, info)
+Returns: (A, B, interior_dofs, info). The legacy `interior_dofs` identifies
+differential equation rows, not removable coefficient columns. Solve the full
+pencil; deleting the tau rows and corresponding columns destroys the BCs.
 
 # Matrix Structure
 
@@ -295,9 +298,22 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
     B_cols = Int[]
     B_vals = Complex{T}[]
 
+    # Project each fluid residual to its derivative-order ultraspherical basis
+    # before truncating for tau conditions. Fourth-order velocity equations in
+    # a C0 test basis admit artificial growing modes even with correct BC rows.
+    # Unknowns and all endpoint functionals remain Chebyshev coefficients.
+    C4 = _convert_up(T, 0, 4, N)
+    C2 = _convert_up(T, 0, 2, N)
+    shell_rows = (nb_u + nb_v + nb_f + nb_g + nb_h) * n_per_mode
+
     # Helper function to add block to sparse matrix. Shift the COO indices as we
     # push instead of allocating `Is .+ offset` / `Js .+ offset` temporaries.
     function add_block!(rows, cols, vals, block, row_offset, col_offset)
+        if row_offset < nb_u * n_per_mode
+            block = C4 * block
+        elseif row_offset < shell_rows
+            block = C2 * block
+        end
         Is, Js, Vs = findnz(block)
         @inbounds for k in eachindex(Vs)
             grow = Is[k] + row_offset
@@ -347,7 +363,7 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
         # Lorentz force from magnetic field (if Le > 0)
         if Le > 0
             # Coupling from poloidal magnetic field (bpol, section f)
-            for offset in -2:2
+            for offset in (-1, 1)
                 l_coupled = l + offset
                 k_f = findfirst(==(l_coupled), op.ll_f)
                 if k_f !== nothing
@@ -358,7 +374,6 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
             end
 
             # Diagonal: toroidal B at same l (only if such mode exists)
-            # For symm=±1, ll_u and ll_g have different parities, so diagonal coupling doesn't exist
             k_g = findfirst(==(l), op.ll_g)
             if k_g !== nothing
                 lorentz_diag = operator_lorentz_poloidal_diagonal(op, l, Le)
@@ -366,17 +381,6 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
                 add_block!(A_rows, A_cols, A_vals, lorentz_diag, row_base, g_col_base)
             end
 
-            # Off-diagonal: toroidal B at l±1
-            for offset in (-1, 1)
-                l_coupled = l + offset
-                k_coupled = findfirst(==(l_coupled), op.ll_g)
-                if k_coupled !== nothing
-                    g_col_coupled = (nb_u + nb_v + nb_f + k_coupled - 1) * n_per_mode
-
-                    lorentz_off = operator_lorentz_poloidal_offdiag(op, l, m, offset, Le)
-                    add_block!(A_rows, A_cols, A_vals, lorentz_off, row_base, g_col_coupled)
-                end
-            end
         end
 
         # Coriolis off-diagonal: u ↔ v coupling
@@ -425,8 +429,8 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
 
         # Lorentz force from magnetic field (if Le > 0)
         if Le > 0
-            # Coupling from poloidal magnetic field (section f, offsets l-1:l+1)
-            for offset in -1:1
+            # Coupling from poloidal magnetic field (section f, equal degree)
+            for offset in (0,)
                 l_src = l + offset
                 idx_f = findfirst(==(l_src), op.ll_f)
                 idx_f === nothing && continue
@@ -435,8 +439,8 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
                 add_block!(A_rows, A_cols, A_vals, lorentz_from_bpol, row_base, f_col_base)
             end
 
-            # Coupling from toroidal magnetic field (section g, offsets l-2:l+2)
-            for offset in -2:2
+            # Coupling from toroidal magnetic field (section g, offsets l±1)
+            for offset in (-1, 1)
                 l_src = l + offset
                 idx_g = findfirst(==(l_src), op.ll_g)
                 idx_g === nothing && continue
@@ -492,8 +496,8 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
 
             # Induction from velocity field
             if Le > 0
-                # From poloidal velocity u (offsets l-2 ... l+2)
-                for offset in -2:2
+                # From poloidal velocity u (offsets l±1)
+                for offset in (-1, 1)
                     l_src = l + offset
                     idx_u = findfirst(==(l_src), op.ll_u)
                     idx_u === nothing && continue
@@ -503,8 +507,8 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
                     add_block!(A_rows, A_cols, A_vals, induct_from_u, row_base, u_col_base)
                 end
 
-                # From toroidal velocity v (offsets l-1 ... l+1)
-                for offset in -1:1
+                # From toroidal velocity v (equal degree)
+                for offset in (0,)
                     l_src = l + offset
                     idx_v = findfirst(==(l_src), op.ll_v)
                     idx_v === nothing && continue
@@ -547,8 +551,8 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
 
             # Induction from velocity field (if Le > 0)
             if Le > 0
-                # From toroidal velocity v (offsets l-2 ... l+2)
-                for offset in -2:2
+                # From toroidal velocity v (offsets l±1)
+                for offset in (-1, 1)
                     l_src = l + offset
                     idx_v = findfirst(==(l_src), op.ll_v)
                     idx_v === nothing && continue
@@ -557,8 +561,8 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
                     add_block!(A_rows, A_cols, A_vals, induct_v_tor, row_base, v_col_base)
                 end
 
-                # From poloidal velocity u (diagonal and off-diagonal)
-                for offset in (-1, 0, 1)
+                # From poloidal velocity u (equal degree)
+                for offset in (0,)
                     l_coupled = l + offset
                     k_coupled = findfirst(==(l_coupled), op.ll_u)
                     if k_coupled !== nothing

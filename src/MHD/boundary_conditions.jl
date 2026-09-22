@@ -1,5 +1,6 @@
-# All radial equations are in Chebyshev coefficient space. Tau constraints
-# replace the highest residual coefficients, never spatial endpoint rows.
+# Unknowns are Chebyshev coefficients; fluid residuals use derivative-order
+# ultraspherical bases. Tau constraints replace their highest coefficients,
+# never spatial endpoint rows.
 
 """Diffusion in a stationary core of the same diffusivity/permeability as the shell.
 
@@ -17,14 +18,25 @@ end
 
 # Coefficient of the spheroidal part of B0r er×u_h. The wall is impermeable;
 # its tangential electric field is Em curl(b)_h + B0r er×u_h. Project with
-# analytic angular derivatives in the native Y_lm/sqrt(2l+1) convention.
-function _mhd_wall_emf(op::MHDStabilityOperator{T}, lout, lin, section, radius, grid) where T
-    _, ho, vo = _coupling_harmonic(grid, lout, op.params.m)
-    _, hi, vi = _coupling_harmonic(grid, lin, op.params.m)
-    fθ, fφ = section == :u ? (-vi, hi) : (hi, vi)
-    br = op.params.B0_type == dipole ? grid.μ ./ radius^3 : grid.μ
-    factor = T(2π) * sqrt(T(2lout + 1) / T(2lin + 1)) / T(lout * (lout + 1))
-    return factor * sum(grid.w .* br .* (conj.(ho) .* fθ .+ conj.(vo) .* fφ))
+# exact degree-one harmonic identities in the native Y_lm/sqrt(2l+1)
+# convention. Quadrature plus an absolute cutoff leaked forbidden couplings in
+# Float32, particularly when a dipole's r^-3 factor is large at the inner wall.
+function _mhd_wall_emf(op::MHDStabilityOperator{T}, lout, lin, section, radius) where T
+    p = op.params
+    p.B0_type == no_field && return zero(Complex{T})
+    scale = p.B0_type == dipole ? inv(T(radius)^3) : one(T)
+    qo = T(lout * (lout + 1))
+    if section == :u
+        lout == lin || return zero(Complex{T})
+        return Complex{T}(0, -scale * T(p.m) / qo)
+    elseif section == :v
+        abs(lout - lin) == 1 || return zero(Complex{T})
+        qi = T(lin * (lin + 1)); k = max(lout, lin)
+        # ∫ cosθ ∇Yout*·∇Yin = (qo+qi-2)/2 ∫ cosθ Yout* Yin.
+        c = sqrt(T(k^2 - p.m^2)) / T(2lin + 1)
+        return Complex{T}(scale * (qo + qi - 2) * c / (2qo))
+    end
+    throw(ArgumentError("Velocity section must be :u or :v"))
 end
 
 """Shared tau boundary rows and sparse A entries for serial and distributed MHD."""
@@ -65,17 +77,14 @@ function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T
 
     # Nonzero wall slip contributes to electric matching. For no-slip walls
     # u_h=0, so no extra entries are necessary.
-    grid = ((p.bci != 1 && p.bci_magnetic != 0) ||
-            (p.bco != 1 && p.bco_magnetic == 2)) && !isempty(op.ll_g) ?
-        sh_grid(p.lmax + 1, p.m, T) : nothing
     function add_emf!(row, l, side)
         radius = side == :inner ? ri : ro
         mechanical = side == :inner ? p.bci : p.bco
         mechanical == 1 && return
         v, d = side == :inner ? (vi, di) : (vo, do_)
         for (section, ls) in ((:u, op.ll_u), (:v, op.ll_v)), lin in ls
-            c = _mhd_wall_emf(op, l, lin, section, radius, grid)
-            abs(c) <= T(100) * eps(T) && continue
+            c = _mhd_wall_emf(op, l, lin, section, radius)
+            iszero(c) && continue
             add!(row, imap[(lin, section)], c .* (section == :u ? d .+ v ./ radius : v))
         end
     end

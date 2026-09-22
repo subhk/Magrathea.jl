@@ -307,8 +307,8 @@ Therefore, the logarithmic derivative is:
 
 # Application: Conducting Inner Core
 
-For a conducting inner core with finite conductivity σ, the magnetic boundary
-condition couples the field and its derivative through a complex Bessel wavenumber:
+For a prescribed harmonic response proportional to exp(iωt) in a stationary
+conducting core, a regular radial potential is proportional to j_l(kr), with:
 
 ```math
 k = (1-i)\\sqrt{\\frac{\\omega}{2E_m}}
@@ -318,8 +318,11 @@ where ω is the oscillation frequency and Eₘ is the magnetic Ekman number.
 
 The boundary condition becomes:
 ```math
-f(r_i) - k \\cdot \\frac{j'_l(kr_i)}{j_l(kr_i)} \\cdot f'(r_i) = 0
+f'(r_i) - k \\cdot \\frac{j'_l(kr_i)}{j_l(kr_i)} \\cdot f(r_i) = 0
 ```
+
+This frequency-dependent relation is for forced problems. The MHD stability
+solver instead evolves core coefficients with the unknown eigenvalue.
 
 # Numerical Stability
 

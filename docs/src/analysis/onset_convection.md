@@ -1,5 +1,8 @@
 # Onset Convection with No Mean Flow
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](../getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 This section covers the classical linear stability analysis for the onset of thermal convection in rotating spherical shells without any background mean flow. This is the simplest and most fundamental case, where the base state consists only of a conductive temperature profile.
 
 ## Physical Problem
@@ -25,18 +28,22 @@ The conductive base state satisfies ``\nabla^2 \bar{T} = 0`` with fixed temperat
 where ``\chi = r_i/r_o`` is the radius ratio. The temperature gradient:
 
 ```math
-\frac{d\bar{T}}{dr} = -\frac{r_i r_o}{(r_o - r_i) r^2} = -\frac{\chi}{(1-\chi)^2} \frac{1}{r^2}
+\frac{d\bar{T}}{dr} = -\frac{r_i r_o}{(r_o - r_i) r^2} = -\frac{\chi}{1-\chi} \frac{1}{r^2}
 ```
 
-drives convection when ``Ra`` exceeds the critical value.
+where the final expression uses ``r_o=1``. This gradient drives convection
+when ``Ra`` exceeds the critical value.
 
 ### Linearized Perturbation Equations
 
 We consider small perturbations ``(\mathbf{u}', p', \Theta')`` about the base state, where ``\Theta = T - \bar{T}``. The linearized non-dimensional equations are:
 
+The operators use gravity proportional to radius and convert the public
+shell-thickness Rayleigh number to outer-radius units.
+
 **Momentum equation:**
 ```math
-\frac{\partial \mathbf{u}'}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u}' = -\nabla p' + E \nabla^2 \mathbf{u}' + \frac{Ra \cdot E^2}{Pr} \Theta' \hat{\mathbf{r}}
+\frac{\partial \mathbf{u}'}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u}' = -\nabla p' + E \nabla^2 \mathbf{u}' + \frac{Ra \cdot E^2}{Pr(1-\chi)^3} r\Theta' \hat{\mathbf{r}}
 ```
 
 **Energy equation:**
@@ -138,13 +145,13 @@ The critical Rayleigh number ``Ra_c`` is the minimum ``Ra`` at which convection 
 
 ```julia
 # Search for critical Rayleigh number
-Ra_c, ω_c, eigvec = find_critical_rayleigh(
+Ra_c, ω_c, eigvec = find_critical_Ra_onset(;
     E = params.E,
     Pr = params.Pr,
     χ = params.χ,
     m = params.m,
     lmax = params.lmax,
-    Nr = params.Nr;
+    Nr = params.Nr,
     Ra_guess = 1e7,
     mechanical_bc = :no_slip,
     thermal_bc = :fixed_temperature,
@@ -165,7 +172,7 @@ function find_global_critical(; E, Pr, χ, lmax, Nr, m_range)
 
     for m in m_range
         try
-            Ra_c, ω_c, _ = find_critical_rayleigh(
+            Ra_c, ω_c, _ = find_critical_Ra_onset(;
                 E = E, Pr = Pr, χ = χ, m = m,
                 lmax = max(lmax, m + 10),
                 Nr = Nr,
@@ -401,7 +408,7 @@ for m in m_range
     @printf("m = %2d: ", m)
 
     try
-        Ra_c, ω_c, eigvec = find_critical_rayleigh(
+        Ra_c, ω_c, eigvec = find_critical_Ra_onset(;
             E = E, Pr = Pr, χ = χ, m = m,
             lmax = max(lmax, m + 10),
             Nr = Nr,
@@ -445,14 +452,14 @@ end
 println("\nResults saved to outputs/")
 ```
 
-## v2.0 Complete Example
+## Unified API Complete Example
 
-The v2.0 API replaces `solve_onset_problem(...)` and `find_growth_rate(eigenvalues)` with a unified `solve` call and structured result accessors:
+The unified API replaces `solve_onset_problem(...)` and `find_growth_rate(eigenvalues)` with a unified `solve` call and structured result accessors:
 
 ```julia
 #!/usr/bin/env julia
-# onset_convection_v2.jl
-# v2.0-style onset analysis using OnsetProblem + solve
+# onset_convection_unified.jl
+# Unified onset analysis using OnsetProblem + solve
 
 using Magrathea
 using Printf
@@ -462,7 +469,7 @@ Pr = 1.0
 χ  = 0.35
 
 println("="^60)
-println("Onset Convection Analysis — v2.0 API")
+println("Onset Convection Analysis — unified API")
 println("="^60)
 
 results = []
@@ -489,7 +496,7 @@ valid = filter(r -> isfinite(r.growth_rate), results)
 if !isempty(valid)
     critical = argmax(r -> r.growth_rate, valid)
     println("\n" * "="^60)
-    println("MOST UNSTABLE MODE (v2.0)")
+    println("MOST UNSTABLE MODE (unified API)")
     @printf("  m = %d, σ = %.6e, ω = %+.6f\n",
             critical.m, critical.growth_rate, critical.frequency)
 end

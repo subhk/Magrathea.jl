@@ -1,18 +1,21 @@
 # Magnetohydrodynamic Extension
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 <div class="magrathea-hero">
   <div class="magrathea-eyebrow">Magnetohydrodynamics</div>
   <h1>Stability of rotating, conducting fluids in magnetic fields.</h1>
   <p>
     The MHD module studies the linear stability of conducting fluids under rotation,
-    thermal gradients, and imposed magnetic fields &mdash; for planetary dynamos,
+    thermal gradients, and imposed magnetic fields &mdash; for rotating magnetoconvection,
     stellar convection, and laboratory MHD.
   </p>
 </div>
 
 ## Overview
 
-The MHD submodule (`Magrathea.MHD`) extends the hydrodynamic solver with:
+The MHD implementation in `Magrathea` extends the hydrodynamic solver with:
 
 - **Lorentz force**: Magnetic field effects on fluid motion
 - **Induction equation**: Velocity effects on magnetic field evolution
@@ -21,6 +24,22 @@ The MHD submodule (`Magrathea.MHD`) extends the hydrodynamic solver with:
 - **Magnetic boundary conditions**: Insulating, conducting, and perfect conductor options
 
 ## Physical Problem
+
+The solver linearizes about a **motionless conductive state** with a prescribed,
+current-free axial or dipolar field. It does not couple the hydrodynamic nonlinear
+mean-flow solver into MHD; explicit `MHDProblem.basic_state` objects are rejected.
+`no_field` is hydrodynamic stability, with no magnetic degrees of freedom.
+
+Both imposed fields have spherical-harmonic degree one. Same-type poloidal or
+toroidal magnetic/velocity couplings change degree by ±1; mixed-type couplings
+preserve degree. Consequently `symm=0` is the direct sum of the two parity sectors.
+
+Native potentials use ``\mathbf{b}=\nabla\times\nabla\times(rf\hat{\mathbf r})+\nabla\times(rg\hat{\mathbf r})`` and harmonics ``Y_l^m/\sqrt{2l+1}``.
+The reconstruction routines use this convention for velocity, magnetic field,
+and temperature. `N` is the maximum Chebyshev degree (`N+1` coefficients).
+`Le` sets the field strength; `B0_amplitude` is a legacy display tag and does not
+rescale the field.
+
 
 ### Governing Equations
 
@@ -106,10 +125,8 @@ params = MHDParams(
 )
 
 # Solve via the high-level API.
-# For no-field (hydro) and axial-field MHD, solve() uses a tau-free
-# ultraspherical-Galerkin assembly: spurious-free, so the default which=:LR picks
-# the physical mode with no σ-targeting. (The dipole case routes through the
-# Chebyshev-tau method, whose spurious modes require targeting, e.g. sigma=0.0.)
+# Hydro and axial fields with insulating walls use Galerkin assembly.
+# Dipole fields and conducting walls use coefficient-space tau assembly.
 result = solve(MHDProblem(params); nev=10, which=:LR)
 
 eigenvalues = result.eigenvalues
@@ -130,7 +147,7 @@ println(σ_lead > 0 ? "System is UNSTABLE" : "System is STABLE")
 | `Pr` | Float64 | Prandtl number |
 | `Pm` | Float64 | Magnetic Prandtl number |
 | `Ra` | Float64 | Rayleigh number |
-| `Le` | Float64 | Lehnert number (0 for kinematic dynamo) |
+| `Le` | Float64 | Lehnert number (0 for hydrodynamics) |
 | `ricb` | Float64 | Inner core radius ratio |
 | `m` | Int | Azimuthal wavenumber |
 | `lmax` | Int | Maximum spherical harmonic degree |
@@ -140,7 +157,7 @@ println(σ_lead > 0 ? "System is UNSTABLE" : "System is STABLE")
 
 ```julia
 @enum BackgroundField begin
-    no_field    # Kinematic dynamo (Le = 0)
+    no_field    # Hydrodynamics (Le = 0)
     axial       # Uniform axial field B₀ = B₀ẑ
     dipole      # Dipolar field B₀ ∝ (2cosθ r̂ + sinθ θ̂)/r³
 end
@@ -167,8 +184,14 @@ end
 | Value | Type | Condition | Use Case |
 |-------|------|-----------|----------|
 | 0 | Insulating | ``(l+1)f + r f' = 0`` (CMB), ``l f - r f' = 0`` (ICB) | Earth's mantle |
-| 1 | Conducting (finite) | Complex BC with skin depth | Conducting boundaries |
-| 2 | Perfect conductor | ``f = 0``, ``E_m(-f'' - 2f'/r + Lf/r^2) = 0`` | Earth's inner core |
+| 1 | Conducting core | Evolving regular core field, matched to the shell | Inner boundary only; equal diffusivity/permeability |
+| 2 | Perfect conductor | ``f=0``, tangential electric field zero | Ideal stationary conducting wall |
+
+For no-slip perfect-conductor walls the toroidal condition is ``g'+g/r=0``.
+For stress-free walls the code includes the tangential ``\mathbf{u}\times\mathbf{B}_0``
+contribution. Conducting-core matching is described in the [user guide](mhd_user_guide.md).
+`forcing_frequency` must be zero; `bco_magnetic=1` is rejected because a conducting
+mantle model is not implemented.
 
 ## Background Magnetic Fields
 
@@ -191,7 +214,7 @@ params = MHDParams(
 
 Dipolar field (requires inner core):
 ```math
-\mathbf{B}_0 = B_0 \frac{1}{r^3} (2\cos\theta \hat{\mathbf{r}} + \sin\theta \hat{\boldsymbol{\theta}})
+\mathbf{B}_0 = \frac{1}{2r^3} (2\cos\theta \hat{\mathbf{r}} + \sin\theta \hat{\boldsymbol{\theta}})
 ```
 
 ```julia
@@ -212,8 +235,8 @@ The MHD eigenvalue problem has block structure:
 
 ```math
 \begin{pmatrix}
-A_{uu} & A_{uv} & 0 & A_{uf} & A_{u\Theta} \\
-A_{vu} & A_{vv} & A_{vf} & 0 & 0 \\
+A_{uu} & A_{uv} & A_{uf} & A_{ug} & A_{u\Theta} \\
+A_{vu} & A_{vv} & A_{vf} & A_{vg} & 0 \\
 A_{fu} & A_{fv} & A_{ff} & 0 & 0 \\
 A_{gu} & A_{gv} & 0 & A_{gg} & 0 \\
 A_{\Theta u} & 0 & 0 & 0 & A_{\Theta\Theta}
@@ -269,7 +292,7 @@ params = MHDParams(
     bci_magnetic = 0, bco_magnetic = 0,
 )
 
-result = solve(MHDProblem(params); nev = 10, which = :LR)  # no_field ⇒ Galerkin (spurious-free)
+result = solve(MHDProblem(params); nev = 10, which = :LR)  # no_field ⇒ Galerkin
 eigenvalues = result.eigenvalues
 
 println("Growth rate: ", real(eigenvalues[1]), " (expect ≈ 0)")
@@ -295,7 +318,7 @@ for Le in Le_values
         bci_magnetic = 0, bco_magnetic = 0,
     )
 
-    # axial + insulating ⇒ Galerkin (spurious-free); :LR picks the physical mode
+    # axial + insulating ⇒ Galerkin; :LR picks the physical mode
     eigenvalues = solve(MHDProblem(params); nev = 5, which = :LR).eigenvalues
 
     push!(growth_rates, real(eigenvalues[1]))
@@ -305,7 +328,7 @@ end
 
 **Physical insight**: Increasing ``Le`` stabilizes convection due to magnetic tension.
 
-### Case 3: Earth-like Configuration (Perfect Conductor Inner Core)
+### Case 3: Ideal Perfect-Conductor Inner Boundary
 
 ```julia
 params = MHDParams(
@@ -401,7 +424,7 @@ params = MHDParams(
     heating = :differential,
 )
 
-# Solve (no_field/axial + insulating ⇒ tau-free Galerkin, spurious-free)
+# Solve (no_field/axial + insulating ⇒ tau-free Galerkin)
 result = solve(MHDProblem(params); nev = 10, which = :LR)
 eigenvalues  = result.eigenvalues
 eigenvectors = result.eigenvectors

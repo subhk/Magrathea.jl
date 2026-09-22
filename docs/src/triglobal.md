@@ -1,5 +1,8 @@
 # Tri-Global Instability Analysis
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 <div class="magrathea-hero">
   <div class="magrathea-eyebrow">Mode coupling</div>
   <h1>3-D instabilities across coupled azimuthal wavenumbers.</h1>

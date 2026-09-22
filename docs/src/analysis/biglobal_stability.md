@@ -1,5 +1,8 @@
 # Biglobal Stability Analysis with Axisymmetric Mean Flow
 
+!!! note "Eigensolver setup"
+    Eigenvalue examples assume the [SLEPc setup](../getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
+
 Biglobal stability analysis extends the classical onset problem by including an axisymmetric (``m=0``) background flow. This captures scenarios where differential rotation, thermal wind, or imposed zonal jets modify the stability characteristics of the system.
 
 ## Physical Motivation
@@ -26,37 +29,22 @@ Biglobal analysis is appropriate when:
 
 ### Base State Structure
 
-The axisymmetric base state consists of:
-
-**Temperature field:**
-
-```math
-\overline{T}(r, \theta) = \overline{T}_0(r) + \sum_{\ell=2,4,...} \overline{\Theta}_{\ell 0}(r) Y_\ell^0(\theta)
-```
-
-**Zonal flow:**
-
-```math
-\overline{u}_\phi(r, \theta) = \sum_{\ell=1,3,...} \overline{u}_{\phi,\ell 0}(r) Y_\ell^0(\theta)
-```
-
-The zonal flow has different parity than temperature: odd-``\ell`` for ``\overline{u}_\phi`` and even-``\ell`` for temperature perturbations (for equatorially symmetric basic states).
+An axisymmetric basic state has temperature and all three velocity components
+independent of longitude. Viscosity and the wall conditions generally produce
+meridional circulation even when the boundary forcing has only `m=0` modes.
+The native velocity representation uses vector spherical harmonics;
+scalar component projections do not have the same finite harmonic support.
 
 ### Thermal Wind Balance
 
-When temperature varies with latitude, geostrophic balance requires a zonal flow. The thermal wind equation:
+The noniterated `:meridional` constructor solves Stokes–Coriolis momentum
+balance with a conductive temperature, enforcing both mechanical boundaries.
+Thermal-wind balance is an interior approximation, not the complete boundary
+value problem. The self-consistent constructor also solves thermal transport
+and includes nonlinear mean-flow inertia by default.
 
-```math
-2\Omega \cos\theta \frac{\partial \overline{u}_\phi}{\partial z} = -\frac{g \alpha}{r} \frac{\partial \overline{T}}{\partial \theta}
-```
-
-In spherical coordinates with our non-dimensionalization:
-
-```math
-2 \cos\theta \frac{\partial \overline{u}_\phi}{\partial r} = -\frac{Ra \cdot E^2}{Pr \cdot r} \frac{\partial \overline{\Theta}}{\partial \theta}
-```
-
-This relates the vertical shear of zonal flow to the horizontal temperature gradient.
+See [mean-state equations](../basic_states.md#Thermal-Wind-Balance) and
+[nonlinear steady states](../basic_states.md#Self-Consistent-Basic-States-with-Advection).
 
 ### Modified Linearized Equations
 
@@ -64,12 +52,12 @@ With an axisymmetric basic state ``(\overline{\mathbf{u}}, \overline{T})``, the 
 
 **Momentum:**
 ```math
-\frac{\partial \mathbf{u}'}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u}' + \underbrace{(\mathbf{u}' \cdot \nabla)\overline{\mathbf{u}} + (\overline{\mathbf{u}} \cdot \nabla)\mathbf{u}'}_{\text{advection by/of mean flow}} = -\nabla p' + E \nabla^2 \mathbf{u}' + \frac{Ra \cdot E^2}{Pr} \Theta' \hat{\mathbf{r}}
+\frac{\partial \mathbf{u}'}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u}' + \underbrace{(\mathbf{u}' \cdot \nabla)\overline{\mathbf{u}} + (\overline{\mathbf{u}} \cdot \nabla)\mathbf{u}'}_{\text{advection by/of mean flow}} = -\nabla p' + E \nabla^2 \mathbf{u}' + \frac{Ra \cdot E^2}{Pr(1-\chi)^3} r\Theta' \hat{\mathbf{r}}
 ```
 
 **Energy:**
 ```math
-\frac{\partial \Theta'}{\partial t} + u_r' \frac{\partial \overline{T}}{\partial r} + \underbrace{\mathbf{u}' \cdot \nabla \overline{\Theta} + \overline{\mathbf{u}} \cdot \nabla \Theta'}_{\text{advection terms}} = \frac{E}{Pr} \nabla^2 \Theta'
+\frac{\partial \Theta'}{\partial t} + \mathbf{u}' \cdot \nabla \overline{T} + \overline{\mathbf{u}} \cdot \nabla \Theta' = \frac{E}{Pr} \nabla^2 \Theta'
 ```
 
 ### Azimuthal Mode Decoupling
@@ -86,32 +74,17 @@ This means we can still analyze each ``m`` independently, but the growth rates a
 
 Magrathea.jl uses the `BasicState` type to store axisymmetric background profiles:
 
-```julia
-struct BasicState{T}
-    lmax_bs::Int
-    Nr::Int
-    r::Vector{T}
-    theta_coeffs::Dict{Int, Vector{T}}
-    uphi_coeffs::Dict{Int, Vector{T}}
-    dtheta_dr_coeffs::Dict{Int, Vector{T}}
-    duphi_dr_coeffs::Dict{Int, Vector{T}}
-end
-```
+See [`BasicState`](@ref) in the API reference for the current fields. Temperature and component dictionaries use radial collocation values. The `flow` field stores the authoritative divergence-free vector representation; use [`mean_flow_velocity`](@ref) for physical velocity components.
 
-### Key Properties
-
-| Field | Content | Typical ``\ell`` values |
-|-------|---------|----------------------|
-| `theta_coeffs` | Temperature ``\bar{\Theta}_{\ell 0}(r)`` | 0, 2, 4, 6, ... |
-| `uphi_coeffs` | Zonal flow ``\bar{u}_{\phi,\ell 0}(r)`` | 1, 3, 5, ... |
-| `dtheta_dr_coeffs` | Radial derivative ``d\bar{\Theta}_{\ell 0}/dr`` | 0, 2, 4, 6, ... |
-| `duphi_dr_coeffs` | Radial derivative ``d\bar{u}_{\phi,\ell 0}/dr`` | 1, 3, 5, ... |
+The generated state's `flow` field carries the full velocity used in the
+linearization. The thermal gradient, velocity advection, and velocity shear
+are included through `src/Stability/mean_flow_coupling.jl`.
 
 ## Creating Basic States
 
-### v2.0 Unified API
+### Unified API
 
-In v2.0, use `basic_state(params; mode=...)` instead of constructing `ChebyshevDiffn` manually:
+With the unified API, use `basic_state(params; mode=...)` instead of constructing `ChebyshevDiffn` manually:
 
 ```julia
 using Magrathea
@@ -124,7 +97,7 @@ bs = basic_state(params; mode=:conduction)
 # Meridional thermal wind
 bs = basic_state(params; mode=:meridional, amplitude=0.1)
 
-# Solve with v2.0 API
+# Solve with unified API
 result = solve(BiglobalProblem(params, bs); nev=6)
 println("Growth rate: ", result.growth_rate)
 println("Frequency:   ", result.frequency)
@@ -178,79 +151,22 @@ This generates:
 1. **Temperature**: ``\bar{\Theta}_{20}(r) \cdot Y_2^0(\theta)`` perturbation
 2. **Zonal flow**: ``\bar{u}_\phi`` from thermal wind integration
 
-### Method 3: Manual Construction
+### Custom Boundary Patterns and Imported States
 
-For importing data from simulations or custom profiles:
-
-```julia
-# Initialize
-Nr = 64
-lmax_bs = 6
-r = cd.x
-
-# Create coefficient dictionaries
-theta_coeffs = Dict{Int, Vector{Float64}}()
-dtheta_dr_coeffs = Dict{Int, Vector{Float64}}()
-uphi_coeffs = Dict{Int, Vector{Float64}}()
-duphi_dr_coeffs = Dict{Int, Vector{Float64}}()
-
-# Set temperature profile (example: Y₂₀ variation)
-theta_coeffs[0] = conduction_profile.(r, χ)  # ℓ=0 (mean)
-theta_coeffs[2] = 0.1 * gaussian_profile.(r)  # ℓ=2 perturbation
-
-# Compute derivatives
-dtheta_dr_coeffs[0] = cd.D1 * theta_coeffs[0]
-dtheta_dr_coeffs[2] = cd.D1 * theta_coeffs[2]
-
-# Build thermal wind from temperature
-solve_thermal_wind_balance!(uphi_coeffs, duphi_dr_coeffs, theta_coeffs,
-    cd, χ, 1.0, Ra, Pr;
-    mechanical_bc = :no_slip,
-    E = E,
-)
-
-# Ensure all ℓ modes are populated
-for ℓ in 0:lmax_bs
-    theta_coeffs[ℓ] = get(theta_coeffs, ℓ, zeros(Nr))
-    dtheta_dr_coeffs[ℓ] = get(dtheta_dr_coeffs, ℓ, zeros(Nr))
-    uphi_coeffs[ℓ] = get(uphi_coeffs, ℓ, zeros(Nr))
-    duphi_dr_coeffs[ℓ] = get(duphi_dr_coeffs, ℓ, zeros(Nr))
-end
-
-# Construct BasicState
-bs = BasicState(
-    r = r,
-    Nr = Nr,
-    theta_coeffs = theta_coeffs,
-    dtheta_dr_coeffs = dtheta_dr_coeffs,
-    uphi_coeffs = uphi_coeffs,
-    duphi_dr_coeffs = duphi_dr_coeffs,
-    lmax_bs = lmax_bs,
-)
-```
-
-### Method 4: Import from External Codes
+Use the low-level constructor for a prescribed temperature or radial-derivative
+pattern:
 
 ```julia
-using JLD2
-using Interpolations
-
-# Load data from simulation (e.g., Rayleigh, MagIC)
-@load "simulation_output.jld2" T_lm uphi_lm r_sim
-
-# Interpolate to Magrathea.jl grid
-for ℓ in [0, 2, 4]
-    itp = LinearInterpolation(r_sim, T_lm[ℓ])
-    theta_coeffs[ℓ] = itp.(cd.x)
-    dtheta_dr_coeffs[ℓ] = cd.D1 * theta_coeffs[ℓ]
-end
-
-for ℓ in [1, 3]
-    itp = LinearInterpolation(r_sim, uphi_lm[ℓ])
-    uphi_coeffs[ℓ] = itp.(cd.x)
-    duphi_dr_coeffs[ℓ] = cd.D1 * uphi_coeffs[ℓ]
-end
+cd = ChebyshevDiffn(params.Nr, [params.χ, 1.0], 4)
+bs = basic_state(cd, params.χ, params.E, params.Ra, params.Pr;
+    temperature_bc=Y20(0.01), mechanical_bc=params.mechanical_bc)
 ```
+
+For imported states, use the same radial grid, harmonic normalization,
+mechanical boundaries, and temperature convention as the perturbation
+operator. A hand-built scalar zonal dictionary does not recover the missing
+meridional flow. See [Basic States](../basic_states.md) for representation
+and interpolation constraints.
 
 ## Using Basic States in Stability Analysis
 
@@ -466,7 +382,7 @@ for amp in [0.0, 0.1, 0.2]
         )
     end
 
-    Ra_c, ω_c, _ = find_critical_rayleigh(
+    Ra_c, ω_c, _ = find_critical_Ra_biglobal(;
         E = E, Pr = Pr, χ = χ, m = m_test,
         lmax = lmax, Nr = Nr,
         basic_state = bs,
