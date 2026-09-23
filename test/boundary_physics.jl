@@ -229,7 +229,9 @@ end
 @testset "Tangential electric field of computed eigenmodes converges at walls" begin
     for bg in (axial,dipole),inner in (1,2),mechanical in (0,1)
         errors=Float64[]
-        for N in (12,bg==axial ? 24 : 48)
+        # Beyond N≈36 the dipole residual is set by eigenvector rounding, which differs
+        # between BLAS/LAPACK builds; at N=32 it is still truncation error.
+        for N in (12,bg==axial ? 24 : 32)
             op=op_for(B0_type=bg,N=N,bci=mechanical,bco=mechanical,bci_magnetic=inner,bco_magnetic=2)
             _,V=eigenmodes(op);emax=0.;bmax=0.;umax=0.
             for x in eachcol(V),r in (.35,1.)
@@ -250,7 +252,7 @@ end
             push!(errors,emax)
         end
         @test errors[2]<.01errors[1]
-        @test errors[2]<(bg==axial ? 1e-7 : 2e-6)
+        @test errors[2]<(bg==axial ? 1e-7 : 1e-5)
     end
 end
 end # module

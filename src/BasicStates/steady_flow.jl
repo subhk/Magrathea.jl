@@ -16,6 +16,11 @@ struct SolenoidalMeanFlow{T<:Real}
     dt::Dict{Tuple{Int,Int},Vector{T}}
 end
 
+# Julia 1.10 builds `Dict{Any,Any}` from an empty comprehension whose element type
+# it cannot infer; convert such dictionaries to the field types.
+SolenoidalMeanFlow(lmax,mmax,r::Vector{T},p,t,dp,d2p,dt) where T<:Real =
+    SolenoidalMeanFlow{T}(lmax,mmax,r,p,t,dp,d2p,dt)
+
 # Module-level memo caches (`_MEAN_CORIOLIS_CACHE`, `_SH_GRID_CACHE`,
 # `_GAUNT_CACHE`) are shared by all tasks and threads. Look up under the lock,
 # build outside it (builds are expensive and may consult other caches), then
