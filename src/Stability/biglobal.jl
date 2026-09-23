@@ -53,7 +53,8 @@ include advection and shear terms from the basic state.
 - `Nr::Int` - Number of radial points
 - `basic_state::BasicState{T}` - Axisymmetric basic state (required)
 - `mechanical_bc::Symbol` - :no_slip or :stress_free
-- `thermal_bc::Symbol` - :fixed_temperature or :fixed_flux
+- `thermal_bc` - :fixed_temperature or :fixed_flux, or an (inner, outer) pair; the
+  inner wall must be :fixed_temperature because basic states fix it
 - `equatorial_symmetry::Symbol` - :both, :symmetric, or :antisymmetric
 
 # Example
@@ -81,7 +82,7 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
     Nr::Int
     basic_state::BasicState{T}
     mechanical_bc::Symbol = :no_slip
-    thermal_bc::Symbol = :fixed_temperature
+    thermal_bc::ThermalBC = :fixed_temperature
     equatorial_symmetry::Symbol = :both
 
     function BiglobalParams{T}(E, Pr, Ra, χ, m, lmax, Nr, basic_state,
@@ -103,8 +104,8 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
             "Nr must be >= 8 for meaningful resolution, got $Nr"))
         mechanical_bc in (:no_slip, :stress_free) || throw(ArgumentError(
             "mechanical_bc must be :no_slip or :stress_free, got :$mechanical_bc"))
-        thermal_bc in (:fixed_temperature, :fixed_flux) || throw(ArgumentError(
-            "thermal_bc must be :fixed_temperature or :fixed_flux, got :$thermal_bc"))
+        _check_thermal_bc(thermal_bc)
+        _check_basic_state_thermal_bc(thermal_bc, basic_state)
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         basic_state.Nr == Nr || throw(ArgumentError(
@@ -197,8 +198,9 @@ This drives a zonal flow through thermal wind balance:
 - `amplitude::Real` - Amplitude of Y_20 boundary variation (default: 0.1)
 - `lmax_bs::Int` - Maximum ℓ for basic state (default: 6)
 - `mechanical_bc::Symbol` - Boundary conditions (default: :no_slip)
-- `thermal_bc::Symbol` - Thermal boundary conditions (default: :fixed_temperature)
-- `outer_flux_mean::Real` - Mean outer flux for fixed-flux states
+- `thermal_bc::Symbol` - Outer thermal boundary condition (default: :fixed_temperature)
+- `outer_flux_mean::Real` - Mean outer ∂θ̄/∂r for fixed-flux states (default: the
+  conduction value `-χ/(1-χ)`)
 - `outer_flux_Y20::Real` - Y20 outer flux for fixed-flux states
 
 # Returns
@@ -222,7 +224,7 @@ function create_thermal_wind_basic_state(χ::T, E::T, Ra::T, Pr::T, Nr::Int;
                                           lmax_bs::Int=6,
                                           mechanical_bc::Symbol=:no_slip,
                                           thermal_bc::Symbol=:fixed_temperature,
-                                          outer_flux_mean::T=zero(T),
+                                          outer_flux_mean::T=-χ/(one(T)-χ),
                                           outer_flux_Y20::T=zero(T)) where T<:Real
     cd = ChebyshevDiffn(Nr, [χ, one(T)], 4)
     bs = meridional_basic_state(cd, χ, E, Ra, Pr, lmax_bs, amplitude;
@@ -399,7 +401,7 @@ end
 
 
 function _biglobal_rayleigh_kwargs(mechanical_bc::Symbol,
-                                    thermal_bc::Symbol,
+                                    thermal_bc::ThermalBC,
                                     equatorial_symmetry::Symbol,
                                     nev::Int,
                                     basic_state,
@@ -466,7 +468,7 @@ function find_critical_Ra_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
                                     growth_tol::Real=tol,
                                     Ra_bracket::Tuple{<:Real,<:Real}=(Ra_guess/10, Ra_guess*10),
                                     mechanical_bc::Symbol=:no_slip,
-                                    thermal_bc::Symbol=:fixed_temperature,
+                                    thermal_bc::ThermalBC=:fixed_temperature,
                                     equatorial_symmetry::Symbol=:both,
                                     nev::Int=6,
                                     backend::Symbol=:slepc,
@@ -534,7 +536,7 @@ This is useful for understanding how the thermal wind affects stability:
 function compare_onset_vs_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int, Nr::Int, Ra::Real,
                                     basic_state_amplitude::Real=0.1,
                                     mechanical_bc::Symbol=:no_slip,
-                                    thermal_bc::Symbol=:fixed_temperature,
+                                    thermal_bc::ThermalBC=:fixed_temperature,
                                     verbose::Bool=true)
     T = float(promote_type(typeof(E), typeof(Pr), typeof(χ), typeof(Ra), typeof(basic_state_amplitude)))
     E, Pr, χ, Ra = T(E), T(Pr), T(χ), T(Ra)
@@ -563,7 +565,7 @@ function compare_onset_vs_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
     bs, cd = create_thermal_wind_basic_state(χ, E, Ra, Pr, Nr;
                                               amplitude=basic_state_amplitude,
                                               mechanical_bc=mechanical_bc,
-                                              thermal_bc=thermal_bc)
+                                              thermal_bc=last(_thermal_walls(thermal_bc)))
     params_biglobal = OnsetParams(
         E=E, Pr=Pr, Ra=Ra, χ=χ, m=m, lmax=lmax, Nr=Nr,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
@@ -620,7 +622,7 @@ Sweep over thermal wind amplitudes to study stabilization/destabilization.
 function sweep_thermal_wind_amplitude(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int, Nr::Int, Ra::Real,
                                        amplitudes::AbstractVector{<:Real},
                                        mechanical_bc::Symbol=:no_slip,
-                                       thermal_bc::Symbol=:fixed_temperature,
+                                       thermal_bc::ThermalBC=:fixed_temperature,
                                        verbose::Bool=true)
     T = float(promote_type(typeof(E), typeof(Pr), typeof(χ), typeof(Ra), eltype(amplitudes)))
     E, Pr, χ, Ra = T(E), T(Pr), T(χ), T(Ra)
@@ -650,7 +652,7 @@ function sweep_thermal_wind_amplitude(; E::Real, Pr::Real, χ::Real, m::Int, lma
             bs, _ = create_thermal_wind_basic_state(χ, E, Ra, Pr, Nr;
                                                      amplitude=amp,
                                                      mechanical_bc=mechanical_bc,
-                                                     thermal_bc=thermal_bc)
+                                                     thermal_bc=last(_thermal_walls(thermal_bc)))
             params = OnsetParams(
                 E=E, Pr=Pr, Ra=Ra, χ=χ, m=m, lmax=lmax, Nr=Nr,
                 mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,

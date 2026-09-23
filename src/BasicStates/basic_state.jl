@@ -436,7 +436,7 @@ end
 """
     conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
                            thermal_bc::Symbol=:fixed_temperature,
-                           outer_flux::T=zero(T)) where T
+                           outer_flux::T=-χ/(1-χ)) where T
 
 Create a basic state corresponding to pure conduction (no meridional variation).
 
@@ -454,9 +454,9 @@ Arguments:
 - `outer_flux` - Prescribed radial temperature gradient ∂θ̄/∂r at r_o (only used
                  if thermal_bc=:fixed_flux). The outward heat flux is -∂θ̄/∂r, so a
                  negative value carries heat outward (the usual case with a hot inner
-                 boundary) and a positive value carries heat inward. For example,
-                 outer_flux = -χ/(1 - χ) reproduces the fixed-temperature conduction
-                 profile (θ̄(r_o) = 0).
+                 boundary) and a positive value carries heat inward. The default
+                 outer_flux = -χ/(1 - χ) carries the conduction heat flux and
+                 reproduces the fixed-temperature conduction profile (θ̄(r_o) = 0).
 
 # Physical Interpretation
 For fixed temperature BCs:
@@ -472,7 +472,7 @@ The conduction profile for ℓ=0 with fixed flux at outer is:
 """
 function conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
                                 thermal_bc::Symbol=:fixed_temperature,
-                                outer_flux::T=zero(T)) where T
+                                outer_flux::T=-χ/(one(T)-χ)) where T
     r = cd.x
     Nr = length(r)
 
@@ -539,7 +539,8 @@ end
 Construct the axisymmetric conductive-temperature / viscous mean-flow state.
 The outer anomaly is `amplitude * P₂(cosθ)` for fixed temperature. For fixed
 flux, ∂θ̄/∂r at r_o is `outer_flux_mean` plus `F * P₂(cosθ)`, where
-`F = amplitude` when it is nonzero and `outer_flux_Y20` otherwise. The inner
+`F = amplitude` when it is nonzero and `outer_flux_Y20` otherwise. The default
+`outer_flux_mean = -χ/(1-χ)` carries the conduction heat flux. The inner
 temperature is uniform.
 
 All three velocity components solve the steady Stokes–Coriolis equations in a
@@ -556,7 +557,7 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
                                lmax_bs::Int, amplitude::T;
                                mechanical_bc::Symbol=:no_slip,
                                thermal_bc::Symbol=:fixed_temperature,
-                               outer_flux_mean::T=zero(T),
+                               outer_flux_mean::T=-χ/(one(T)-χ),
                                outer_flux_Y20::T=zero(T)) where T
 
     r = cd.x
@@ -934,6 +935,8 @@ for `(ℓ, m)` multiplies the unnormalized associated Legendre function
 historical no-factorial normalization. Every nonzero entry of `amplitudes`
 (and, for `:fixed_flux`, of `outer_fluxes`) must satisfy `ℓ ≤ lmax_bs` and
 `|m| ≤ min(ℓ, mmax_bs)`, otherwise an `ArgumentError` is thrown.
+For `:fixed_flux` without a `(0, 0)` entry, the mean outer ∂θ̄/∂r is the
+conduction value `-χ/(1-χ)`.
 
 `Ra` is shell-gap based. Momentum inertia and thermal advection are omitted;
 `nonaxisymmetric_basic_state_selfconsistent` includes both nonlinear effects.
@@ -1010,8 +1013,9 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
                                                                outer_bc=:fixed_temperature)
                 else  # fixed_flux
                     # Outer BC: dθ̄_00/dr|_{r_o} = flux_00 × √(4π)
-                    # Get flux from outer_fluxes or amplitudes
-                    flux_00 = get(outer_fluxes, (0,0), get(amplitudes, (0,0), zero(T)))
+                    # Get flux from outer_fluxes or amplitudes; without either,
+                    # carry the conduction heat flux.
+                    flux_00 = get(outer_fluxes, (0,0), get(amplitudes, (0,0), -r_i/(r_o-r_i)))
                     outer_flux_normalized = T(flux_00) * sqrt(T(4) * T(π))
                     theta_00, dtheta_00 = laplace_mode_profile(0, r, r_i, r_o,
                                                                inner_value, outer_flux_normalized;

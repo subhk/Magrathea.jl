@@ -53,7 +53,7 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
     lmax::Int
     Nr::Int
     mechanical_bc::Symbol = :no_slip
-    thermal_bc::Symbol = :fixed_temperature
+    thermal_bc::ThermalBC = :fixed_temperature
     equatorial_symmetry::Symbol = :both
     heating::Symbol = :differential
 
@@ -75,8 +75,7 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
             "Nr must be >= 8 for meaningful resolution, got $Nr"))
         mechanical_bc in (:no_slip, :stress_free) || throw(ArgumentError(
             "mechanical_bc must be :no_slip or :stress_free, got :$mechanical_bc"))
-        thermal_bc in (:fixed_temperature, :fixed_flux) || throw(ArgumentError(
-            "thermal_bc must be :fixed_temperature or :fixed_flux, got :$thermal_bc"))
+        _check_thermal_bc(thermal_bc)
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         heating in (:differential, :internal) || throw(ArgumentError(
@@ -191,7 +190,7 @@ Uses bisection to find Ra_c where the leading growth rate σ = 0.
 - `tol::Real` - Relative tolerance on Ra (default: 1e-6)
 - `growth_tol::Real` - Absolute growth-rate tolerance for accepting a root (default: `tol`)
 - `mechanical_bc::Symbol` - Boundary conditions (default: :no_slip)
-- `thermal_bc::Symbol` - Thermal boundary conditions (default: :fixed_temperature)
+- `thermal_bc` - Thermal boundary conditions, one symbol or an (inner, outer) pair (default: :fixed_temperature)
 - `heating::Symbol` - `:differential` (default) or `:internal`
 - `backend`, `sigma`, `which`, `maxiter`, `nev` - Passed to the eigensolver
 
@@ -217,7 +216,7 @@ function find_critical_Ra_onset(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int
                                  growth_tol::Real=tol,
                                  Ra_bracket=nothing,
                                  mechanical_bc::Symbol=:no_slip,
-                                 thermal_bc::Symbol=:fixed_temperature,
+                                 thermal_bc::ThermalBC=:fixed_temperature,
                                  equatorial_symmetry::Symbol=:both,
                                  heating::Symbol=:differential,
                                  nev::Int=6,
@@ -307,7 +306,7 @@ function find_global_critical_onset(; E::Real, Pr::Real, χ::Real, lmax::Int, Nr
                                      Ra_guess::Real=1e6,
                                      tol::Real=1e-6,
                                      mechanical_bc::Symbol=:no_slip,
-                                     thermal_bc::Symbol=:fixed_temperature,
+                                     thermal_bc::ThermalBC=:fixed_temperature,
                                      equatorial_symmetry::Symbol=:both,
                                      verbose::Bool=true,
                                      kwargs...)

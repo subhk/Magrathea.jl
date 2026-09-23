@@ -301,6 +301,9 @@ end
     @test bp isa BiglobalProblem
     @test bp.params === op
     @test bp.basic_state === bs
+    # OnsetProblem would silently solve about conduction instead of bs.
+    @test_throws ArgumentError OnsetProblem(OnsetParams(E=1e-3, Pr=1.0, Ra=100.0,
+        χ=0.35, m=2, lmax=8, Nr=16, basic_state=bs))
 
     # 3D basic state on the exact Chebyshev grid (so consistency validation passes)
     T = Float64; Nr = 16; χ = 0.35; lmax_bs = 8
