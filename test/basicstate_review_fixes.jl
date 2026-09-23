@@ -413,3 +413,10 @@ end
     @test gaunts == [Magrathea._compute_gaunt_coefficient(k...) for k in gaunt_keys]
     @test all(haskey(Magrathea._GAUNT_CACHE, k) for k in gaunt_keys)
 end
+
+@testset "basic_state wrapper caps degree-2 forcing at m ≤ 2" begin
+    params = OnsetParams(E=1e-2, Pr=1.0, Ra=1e3, χ=_RF_CHI, m=2, lmax=6, Nr=12)
+    bs = basic_state(params; mode=:nonaxisymmetric, amplitude=0.01, mmax_bs=3, lmax_bs=4)
+    @test bs isa BasicState3D
+    @test bs.mmax_bs == 3
+end

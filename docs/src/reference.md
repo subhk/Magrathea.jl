@@ -24,6 +24,7 @@ MHDProblem
 solve
 solve_onset_problem
 solve_biglobal_problem
+solve_triglobal_eigenvalue_problem
 estimate_size
 StabilityResult
 growth_rate

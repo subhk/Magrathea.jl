@@ -41,10 +41,11 @@ using Magrathea
 
         @test r_grid === op.r
         @test size(θfield) == (Nr, length(grid.θ))
-        # θ(r,θ) = planted(r) * Y_{l0}^m(θ); check proportionality to Ylm at fixed r.
+        # The operator stores Θ against Y_{l0}^m/√(2l0+1), so
+        # θ(r,θ) = planted(r) * Y_{l0}^m(θ) / √(2l0+1).
         ylm = grid.Ylm[l0]
         for j in eachindex(grid.θ)
-            @test θfield[3, j] ≈ planted[3] * ylm[j] atol=1e-10
+            @test θfield[3, j] ≈ planted[3] * ylm[j] / sqrt(2l0 + 1) atol=1e-10
         end
     end
 

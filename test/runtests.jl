@@ -21,6 +21,8 @@ include("mean_flow_coupling.jl")
 include("velocity_reconstruction.jl")
 include("audit_fixes.jl")
 include("review_regressions.jl")
+include("review_fixes_core.jl")
+include("basicstate_review_fixes.jl")
 
 # v2.0 API tests
 include("test_types.jl")
@@ -45,3 +47,4 @@ include("test_types_state_coverage.jl")
 include("test_solve_paths_coverage.jl")
 
 include("perturbation_fields.jl")
+include("plotting_extensions.jl")
