@@ -271,23 +271,14 @@ end
 end
 
 # -----------------------------------------------------------------------------
-@testset "advection-diffusion couplings + AdvectionDiffusionSolver + φ-advection" begin
-    # φ-advection of the basic state projects to zero in the cos(mφ) basis
-    theta = Dict{Tuple{Int,Int},Vector{Float64}}((2, 0) => ones(8))
-    uphi  = Dict{Tuple{Int,Int},Vector{Float64}}((1, 0) => ones(8))
-    Fphi  = Magrathea.compute_phi_advection_spectral(theta, uphi, 4, 2, collect(1.0:8.0))
-    @test Fphi isa AbstractDict
-    @test isempty(Fphi)
-
-    # sin/cos coupling are the validated Legendre recurrence coefficients (m=0).
-    am, ap = Magrathea.sin_theta_coupling(1, 0)
-    @test am ≈ 1 / sqrt(3.0)
-    @test ap ≈ 2 / sqrt(15.0)
+@testset "advection-diffusion couplings + AdvectionDiffusionSolver" begin
+    # cosθ coupling: orthonormal Legendre recurrence, cosθ Y₁₀ = Y₀₀/√3 + 2Y₂₀/√15.
     bm, bp = Magrathea.cos_theta_coupling(1, 0)
-    @test bm ≈ am          # cos and sin coupling coincide for m=0
-    @test bp ≈ ap
-    # ℓ=0 has no downward coupling
-    @test Magrathea.sin_theta_coupling(0, 0)[1] == 0.0
+    @test bm ≈ 1 / sqrt(3.0)
+    @test bp ≈ 2 / sqrt(15.0)
+    # ℓ=|m| has no downward coupling
+    @test Magrathea.cos_theta_coupling(0, 0)[1] == 0.0
+    @test Magrathea.cos_theta_coupling(2, 2)[1] == 0.0
 
     # theta_derivative_coupling: structural only (3-tuple, zero diagonal, ℓ=0 trivial)
     A_minus, A_plus, A_diag = Magrathea.theta_derivative_coupling(2, 0)
@@ -295,10 +286,11 @@ end
     @test isfinite(A_minus) && isfinite(A_plus)
     @test Magrathea.theta_derivative_coupling(0, 0) == (0.0, 0.0, 0.0)
 
-    # inv_sin_theta_coupling: diagonal-dominant, m=0 is purely diagonal
-    c0 = Magrathea.inv_sin_theta_coupling(3, 0)
-    @test c0[3] == 1.0
-    @test length(c0) == 1
+    # inv_sin_theta_coupling: exact elements; 1/sinθ also couples ℓ' ≠ ℓ for m=0.
+    c0 = Magrathea.inv_sin_theta_coupling(0, 0)
+    @test sort(collect(keys(c0))) == [0, 2, 4]
+    @test c0[0] ≈ π / 2                    # ⟨Y₀₀|1/sinθ|Y₀₀⟩ = ∫₀^π dθ/2
+    @test c0[2] ≈ sqrt(5) * π / 8          # ⟨Y₂₀|1/sinθ|Y₀₀⟩ = (√5/2)∫₀^π P₂ dθ
 
     # inv_sin_theta_gaunt: parity selection rule + below-m vanishing
     @test Magrathea.inv_sin_theta_gaunt(1, 2, 1) == 0.0   # opposite parity -> 0
@@ -362,9 +354,9 @@ end
     r = collect(range(_RI, _RO, length=16))
     mk(modes) = Dict{Tuple{Int,Int},Vector{Float64}}(k => randn(length(r)) for k in modes)
     modes = [(0, 0), (1, 0), (2, 0)]
-    F = Magrathea.compute_full_advection_spectral(mk(modes), mk(modes), mk(modes),
-                                              mk(modes), mk(modes), mk(modes),
-                                              2, 0, r)
+    # Tangential scalar projections make the legacy component form approximate.
+    F = @test_logs (:warn, r"approximate") match_mode=:any Magrathea.compute_full_advection_spectral(
+        mk(modes), mk(modes), mk(modes), mk(modes), mk(modes), mk(modes), 2, 0, r)
     @test F isa AbstractDict
     for ℓ in 0:2
         @test haskey(F, (ℓ, 0))

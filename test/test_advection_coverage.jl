@@ -35,28 +35,25 @@ const _PR  = 1.0
 _empty_c() = Dict{Tuple{Int,Int},Vector{Float64}}()
 
 # -----------------------------------------------------------------------------
-@testset "inv_sin_theta_coupling: m≠0 ℓ±2 coupling branches (structural)" begin
-    # m=0 stays purely diagonal (already covered elsewhere); here exercise the
-    # m≠0 branches that add ℓ+2 and ℓ-2 entries (lines 280-296).
+@testset "inv_sin_theta_coupling: exact elements within max_coupling" begin
+    # Every same-parity ℓ' ≥ |m| with |ℓ'-ℓ| ≤ max_coupling (default 4).
     c = Magrathea.inv_sin_theta_coupling(4, 2)
     @test c isa Dict{Int,Float64}
-    @test c[4] == 1.0                 # diagonal term always present
-    @test haskey(c, 6)                # ℓ+2 coupling (within max_coupling=4)
-    @test haskey(c, 2)                # ℓ-2 coupling (ℓ-2 >= |m|)
+    @test sort(collect(keys(c))) == [2, 4, 6, 8]
+    @test all(c[L] == Magrathea.inv_sin_theta_gaunt(L, 4, 2) for L in keys(c))
     @test all(isfinite, values(c))
 
-    # ℓ-2 < |m| suppresses the down-coupling, but ℓ+2 still appears
+    # ℓ'-values below |m| do not exist; ⟨Y₃₃|1/sinθ|Y₃₃⟩ = (35/32)∫₀^π sin⁶θ dθ.
     c2 = Magrathea.inv_sin_theta_coupling(3, 3)
-    @test c2[3] == 1.0
-    @test haskey(c2, 5)
-    @test !haskey(c2, 1)              # ℓ-2 = 1 < |m| = 3  -> no entry
+    @test sort(collect(keys(c2))) == [3, 5, 7]
+    @test c2[3] ≈ 175π / 512
 
-    # max_coupling=0 suppresses the ℓ+2 up-coupling (ℓ+2 > ℓ+max_coupling) but the
-    # ℓ-2 down-coupling branch is independent of max_coupling, so it still appears.
+    # max_coupling=0 keeps only the diagonal element; invalid inputs.
     c3 = Magrathea.inv_sin_theta_coupling(4, 2; max_coupling=0)
-    @test c3[4] == 1.0
-    @test !haskey(c3, 6)             # ℓ+2 suppressed by max_coupling=0
-    @test haskey(c3, 2)              # ℓ-2 still present
+    @test collect(keys(c3)) == [4]
+    @test c3[4] == c[4]
+    @test isempty(Magrathea.inv_sin_theta_coupling(1, 2))      # ℓ < |m|
+    @test_throws ArgumentError Magrathea.inv_sin_theta_coupling(4, 2; max_coupling=-1)
 end
 
 # -----------------------------------------------------------------------------
@@ -283,14 +280,15 @@ end
     @test haskey(uθ, (2, 2)) && all(isfinite, uθ[(2, 2)])
     @test haskey(uθ, (2, -2)) && all(isfinite, uθ[(2, -2)])
 
-    # use_full_coupling=false dispatches to the simplified diagonal solver.
+    # use_full_coupling=false is ignored (one-time warning): same full solve.
     ur2 = _empty_c(); uθ2 = _empty_c(); dur2 = _empty_c(); duθ2 = _empty_c()
-    Magrathea.solve_meridional_circulation_toroidal_poloidal!(
+    @test_logs (:warn, r"use_full_coupling") match_mode=:any Magrathea.solve_meridional_circulation_toroidal_poloidal!(
         ur2, uθ2, dur2, duθ2, theta, uphi,
         r, D1, D2, _RI, _RO, _RA, _E, _PR, lmax_bs, mmax_bs;
         use_full_coupling=false)
     @test haskey(uθ2, (2, 2)) && all(isfinite, uθ2[(2, 2)])
-    # m=0 zero-fill from the simple solver
+    @test uθ2[(2, 2)] == uθ[(2, 2)]
+    # unforced m=0 projections stay zero
     @test all(==(0.0), uθ2[(0, 0)])
 end
 
@@ -339,8 +337,8 @@ end
     # Axisymmetric mean (0,0) temperature is non-trivial (hot inner boundary).
     @test maximum(abs, bs.theta_coeffs[(0, 0)]) > 0
 
-    # The diagonal (uncoupled) thermal-wind option also runs the loop.
-    bs2, info2 = Magrathea.nonaxisymmetric_basic_state_selfconsistent(
+    # The legacy uncoupled option is ignored (one-time warning); the loop still runs.
+    bs2, info2 = @test_logs (:warn, r"coupled_thermal_wind") match_mode=:any Magrathea.nonaxisymmetric_basic_state_selfconsistent(
         cd, _CHI, _E, _RA, _PR, lmax_bs, mmax_bs, amplitudes;
         max_iterations=2, tolerance=1e-6, coupled_thermal_wind=false)
     @test bs2 isa Magrathea.BasicState3D

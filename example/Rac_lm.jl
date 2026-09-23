@@ -1,85 +1,112 @@
-using LinearAlgebra, SparseArrays, Arpack
+#!/usr/bin/env julia
+#
+# Critical Rayleigh number Ra_c(ℓ, m) for convection in a NON-ROTATING
+# spherical shell.
+#
+# Without rotation the linearized Boussinesq equations separate by spherical-
+# harmonic degree ℓ and do not depend on the azimuthal order m, so every
+# Y_ℓ^m mode has the same critical Rayleigh number Ra_c(ℓ). (Rotation couples
+# ℓ to ℓ ± 1 through the Coriolis force; for rotating onset use
+# `find_critical_Ra(OnsetProblem(params))`, which needs SLEPc — see
+# docs/src/getting_started.md.)
+#
+# Model: lengths are scaled by the gap d = r_o - r_i, time by d²/κ and
+# temperature by the wall contrast ΔT. Gravity is g = g_o r / r_o, the
+# conduction profile is T₀(r) = r_i r_o / r - r_i (T₀ = 1 at r_i, 0 at r_o), and
+# Ra = α g_o ΔT d³ / (ν κ). Writing u = ∇×∇×(r P(r) Y_ℓ^m r̂) and Θ(r) Y_ℓ^m,
+# marginal (σ = 0) modes satisfy
+#
+#     D_ℓ² P = (Ra / r_o) Θ,      D_ℓ Θ = -ℓ(ℓ+1) r_i r_o P / r³,
+#
+# with D_ℓ = d²/dr² + (2/r) d/dr - ℓ(ℓ+1)/r². Onset is assumed stationary.
+# Walls are isothermal (Θ = 0); `mechanical_bc` selects no-slip (P = P' = 0)
+# or stress-free (P = P'' = 0) velocity conditions. These are the Rayleigh
+# number, gravity and heating conventions of `OnsetParams`, so rotating onset
+# computed with Magrathea approaches these values as E becomes large.
+#
+# Requirements: Magrathea (for `ChebyshevDiffn`) plus the LinearAlgebra and
+# Printf standard libraries. No PETSc/SLEPc: each degree is a small dense
+# eigenvalue problem.
+#
+# Usage: julia --project=. example/Rac_lm.jl
 
-# critical Ra for rotating spherical shell, fixed m
-function critical_Ra_shell(m;
-        N=40, lmax=80,
-        E=1e-4, Pr=1.0,
-        ri=0.35, ro=1.0)
+using Magrathea
+using LinearAlgebra
+using Printf
 
-    # radial grid and diff. matrices on [ri,ro]
-    D0, x0 = cheb(N)
-    # map x∈[-1,1] → r∈[ri,ro]
-    r = (ro+ri)/2 .+ ((ro-ri)/2)*x0
-    D = (2/(ro-ri))*D0
-    D2 = D*D
-    Np = N+1
-    Iden = I(Np)
+"""
+    critical_Ra_degree(ℓ; χ=0.35, N=40, mechanical_bc=:no_slip)
 
-    # helper for the angular Laplacian term
-    function LTT(ℓ)
-        # build (D2 - ℓ(ℓ+1)/r^2)
-        return D2 .- Diagonal(ℓ*(ℓ+1) ./ (r.^2))
-    end
+Critical Rayleigh number of spherical-harmonic degree `ℓ ≥ 1` in a non-rotating
+shell with radius ratio `χ`, using `N` Chebyshev collocation points.
+"""
+function critical_Ra_degree(ℓ::Int; χ::Real=0.35, N::Int=40, mechanical_bc::Symbol=:no_slip)
+    ℓ >= 1 || throw(ArgumentError("degree ℓ must be ≥ 1, got $ℓ"))
+    mechanical_bc in (:no_slip, :stress_free) || throw(ArgumentError(
+        "mechanical_bc must be :no_slip or :stress_free, got :$mechanical_bc"))
 
-    best = (ℓ=0, Ra=Inf)
-    # loop over spherical‐harmonic degree
-    for ℓ in m:lmax
-        # 3×3 blocks of A0*X + Ra*B*X = 0
-        L = LTT(ℓ)
-        C = Diagonal(2im*m ./ (r.^2))    # Coriolis coupling
-        LTP = ℓ*(ℓ+1)
+    ri, ro = χ / (1 - χ), 1 / (1 - χ)          # gap-scaled radii, ro - ri = 1
+    cd = ChebyshevDiffn(N, [ri, ro], 4)          # ascending nodes r[1] = ri
+    r = cd.x
+    L = ℓ * (ℓ + 1)
+    Dl = cd.D2 + Diagonal(2 ./ r) * cd.D1 - Diagonal(L ./ r .^ 2)
+    Z = zeros(N, N)
 
-        # build A0 blocks
-        A11 =           L               # T‐eqn
-        A12 =                C
-        A21 = C
-        A22 = E*(L*L)        # P‐eqn
-        A23 = zeros(Np,Np)
-        A31 = Iden           # Θ‐eqn
-        A32 = zeros(Np,Np)
-        A33 =           L
+    # Unknowns x = [P; Θ] with A x = Ra B x.
+    A = [Dl * Dl                          Z;
+         Matrix(Diagonal(L * ri * ro ./ r .^ 3))  Dl]
+    B = [Z  Matrix(I / ro, N, N);
+         Z  Z]
 
-        # assemble into big matrices
-        A0 = [  A22   A21   A23;
-                A12   A11   zeros(Np,Np);
-                A31   zeros(Np,Np)  A33 ]
-        B  = spzeros(3Np, 3Np)
-        # only P‐eqn (block A22) carries Ra coupling via Θ:
-        B[1:Np, 2Np+1:3Np] .= -LTP*Iden
+    # Boundary conditions as constraints C x = 0 (P, P' or P'', Θ at both walls).
+    Dw = mechanical_bc === :no_slip ? cd.D1 : cd.D2
+    C = zeros(6, 2N)
+    C[1, 1] = 1;              C[2, N] = 1
+    C[3, 1:N] = Dw[1, :];     C[4, 1:N] = Dw[N, :]
+    C[5, N + 1] = 1;          C[6, 2N] = 1
 
-        # enforce BCs via tau‐rows
-        # stress‐free: P=0 & P''=0  at r=ri,r0:
-        #   replace rows 1,2 and rows Np-1,Np of A0 and B
-        function tau!(M)
-            # P(ri)=0
-            M[1, :] .= 0;    M[1, 1] = 1
-            # P''(ri)=0  →  D2 row
-            M[2, :] .= D2[1, :]
-            # P''(ro)=0
-            M[Np-1, :] .= D2[end, :]
-            # P(ro)=0
-            M[Np,   :] .= 0;  M[Np, end] = 1
-            # T=0 at r=ri,ro
-            M[Np+1, :] .= 0;       M[Np+1, Np+1] = 1
-            M[2Np,  :] .= 0;       M[2Np, 2Np]    = 1
-            # θ=0 at r=ri,ro
-            M[2Np+1,:] .= 0;  M[2Np+1,2Np+1] = 1
-            M[3Np,  :] .= 0;  M[3Np,  3Np]   = 1
-        end
+    # Keep the collocation equations away from the walls and restrict the
+    # unknowns to the constraint null space (square reduced problem).
+    rows = [3:N-2; (N + 2):(2N - 1)]
+    V = nullspace(C)
+    Ared = A[rows, :] * V
+    Bred = B[rows, :] * V
 
-        tau!(A0);  tau!(B)   # impose on both
-
-        # solve generalized eigenproblem for smallest Ra
-        vals, _ = eigs(A0, B; nev=1, which=:SR)
-        Ra_ℓ = real(vals[1])
-        if Ra_ℓ < best.Ra
-            best = (ℓ=ℓ, Ra=Ra_ℓ)
-        end
-    end
-
-    return best  # (ℓ_crit, Ra_c)
+    # Solve B x = μ A x (A is invertible); the critical Ra is 1/μ for the
+    # largest real μ > 0.
+    μ = eigvals(Ared \ Bred)
+    real_μ = [real(v) for v in μ if abs(imag(v)) <= 1e-8 * abs(v) && real(v) > 0]
+    isempty(real_μ) && error("no stationary marginal mode found for ℓ=$ℓ")
+    return 1 / maximum(real_μ)
 end
 
-# Example: critical Ra for m=6, Ekman=1e-4
-ℓc, Rac = critical_Ra_shell(6; N=50, lmax=100, E=1e-4, Pr=1.0, ri=0.7, ro=1.0)
-println("m=6 → ℓ₍c₎=$(ℓc),  Ra₍c₎=$(Rac)")
+χ = 0.35      # radius ratio r_i / r_o
+N = 40        # Chebyshev collocation points
+ℓs = 1:10     # degrees to scan
+
+println("Non-rotating shell, χ = $χ, N = $N, isothermal walls")
+println("Ra_c(ℓ, m) = Ra_c(ℓ) for every m ≤ ℓ")
+println()
+@printf("%4s  %16s  %16s\n", "ℓ", "Ra_c no-slip", "Ra_c stress-free")
+Ra_ns = [critical_Ra_degree(ℓ; χ=χ, N=N, mechanical_bc=:no_slip) for ℓ in ℓs]
+Ra_sf = [critical_Ra_degree(ℓ; χ=χ, N=N, mechanical_bc=:stress_free) for ℓ in ℓs]
+for (i, ℓ) in enumerate(ℓs)
+    @printf("%4d  %16.4f  %16.4f\n", ℓ, Ra_ns[i], Ra_sf[i])
+end
+println()
+@printf("Critical degree (no-slip):     ℓ_c = %d, Ra_c = %.4f\n", ℓs[argmin(Ra_ns)], minimum(Ra_ns))
+@printf("Critical degree (stress-free): ℓ_c = %d, Ra_c = %.4f\n", ℓs[argmin(Ra_sf)], minimum(Ra_sf))
+
+# Thin-shell check: as χ → 1 the shell becomes a plane layer, whose critical
+# values are Ra_c = 1707.76 (no-slip) and 657.51 (stress-free) at horizontal
+# wavenumbers k_c = 3.117 and 2.221 (ℓ_c ≈ k_c times the mean gap-scaled radius).
+println()
+println("Plane-layer limit (χ = 0.99):")
+for (bc, Ra_plane, k_c) in ((:no_slip, 1707.76, 3.117), (:stress_free, 657.51, 2.221))
+    χ_thin = 0.99
+    ℓ_guess = round(Int, k_c * (1 + χ_thin) / (2 * (1 - χ_thin)))
+    Ra_thin = minimum(critical_Ra_degree(ℓ; χ=χ_thin, N=24, mechanical_bc=bc)
+                      for ℓ in (ℓ_guess - 10):(ℓ_guess + 10))
+    @printf("  %-12s Ra_c = %9.2f   (plane layer %.2f, difference %.2f%%)\n",
+            bc, Ra_thin, Ra_plane, 100 * (Ra_thin - Ra_plane) / Ra_plane)
+end

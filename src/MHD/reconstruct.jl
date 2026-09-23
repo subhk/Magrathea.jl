@@ -174,3 +174,39 @@ function perturbation_magnetic(evec::AbstractVector{<:Complex},
                                           op.ll_f, :f, op.ll_g, :g, r_grid, g)
     return Fr, Fθ, Fφ, r_grid, g
 end
+
+"""
+    _mhd_spectral_tails(op, vec; fraction=1/4) -> (radial, angular)
+
+Resolution diagnostic for a full MHD coefficient vector (tau layout). `radial` is
+the share of the vector's norm carried by the highest `fraction` of the
+Chebyshev coefficients in every `(ℓ, field)` block; `angular` is the share
+carried by the highest `fraction` of the retained degrees ℓ of every field. A
+resolved eigenmode decays spectrally in both, so both are small; a large tail
+means the mode lives at the truncation scale and its eigenvalue is not
+trustworthy (e.g. spurious growth at strong field and low `N`).
+"""
+function _mhd_spectral_tails(op::MHDStabilityOperator, vec::AbstractVector; fraction::Real=1/4)
+    idx_map = _mhd_index_map(op)
+    total = 0.0; radial = 0.0; angular = 0.0
+    top_l = Dict{Symbol,Int}()
+    for ((l, sec), _) in idx_map
+        top_l[sec] = max(get(top_l, sec, l), l)
+    end
+    sec_ls = Dict(sec => sort!([l for ((l, s), _) in idx_map if s === sec]) for sec in keys(top_l))
+    for ((l, sec), rng) in idx_map
+        last(rng) <= length(vec) || continue
+        n = length(rng)
+        k_cut = n - max(1, floor(Int, fraction * n)) + 1
+        ls = sec_ls[sec]
+        l_cut = ls[end - max(1, floor(Int, fraction * length(ls))) + 1]
+        for (k, i) in enumerate(rng)
+            a = Float64(abs2(vec[i]))
+            total += a
+            k >= k_cut && (radial += a)
+            length(ls) > 1 && l >= l_cut && (angular += a)
+        end
+    end
+    total == 0 && return (radial = 0.0, angular = 0.0)
+    return (radial = sqrt(radial / total), angular = sqrt(angular / total))
+end

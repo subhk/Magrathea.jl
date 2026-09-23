@@ -150,11 +150,12 @@ For axisymmetric basic state (m2 = 0), this simplifies to:
 # Gaunt coefficients are pure functions of the six integer quantum numbers and
 # `WignerSymbols.wigner3j` allocates (BigInt/Rational) internally, so memoize them.
 # The coupling builders evaluate the same (ℓ,m) triples across every basic-state
-# mode and Picard iteration.
+# mode and Picard iteration. The cache is shared across threads; see `_locked_get!`.
 const _GAUNT_CACHE = Dict{NTuple{6,Int}, Float64}()
+const _GAUNT_CACHE_LOCK = ReentrantLock()
 
 function compute_gaunt_coefficient(ℓ1::Int, m1::Int, ℓ2::Int, m2::Int, ℓ3::Int, m3::Int)
-    return get!(_GAUNT_CACHE, (ℓ1, m1, ℓ2, m2, ℓ3, m3)) do
+    return _locked_get!(_GAUNT_CACHE, _GAUNT_CACHE_LOCK, (ℓ1, m1, ℓ2, m2, ℓ3, m3)) do
         _compute_gaunt_coefficient(ℓ1, m1, ℓ2, m2, ℓ3, m3)
     end
 end
@@ -186,7 +187,10 @@ function _compute_gaunt_coefficient(ℓ1::Int, m1::Int, ℓ2::Int, m2::Int, ℓ3
 end
 
 
-"""Quadrature cache for repeated azimuthal coupling integrals at fixed m."""
+# The quadrature coupling matrix once built from these tables was removed: its
+# Gauss–Chebyshev weights integrate ∫YYY/sinθ, not a Gaunt integral. The table
+# builder is no longer used by the solvers.
+"""Normalized Legendre tables at Gauss–Chebyshev nodes for fixed m."""
 struct AzimuthalCouplingCache{T<:Real}
     m::Int
     weight::T
@@ -197,7 +201,7 @@ end
 # Note: _double_factorial, _associated_legendre_table, and _normalization_table
 # are defined in Stability/velocity.jl and resolved when these helpers are called.
 
-"""Precompute normalized Legendre tables used by azimuthal coupling matrices."""
+"""Precompute normalized Legendre tables at Gauss–Chebyshev nodes."""
 function _build_azimuthal_coupling_cache(m::Int, lmax_m::Int, lmax_0::Int)
     return _build_azimuthal_coupling_cache(m, lmax_m, lmax_0, Float64)
 end
@@ -225,13 +229,6 @@ function _build_azimuthal_coupling_cache(m::Int, lmax_m::Int, lmax_0::Int,
     end
 
     return AzimuthalCouplingCache(m, weight, y_m, y_0)
-end
-
-"""Compute the quadrature coupling matrix for multiplication by one l_bs mode."""
-function _azimuthal_coupling_matrix(cache::AzimuthalCouplingCache{T}, l_bs::Int) where {T<:Real}
-    y_bs = view(cache.y_0, l_bs + 1, :)
-    weighted = cache.y_m .* y_bs'
-    return (cache.y_m * weighted') .* (T(2) * T(pi) * cache.weight)
 end
 
 """Build the complete linearized physical equations about an axisymmetric state."""

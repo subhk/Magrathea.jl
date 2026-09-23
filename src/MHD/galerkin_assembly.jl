@@ -2,7 +2,11 @@
 #  Tau-free ultraspherical-Galerkin assembly of the MHD eigenproblem.
 #
 #  Boundary conditions are carried by a recombined trial basis (no tau rows →
-#  full-rank B → no infinite boundary eigenvalues).
+#  full-rank B → no infinite boundary eigenvalues). This removes the tau
+#  method's spurious eigenvalues, not under-resolution: with a strong field and
+#  too few radial modes the pencil still has unphysical growing eigenvalues whose
+#  eigenvectors sit at the truncation scale (`solve` flags those, see
+#  `_mhd_spectral_tails`).
 #
 #   - Hydro (u, v, h): pure-banded (B2) via `banded_radial_term`. Matches the
 #     collocation onset spectrum to ~1e-12 with zero spurious.

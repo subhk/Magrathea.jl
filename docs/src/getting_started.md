@@ -6,7 +6,7 @@ build work without PETSc.
 
 ## Installation
 
-Use a Julia version allowed by `Project.toml` (Julia 1.9 or later in the 1.x
+Use a Julia version allowed by `Project.toml` (Julia 1.10 or later in the 1.x
 series) and clone the repository:
 
 ```bash

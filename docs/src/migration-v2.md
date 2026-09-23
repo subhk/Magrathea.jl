@@ -95,6 +95,19 @@ plot_meridional(result, 1)
 plot_radial(result, 1)
 ```
 
-Field-plot support depends on the result layout. See the [API reference](reference.md)
-and use the appropriate operator-aware reconstruction for MHD or coupled
-triglobal results.
+`plot(result)` and `eigenspectrum(result)` show the eigenvalues of any result;
+`plot(results; sweep_param=:E)` plots growth rate against a parameter field of
+each result's `params` (a triglobal result has no single `m`).
+
+The field plots read each result's own eigenvector layout: onset and biglobal
+collocation blocks, MHD Chebyshev coefficients, or the reduced blocks of every
+coupled triglobal `m`. `plot_radial(result, i; field)` draws `|F_ℓ(r)|` per
+retained degree for `:poloidal`, `:toroidal`, or `:temperature`; MHD results
+also accept `:magnetic_poloidal` and `:magnetic_toroidal`, and triglobal
+results draw one curve per coupled `(m, ℓ)`. `plot_meridional(result, i; field,
+npoints)` maps the real part of the reconstructed field at `φ = 0`: the result
+of `perturbation_temperature` (`:temperature`), `perturbation_velocity`
+(`:ur`, `:utheta`, `:uphi`), or, for MHD, `perturbation_magnetic` (`:Br`,
+`:Btheta`, `:Bphi`). Triglobal results support the velocity components only.
+An eigenvector that does not match its problem's layout raises a
+`DimensionMismatch`, and an unsupported field an `ArgumentError`.

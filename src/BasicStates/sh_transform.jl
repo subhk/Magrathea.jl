@@ -2,10 +2,13 @@
 #  Real-orthonormal spherical-harmonic transform (cos+sin, ±m) and the
 #  vector-harmonic horizontal divergence.
 #
-#  Foundation for a correct nonaxisymmetric basic-state advection
-#  ū·∇T̄ = ∇·(ūT̄) (incompressible). Computing the horizontal divergence in the
-#  vector-harmonic basis avoids the aliasing that a scalar ∂_θ term-split incurs
-#  (∂_θ of a scalar is not band-limited). Validated by manufactured-solution
+#  Grid synthesis/analysis for the mean-state products: the advective form
+#  ū·∇T̄ = ū_r ∂_rT̄ + (ū_θ ∂_θT̄ + ū_φ ∂_φT̄/sinθ)/r (`_mean_flow_advection`,
+#  which synthesizes ū from its native vector-harmonic potentials), the Coriolis
+#  and inertia projections, and `sh_horizontal_divergence` for vector-harmonic
+#  components. Tangential components of a solenoidal field are not band-limited
+#  scalar harmonics, so products are formed from the vector-harmonic basis rather
+#  than from truncated scalar projections. Validated by manufactured-solution
 #  tests (see test/sh_transform.jl).
 #
 #  Convention: real orthonormal SH with full N_ℓm,
@@ -29,13 +32,15 @@ struct SHGrid{T<:Real}
 end
 
 # `sh_grid` is a pure function of (lmax, mmax, T) and its result is read-only, so
-# memoize it: the self-consistent basic-state Picard loop calls `vecsh_advection`
-# once per iteration and would otherwise rebuild the Gauss-Legendre nodes and the
-# associated-Legendre tables from scratch every time.
+# memoize it: the self-consistent basic-state Picard loop transforms the mean
+# fields on every iteration and would otherwise rebuild the Gauss-Legendre nodes
+# and the associated-Legendre tables from scratch every time. The cache is shared
+# across threads; see `_locked_get!`.
 const _SH_GRID_CACHE = Dict{Tuple{Int,Int,DataType}, Any}()
+const _SH_GRID_CACHE_LOCK = ReentrantLock()
 
 function sh_grid(lmax::Int, mmax::Int, ::Type{T}=Float64) where {T<:Real}
-    return get!(_SH_GRID_CACHE, (lmax, mmax, T)) do
+    return _locked_get!(_SH_GRID_CACHE, _SH_GRID_CACHE_LOCK, (lmax, mmax, T)) do
         _build_sh_grid(lmax, mmax, T)
     end::SHGrid{T}
 end
@@ -100,6 +105,28 @@ function _sh_P_over_sin(g::SHGrid{T},l,am,j) where T
     s=_sh_sinθ(g,j)
     s>0 && return g.P[am][l-am+1,j]/s
     am==1 ? -g.μ[j]^(l+1)*T(l*(l+1))/2 : zero(T)
+end
+
+"""
+Grid samples of Ȳ_ℓm, ∂θȲ_ℓm and (1/sinθ)∂φȲ_ℓm for each of `modes` (one column
+per mode; rows are nodes with the θ index fastest), together with the quadrature
+weights (including dφ) and sinθ, cosθ at each node. Shared by the Coriolis
+projection and the implicit mean-temperature transport step.
+"""
+function _sh_basis_samples(g::SHGrid{T}, modes) where {T}
+    nθ = _sh_Nθ(g); nφ = _sh_Nφ(g); n = length(modes)
+    Y = zeros(T, nθ * nφ, n); Hθ = similar(Y); Hφ = similar(Y)
+    w = zeros(T, nθ * nφ); s = similar(w); c = similar(w)
+    for k in 1:nφ, j in 1:nθ
+        h = j + (k - 1) * nθ
+        w[h] = g.w[j] * 2T(π) / nφ; s[h] = _sh_sinθ(g, j); c[h] = g.μ[j]
+        for (a, (l, m)) in enumerate(modes)
+            Y[h, a] = _sh_Y(g, l, m, j, k)
+            Hθ[h, a] = _sh_dYθ(g, l, m, j, k)
+            Hφ[h, a] = _sh_dYφ_over_sin(g, l, m, j, k)
+        end
+    end
+    (Y=Y, Hθ=Hθ, Hφ=Hφ, w=w, sinθ=s, cosθ=c)
 end
 
 """Synthesize a scalar field on the grid from coeffs `Dict{(ℓ,m),value}` using
@@ -259,14 +286,19 @@ function sh_horizontal_divergence!(div::AbstractDict{Tuple{Int,Int},T},
 end
 
 """
-Project u·∇T directly in the real orthonormal scalar-harmonic basis. The
-`dur_dr` argument is retained for compatibility and is not needed for this
-advective form. Constructed mean states use vector-harmonic velocity directly.
+    vecsh_advection(theta, dtheta_dr, ur, utheta, uphi, lmax, mmax, r)
+
+Project the advective form u·∇T = u_r∂_rT + (u_θ∂_θT + u_φ∂_φT/sinθ)/r onto
+real orthonormal scalar harmonics (ℓ ≤ lmax, |m| ≤ mmax), with every input a
+scalar-harmonic expansion of the corresponding field. This is exact for the
+radial term, but the tangential components of a solenoidal velocity are not
+band-limited scalar harmonics: truncated scalar projections of u_θ, u_φ, and
+products involving ∂_θ, are only approximate. Constructed mean states use the
+vector-harmonic path `_mean_flow_advection` instead.
 """
 function vecsh_advection(theta::AbstractDict{Tuple{Int,Int},Vector{T}},
                          dtheta_dr::AbstractDict{Tuple{Int,Int},Vector{T}},
                          ur::AbstractDict{Tuple{Int,Int},Vector{T}},
-                         dur_dr::AbstractDict{Tuple{Int,Int},Vector{T}},
                          utheta::AbstractDict{Tuple{Int,Int},Vector{T}},
                          uphi::AbstractDict{Tuple{Int,Int},Vector{T}},
                          lmax::Int, mmax::Int, r::Vector{T}) where {T<:Real}

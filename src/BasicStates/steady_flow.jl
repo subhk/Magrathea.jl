@@ -16,28 +16,31 @@ struct SolenoidalMeanFlow{T<:Real}
     dt::Dict{Tuple{Int,Int},Vector{T}}
 end
 
+# Module-level memo caches (`_MEAN_CORIOLIS_CACHE`, `_SH_GRID_CACHE`,
+# `_GAUNT_CACHE`) are shared by all tasks and threads. Look up under the lock,
+# build outside it (builds are expensive and may consult other caches), then
+# insert with `get!` under the lock: racing callers all receive the first
+# stored value, and no lock is held while another is acquired.
+struct _CacheMiss end
+
+function _locked_get!(build, cache::AbstractDict, cache_lock::ReentrantLock, key)
+    hit = @lock cache_lock get(cache, key, _CacheMiss())
+    hit isa _CacheMiss || return hit
+    value = build()
+    return @lock cache_lock get!(cache, key, value)
+end
+
 const _MEAN_CORIOLIS_CACHE = Dict{Tuple{Int,Int,DataType},Any}()
+const _MEAN_CORIOLIS_CACHE_LOCK = ReentrantLock()
 
 # Project 2 ẑ×u onto (Y r̂, ∇hY, r̂×∇hY). The tangential basis has norm²=q.
 # Evaluating the actual vector cross product also handles cosine/sine phases.
 function _mean_coriolis(lmax::Int, am::Int, ::Type{T}) where T
-    get!(_MEAN_CORIOLIS_CACHE, (lmax, am, T)) do
+    _locked_get!(_MEAN_CORIOLIS_CACHE, _MEAN_CORIOLIS_CACHE_LOCK, (lmax, am, T)) do
         modes = [(l,m) for m in (am == 0 ? (0,) : (am,-am)) for l in max(1,am):lmax]
-        g = sh_grid(lmax, am, T)
         n = length(modes)
-        Y = zeros(T, length(g.μ)*length(g.φ), n)
-        Hθ = similar(Y); Hφ = similar(Y)
-        w = T[]; s = T[]; c = T[]
-        for k in eachindex(g.φ), j in eachindex(g.μ)
-            push!(w, g.w[j]*2T(π)/length(g.φ))
-            push!(s, _sh_sinθ(g,j)); push!(c,g.μ[j])
-            h = j+(k-1)*length(g.μ)
-            for (a,(l,m)) in enumerate(modes)
-                Y[h,a]=_sh_Y(g,l,m,j,k)
-                Hθ[h,a]=_sh_dYθ(g,l,m,j,k)
-                Hφ[h,a]=_sh_dYφ_over_sin(g,l,m,j,k)
-            end
-        end
+        (; Y, Hθ, Hφ, w, sinθ, cosθ) = _sh_basis_samples(sh_grid(lmax, am, T), modes)
+        s = sinθ; c = cosθ
         Z = zero(Y)
         basis = ((Y,Z,Z),(Z,Hθ,Hφ),(Z,-Hφ,Hθ))
         C = zeros(T,3n,3n)
@@ -194,15 +197,8 @@ end
 function _mean_temperature_step(flow::SolenoidalMeanFlow{T},D1,D2,κ,bc) where T
     g=sh_grid(flow.lmax,flow.mmax,T); r=flow.r; N=length(r)
     modes=[(l,m) for m in -g.mmax:g.mmax for l in abs(m):g.lmax]
-    n=length(modes); ng=length(g.μ)*length(g.φ)
-    Y=zeros(T,ng,n); Hθ=similar(Y); Hφ=similar(Y); w=zeros(T,ng)
-    for k in eachindex(g.φ),j in eachindex(g.μ)
-        h=j+(k-1)*length(g.μ); w[h]=g.w[j]*2T(π)/length(g.φ)
-        for (a,(l,m)) in enumerate(modes)
-            Y[h,a]=_sh_Y(g,l,m,j,k); Hθ[h,a]=_sh_dYθ(g,l,m,j,k)
-            Hφ[h,a]=_sh_dYφ_over_sin(g,l,m,j,k)
-        end
-    end
+    n=length(modes)
+    (; Y, Hθ, Hφ, w) = _sh_basis_samples(g, modes)
     A=zeros(T,n*N,n*N); f=zeros(T,n*N)
     for (a,(l,m)) in enumerate(modes)
         ix=(a-1)*N+1:a*N
@@ -238,7 +234,8 @@ end
 function _mean_barycentric(r,v,x)
     k=findfirst(==(x),r); k===nothing || return v[k]
     first(r)<=x<=last(r) || throw(ArgumentError("Radius is outside the shell"))
-    weights=[(iseven(i) ? -one(x) : one(x))*(i in (1,length(r)) ? 0.5 : 1)/(x-r[i]) for i in eachindex(r)]
+    # Chebyshev–Gauss–Lobatto weights; one(x)/2 keeps Float32 data in Float32.
+    weights=[(iseven(i) ? -one(x) : one(x))*(i in (1,length(r)) ? one(x)/2 : one(x))/(x-r[i]) for i in eachindex(r)]
     dot(weights,v)/sum(weights)
 end
 
@@ -302,6 +299,27 @@ function _mean_flow_components(flow::SolenoidalMeanFlow{T}) where T
         end
     end
     fields
+end
+
+# Shared body of the legacy component-projection wrappers (solve_meridional_*!,
+# solve_thermal_wind_*!): solve the viscous mean flow once and copy selected
+# scalar component projections into the caller's dictionaries. `targets` maps
+# component names (:ur, :utheta, :uphi, :dur, :dutheta, :duphi) to destination
+# dictionaries; `keep` filters (l,m) keys and `key` maps them to destination
+# keys. With `reset`, destinations are emptied first.
+function _project_mean_flow!(targets::NamedTuple, theta, r, D1, D2, E, Ra, Pr, lmax, mmax;
+                             mechanical_bc=:no_slip, keep=Returns(true), key=identity,
+                             reset=true)
+    flow=_steady_mean_flow(theta,r,D1,D2,E,Ra,Pr,lmax,mmax;mechanical_bc=mechanical_bc)
+    ur,utheta,uphi,dur,dutheta,duphi=_mean_flow_components(flow)
+    fields=(ur=ur,utheta=utheta,uphi=uphi,dur=dur,dutheta=dutheta,duphi=duphi)
+    for (name,target) in pairs(targets)
+        reset && empty!(target)
+        for (k,v) in fields[name]
+            keep(k) && (target[key(k)]=v)
+        end
+    end
+    flow
 end
 
 function _mean_flow_advection(theta,dtheta,flow::SolenoidalMeanFlow{T}) where T

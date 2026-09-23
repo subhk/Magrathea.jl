@@ -126,20 +126,98 @@ function _solve_generalized_eigen_slepc(A::SparseMatrixCSC, B::SparseMatrixCSC; 
     return solver(A, B; kwargs...)
 end
 
+const _EIGEN_BACKENDS = (:slepc, :dense)
+
+"""Throw unless `backend` names a supported eigensolver backend."""
+function _check_backend(backend::Symbol)
+    backend in _EIGEN_BACKENDS || throw(ArgumentError(
+        "Unknown eigensolver backend :$(backend); supported backends are " *
+        join((":$b" for b in _EIGEN_BACKENDS), ", ")))
+    return nothing
+end
+
+"""Order eigenvalue indices by a `selection` strategy (`:maxreal`, `:minabs`,
+`:closest_real`)."""
+function _selection_order(vals::AbstractVector{<:Complex}, selection::Symbol)
+    selection === :maxreal      && return sortperm(real.(vals); rev=true)
+    selection === :minabs       && return sortperm(abs.(vals))
+    selection === :closest_real && return sortperm(abs.(real.(vals)))
+    throw(ArgumentError("Unknown selection strategy :$(selection)"))
+end
+
+"""
+    _dense_generalized_eigen(A, B; nev, sigma, which, selection)
+
+Dense LAPACK solve of `A x = λ B x`, returning `(eigenvalues, eigenvectors, info)`
+like the SLEPc backend. Infinite eigenvalues from singular `B` (tau rows) are
+dropped using the generalized-Schur denominators `β`, which also catches the huge
+finite values that `α/β` produces when `β` is only rounding noise. The `nev`
+eigenpairs nearest `sigma` are kept when a shift is given; otherwise `which`
+selects them exactly (`:LR` largest real part, `:LI` largest imaginary part,
+`:LM` largest magnitude, `:SR` smallest real part, `:SM` smallest magnitude).
+The kept pairs are then ordered by `selection`. Costs O(n³); meant for small
+problems and tests.
+"""
+function _dense_generalized_eigen(A::AbstractMatrix, B::AbstractMatrix;
+                                  nev::Int, sigma=nothing, which::Symbol=:LR,
+                                  selection::Symbol=:maxreal)
+    size(A) == size(B) || throw(DimensionMismatch(
+        "A and B must have same dimensions, got $(size(A)) and $(size(B))"))
+    n = size(A, 1)
+    CT = complex(float(promote_type(eltype(A), eltype(B))))
+    α, β, _, V = LinearAlgebra.LAPACK.ggev!('N', 'V', Matrix{CT}(A), Matrix{CT}(B))
+    βscale = maximum(abs, β; init=zero(real(CT)))
+    βtol = 100 * n * eps(real(CT)) * βscale
+    keep = [i for i in eachindex(α) if abs(β[i]) > βtol && isfinite(α[i] / β[i])]
+    vals = CT[α[i] / β[i] for i in keep]
+    isempty(vals) && error("Dense eigensolve found no finite eigenvalues")
+
+    order = if sigma !== nothing
+        sortperm(abs.(vals .- CT(sigma)))
+    elseif which === :LR
+        sortperm(real.(vals); rev=true)
+    elseif which === :LI
+        sortperm(imag.(vals); rev=true)
+    elseif which === :LM
+        sortperm(abs.(vals); rev=true)
+    elseif which === :SR
+        sortperm(real.(vals))
+    elseif which === :SM
+        sortperm(abs.(vals))
+    else
+        throw(ArgumentError("Unsupported which=:$(which) for the dense backend"))
+    end
+    sel = order[1:min(nev, length(order))]
+    sel = sel[_selection_order(vals[sel], selection)]
+
+    vecs = V[:, keep[sel]]
+    for j in axes(vecs, 2)
+        nrm = norm(view(vecs, :, j))
+        nrm > 0 && (vecs[:, j] ./= nrm)
+    end
+    info = Dict{String,Any}("solver" => :dense, "strategy" => :full_spectrum,
+        "target" => sigma, "which" => which, "selection" => selection,
+        "nconv" => length(vals), "n" => n)
+    return vals[sel], vecs, info
+end
+
 """Dispatch a sparse generalized eigensolve to the selected backend, returning the
 common `(eigenvalues::Vector{Complex}, eigenvectors::Matrix{Complex}, info::Dict)`.
-SLEPc is the sole supported backend."""
+`:slepc` (distributed shift-invert, the default) and `:dense` (LAPACK, for small
+problems and tests) are supported."""
 function _dispatch_eigen(A::SparseMatrixCSC, B::SparseMatrixCSC;
                          backend::Symbol=:slepc,
                          nev::Int, sigma, which::Symbol, selection::Symbol,
                          tol::Float64, maxiter::Int,
                          krylovdim::Union{Nothing,Int}, verbosity::Int)
+    _check_backend(backend)
     if backend === :slepc
         return _solve_generalized_eigen_slepc(A, B; nev=nev, sigma=sigma, which=which,
                                               selection=selection, tol=tol, maxiter=maxiter,
                                               verbosity=verbosity)
     else
-        throw(ArgumentError("Unknown eigensolver backend $(backend); only :slepc is supported"))
+        return _dense_generalized_eigen(A, B; nev=nev, sigma=sigma, which=which,
+                                        selection=selection)
     end
 end
 
@@ -148,18 +226,21 @@ end
                              selection=:maxreal, tol=1e-10)
 
 Solve the generalized eigenvalue problem A·x = σ·B·x for sparse matrices using the
-SLEPc backend with shift-invert method.
+SLEPc backend with shift-invert method (`backend=:slepc`, default) or a dense
+LAPACK solve (`backend=:dense`, for small problems and tests).
 
 # Arguments
 - `A::SparseMatrixCSC`: Operator matrix (physics terms)
 - `B::SparseMatrixCSC`: Mass matrix (time derivative weights)
 - `nev::Int=20`: Number of eigenvalues to compute
+- `backend::Symbol=:slepc`: `:slepc` or `:dense`
 - `sigma::Union{Nothing,Number}=nothing`: Shift target for shift-invert modes
 - `which::Symbol=:LR`: Determines automatic shift selection (see below)
 - `selection::Symbol=:maxreal`: How to order the returned eigenvalues:
   - `:maxreal`: sort by descending real part (default, best for onset)
   - `:minabs`: sort by ascending magnitude
-  - `:closest_real`: sort by ascending |Re(σ)| (best for critical Ra search)
+  - `:closest_real`: sort by ascending |Re(σ)|. This does NOT select the leading
+    mode: at supercritical Ra it can return a weakly damped mode instead.
 - `tol::Float64=1e-10`: Convergence tolerance
 - `maxiter::Int=1000`: Maximum number of iterations
 - `krylovdim::Union{Nothing,Int}=nothing`: Krylov subspace dimension
@@ -175,16 +256,22 @@ values are returned in `info["tol"]` and `info["maxiter"]`.
 - `info::Dict`: Information about the solve
 
 # Notes
-**SHIFT-INVERT STRATEGY:**
+**SHIFT-INVERT STRATEGY (`:slepc`):**
 - Uses shift-invert method: solves (A - σ*B)^(-1)*B*x = μ*x where μ = 1/(λ - σ)
-- Always uses `:LM` (Largest Magnitude) for the transformed problem
-- The `which` parameter determines SHIFT SELECTION:
-  - `:LR` → shift σ=10.0 (targets eigenvalues with large positive real part)
+- Returns the `nev` eigenvalues nearest the shift σ
+- The `which` parameter determines SHIFT SELECTION when `sigma === nothing`:
+  - `:LR` → shift σ=10.0. Growth rates and drift frequencies are small in the
+    rotational time units used here (|λ| ≪ 10 for convective modes), so the
+    eigenvalues nearest σ=10 are those with the largest real part.
   - `:LI` → shift σ=10.0i (targets eigenvalues with large imaginary part)
   - other → shift σ=1.0 (general purpose)
+- Pass `sigma` near the expected eigenvalue when that scale assumption fails.
 - Results are sorted by `selection` criterion AFTER transformation
-- For onset problems: use `which=:LR, selection=:maxreal` (default)
-- For critical Ra: use `sigma=0.0, selection=:closest_real`
+- For onset problems and critical-Ra searches: use `which=:LR, selection=:maxreal`
+  (default)
+
+The `:dense` backend computes the whole spectrum and selects exactly (nearest
+`sigma` when given, otherwise by `which`).
 """
 function solve_eigenvalue_problem(A::SparseMatrixCSC, B::SparseMatrixCSC;
                                  nev::Int=1,
@@ -197,6 +284,7 @@ function solve_eigenvalue_problem(A::SparseMatrixCSC, B::SparseMatrixCSC;
                                  krylovdim::Union{Nothing,Int}=nothing,
                                  verbosity::Int=0)
 
+    _check_backend(backend)
     n = size(A, 1)
     size(A) == size(B) || throw(DimensionMismatch(
         "A and B must have same dimensions, got $(size(A)) and $(size(B))"))
@@ -241,6 +329,13 @@ bisection fallback) to mirror the strategy used in Kore.
 - `tol::Float64`: Relative tolerance on Ra (controls absolute tolerance internally)
 - `growth_tol::Float64`: Absolute tolerance on the residual growth rate
 - `max_iter::Int`: Maximum number of iterations
+- `nev::Int`: Eigenpairs requested per solve (at least 10 are computed)
+- `sigma`: Shift target (`nothing` targets the largest real part, see
+  [`solve_eigenvalue_problem`](@ref))
+- `backend::Symbol`: `:slepc` (default) or `:dense`
+
+The growth rate at each Ra is the largest real part among the computed
+eigenvalues, so the search follows the most unstable mode.
 
 # Returns
 - `Ra_c::Float64`: Critical Rayleigh number
@@ -251,8 +346,11 @@ bisection fallback) to mirror the strategy used in Kore.
 function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::Int;
                                Ra_min=1e4, Ra_max=1e10,
                                tol=1e-6, growth_tol=1e-6,
-                               max_iter::Int=50, nev::Int=1) where {TE<:Real, Tχ<:Real}
+                               max_iter::Int=50, nev::Int=1,
+                               sigma=nothing,
+                               backend::Symbol=:slepc) where {TE<:Real, Tχ<:Real}
 
+    _check_backend(backend)
     T = promote_type(TE, Tχ)
     E = T(E)
     χ = T(χ)
@@ -267,13 +365,17 @@ function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::I
         @debug "Testing Ra" Ra=Ra
         A, B = operator_builder(Ra)
 
+        # Track the most unstable mode. Ordering by |Re σ| would instead follow
+        # whichever mode is closest to neutral, e.g. a weakly damped mode at
+        # supercritical Ra.
         solver_nev = max(nev, 10)
         eigenvalues, _, info = solve_eigenvalue_problem(
             A, B;
             nev = solver_nev,
-            sigma = zero(T),
+            backend = backend,
+            sigma = sigma,
             which = :LR,
-            selection = :closest_real
+            selection = :maxreal
         )
 
         σ = Complex{T}(eigenvalues[1])
@@ -471,14 +573,18 @@ function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::I
 end
 
 """
-    find_onset_parameters(params_template, m_range; kwargs...)
+    find_onset_parameters(operator_builder_factory, E, χ, Pr, m_range; kwargs...)
 
 Find onset parameters (Ra_c, m_c, ω_c) by scanning over azimuthal wavenumbers.
 
 # Arguments
-- `params_template::SparseOnsetParams`: Template parameters (E, χ, Pr, etc.)
+- `operator_builder_factory::Function`: `(E, χ, Pr, m) -> (Ra -> (A, B))`
+- `E`, `χ`, `Pr`: Ekman number, radius ratio, Prandtl number
 - `m_range::AbstractVector{Int}`: Range of m values to test
 - `kwargs...`: Passed to find_critical_rayleigh
+
+A failure for one m is logged and recorded in `results`; an interrupt is
+rethrown, and an error is raised if the search fails for every m.
 
 # Returns
 - `Ra_c::Float64`: Critical Rayleigh number
@@ -528,9 +634,16 @@ function find_onset_parameters(operator_builder_factory::Function,
             @info "Mode result" m=m Ra_c=Ra_c ω_c=ω_c
 
         catch err
-            @warn "Failed for mode" m=m exception=err
+            err isa InterruptException && rethrow()
+            @warn "Failed for mode" m=m exception=(err, catch_backtrace())
             results[m] = ErrorResult((err,))
         end
+    end
+
+    if !any(r -> r isa SuccessResult, values(results))
+        first_err = isempty(results) ? nothing : results[first(m_range)].error
+        error("find_onset_parameters: the critical-Ra search failed for every m in $(m_range)" *
+              (first_err === nothing ? "" : "; first error: $(sprint(showerror, first_err))"))
     end
 
     @info "Onset parameters found" m_c=m_c Ra_c=Ra_c_min ω_c=ω_c_best

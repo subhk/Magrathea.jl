@@ -56,12 +56,15 @@ end
             @test work>0
             @test work ≈ diss rtol=2e-8
         end
-        # Advection of constant temperature, including compatibility projections.
+        # Advection of constant temperature, including compatibility projections
+        # (the legacy component form warns that it is approximate in general).
         oneT=Dict((0,0)=>fill(sqrt(4π),length(cd.x)))
         zeroT=Dict((0,0)=>zeros(length(cd.x)))
-        adv=compute_full_advection_spectral(oneT,zeroT,bs.ur_coeffs,bs.dur_dr_coeffs,
-            bs.utheta_coeffs,bs.uphi_coeffs,bs.lmax_bs,bs.mmax_bs,bs.r)
+        adv=@test_logs (:warn,r"approximate") match_mode=:any compute_full_advection_spectral(
+            oneT,zeroT,bs.ur_coeffs,bs.dur_dr_coeffs,bs.utheta_coeffs,bs.uphi_coeffs,
+            bs.lmax_bs,bs.mmax_bs,bs.r)
         @test maximum(maximum(abs,v) for v in values(adv))==0
+        @test maximum(maximum(abs,v) for v in values(compute_full_advection_spectral(oneT,zeroT,bs)))==0
         @test maximum(maximum(abs,v) for v in values(Magrathea._mean_flow_advection(oneT,zeroT,f)))==0
     end
 end

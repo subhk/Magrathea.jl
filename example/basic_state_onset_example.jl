@@ -9,6 +9,9 @@
 #
 # This extends the standard onset problem from a quiescent conduction state
 # to a state with differential rotation.
+#
+# The critical-Rayleigh searches use SLEPc. Run this script in an initialized
+# SLEPc session (see docs/src/examples.md).
 
 using Magrathea
 using Printf
@@ -50,24 +53,17 @@ println()
 
 Ra_guess_standard = 1e7
 
-try
-    Ra_c_standard, ω_c_standard, vec_standard = find_critical_rayleigh(
-        E, Pr, χ, m, lmax, Nr;
-        Ra_guess = Ra_guess_standard,
-        mechanical_bc = :no_slip,
-        thermal_bc = :fixed_temperature
-    )
+Ra_c_standard, ω_c_standard, vec_standard = find_critical_rayleigh(
+    E, Pr, χ, m, lmax, Nr;
+    Ra_guess = Ra_guess_standard,
+    mechanical_bc = :no_slip,
+    thermal_bc = :fixed_temperature
+)
 
-    println("Critical Parameters (Conduction Basic State):")
-    println("  Ra_c = ", @sprintf("%.6e", Ra_c_standard))
-    println("  ω_c  = ", @sprintf("%.6f", ω_c_standard))
-    println()
-
-catch e
-    println("ERROR: Failed to find critical Rayleigh number")
-    println("  ", e)
-    println()
-end
+println("Critical Parameters (Conduction Basic State):")
+println("  Ra_c = ", @sprintf("%.6e", Ra_c_standard))
+println("  ω_c  = ", @sprintf("%.6f", ω_c_standard))
+println()
 
 # =============================================================================
 # Case 2: Onset with Meridional Basic State
@@ -78,12 +74,13 @@ println("Case 2: Onset with Meridional Temperature Variation")
 println("="^70)
 println()
 
-# Create Chebyshev grid
+# Create Chebyshev grid (the basic state shares the perturbation grid)
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 2)
 
-# Create basic state with meridional temperature variation
-# amplitude controls the strength of the Y_20 component
-amplitude = 0.05  # 5% perturbation to conduction profile
+# The outer boundary temperature has an anomaly amplitude × P₂(cosθ); the
+# mean flow it drives scales with Ra, so the basic state is rebuilt at every
+# Rayleigh number the search evaluates (`basic_state_builder`).
+amplitude = 0.05  # outer temperature anomaly amplitude
 lmax_bs = 4       # Basic state uses fewer modes
 
 println("Basic State Configuration:")
@@ -91,50 +88,28 @@ println("  Meridional amplitude = ", amplitude)
 println("  lmax (basic state)   = ", lmax_bs)
 println()
 
-# Note: This requires the BasicState to be created first
-# For now, we use the conduction basic state as the default
-# When meridional_basic_state is fully implemented, uncomment below:
+meridional_state(Ra) = meridional_basic_state(cd, χ, E, Ra, Pr, lmax_bs, amplitude)
 
-# bs = meridional_basic_state(cd, χ, Ra_guess_standard, Pr, lmax_bs, amplitude)
-#
-# Ra_guess_meridional = Ra_guess_standard * (1 + amplitude)  # Adjust guess
-#
-# try
-#     Ra_c_meridional, ω_c_meridional, vec_meridional = find_critical_rayleigh(
-#         E, Pr, χ, m, lmax, Nr;
-#         Ra_guess = Ra_guess_meridional,
-#         mechanical_bc = :no_slip,
-#         thermal_bc = :fixed_temperature,
-#         basic_state = bs
-#     )
-#
-#     println("Critical Parameters (Meridional Basic State):")
-#     println("  Ra_c = ", @sprintf("%.6e", Ra_c_meridional))
-#     println("  ω_c  = ", @sprintf("%.6f", ω_c_meridional))
-#     println()
-#
-#     println("Comparison:")
-#     ΔRa = Ra_c_meridional - Ra_c_standard
-#     Δω = ω_c_meridional - ω_c_standard
-#     println("  ΔRa_c = ", @sprintf("%.6e", ΔRa),
-#             " (", @sprintf("%.2f", 100*ΔRa/Ra_c_standard), "%)")
-#     println("  Δω_c  = ", @sprintf("%.6f", Δω),
-#             " (", @sprintf("%.2f", 100*Δω/abs(ω_c_standard)), "%)")
-#     println()
-#
-# catch e
-#     println("ERROR: Failed with meridional basic state")
-#     println("  ", e)
-#     println()
-# end
+Ra_c_meridional, ω_c_meridional, vec_meridional = find_critical_rayleigh(
+    E, Pr, χ, m, lmax, Nr;
+    Ra_guess = Ra_c_standard,
+    basic_state_builder = meridional_state,
+    mechanical_bc = :no_slip,
+    thermal_bc = :fixed_temperature
+)
 
-println("NOTE: Full meridional basic state implementation requires:")
-println("  - Complete mode coupling in advection terms")
-println("  - Proper spherical harmonic derivative evaluation")
-println("  - Azimuthal advection by basic state zonal flow")
+println("Critical Parameters (Meridional Basic State):")
+println("  Ra_c = ", @sprintf("%.6e", Ra_c_meridional))
+println("  ω_c  = ", @sprintf("%.6f", ω_c_meridional))
 println()
-println("Current implementation provides the framework.")
-println("See TODO comments in src/linear_stability.jl for remaining work.")
+
+println("Comparison:")
+ΔRa = Ra_c_meridional - Ra_c_standard
+Δω = ω_c_meridional - ω_c_standard
+println("  ΔRa_c = ", @sprintf("%.6e", ΔRa),
+        " (", @sprintf("%.2f", 100*ΔRa/Ra_c_standard), "%)")
+println("  Δω_c  = ", @sprintf("%.6f", Δω),
+        " (", @sprintf("%.2f", 100*Δω/abs(ω_c_standard)), "%)")
 println()
 
 # =============================================================================
@@ -156,38 +131,31 @@ println()
 # When passed to OnsetParams, this should give identical results to Case 1
 # (This tests that the basic state machinery doesn't break the standard case)
 
-try
-    Ra_c_verify, ω_c_verify, vec_verify = find_critical_rayleigh(
-        E, Pr, χ, m, lmax, Nr;
-        Ra_guess = Ra_guess_standard,
-        mechanical_bc = :no_slip,
-        thermal_bc = :fixed_temperature,
-        basic_state = bs_conduction
-    )
+Ra_c_verify, ω_c_verify, vec_verify = find_critical_rayleigh(
+    E, Pr, χ, m, lmax, Nr;
+    Ra_guess = Ra_guess_standard,
+    mechanical_bc = :no_slip,
+    thermal_bc = :fixed_temperature,
+    basic_state = bs_conduction
+)
 
-    println("Critical Parameters (Explicit Conduction Basic State):")
-    println("  Ra_c = ", @sprintf("%.6e", Ra_c_verify))
-    println("  ω_c  = ", @sprintf("%.6f", ω_c_verify))
-    println()
+println("Critical Parameters (Explicit Conduction Basic State):")
+println("  Ra_c = ", @sprintf("%.6e", Ra_c_verify))
+println("  ω_c  = ", @sprintf("%.6f", ω_c_verify))
+println()
 
-    # Compare with standard case
-    println("Verification (should match Case 1):")
-    println("  |ΔRa_c| = ", @sprintf("%.2e", abs(Ra_c_verify - Ra_c_standard)))
-    println("  |Δω_c|  = ", @sprintf("%.2e", abs(ω_c_verify - ω_c_standard)))
-    println()
+# Compare with standard case
+println("Verification (should match Case 1):")
+println("  |ΔRa_c| = ", @sprintf("%.2e", abs(Ra_c_verify - Ra_c_standard)))
+println("  |Δω_c|  = ", @sprintf("%.2e", abs(ω_c_verify - ω_c_standard)))
+println()
 
-    if abs(Ra_c_verify - Ra_c_standard)/Ra_c_standard < 1e-6
-        println("✓ PASSED: Conduction basic state matches standard onset")
-    else
-        println("✗ FAILED: Mismatch between conduction basic state and standard")
-    end
-    println()
-
-catch e
-    println("ERROR: Verification failed")
-    println("  ", e)
-    println()
+if abs(Ra_c_verify - Ra_c_standard)/Ra_c_standard < 1e-6
+    println("✓ PASSED: Conduction basic state matches standard onset")
+else
+    println("✗ FAILED: Mismatch between conduction basic state and standard")
 end
+println()
 
 println("="^70)
 println("Example Complete")

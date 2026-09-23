@@ -322,10 +322,12 @@ where A includes advection by the mean flow and shear production terms.
 - `nev::Int` - Number of eigenvalues to compute (default: 6)
 - `tol::Float64` - Eigenvalue solver tolerance (default: 1e-10)
 - `which::Symbol` - Target eigenvalues: :LR (largest real), :LM (largest magnitude)
+- `sigma` - Shift target (`nothing` chooses one from `which`)
+- `backend::Symbol` - `:slepc` (default) or `:dense` (small problems, no PETSc)
 
 # Returns
 - `eigenvalues::Vector{ComplexF64}` - Complex growth rates
-- `eigenvectors::Vector{Vector{ComplexF64}}` - Corresponding eigenmodes
+- `eigenvectors::Matrix{ComplexF64}` - Corresponding eigenmodes (columns)
 - `operator::LinearStabilityOperator` - The assembled operator
 - `info` - Solver convergence information
 
@@ -369,6 +371,7 @@ function solve_biglobal_problem(params::BiglobalParams{T};
     )
 
     # Build operator (will include basic state operators automatically)
+    _check_backend(backend)
     op = LinearStabilityOperator(internal_params)
 
     if verbose
@@ -400,11 +403,12 @@ function _biglobal_rayleigh_kwargs(mechanical_bc::Symbol,
                                     equatorial_symmetry::Symbol,
                                     nev::Int,
                                     basic_state,
-                                    basic_state_builder)
+                                    basic_state_builder;
+                                    solver_kwargs...)
     rayleigh_kwargs = (; mechanical_bc=mechanical_bc,
                         thermal_bc=thermal_bc,
                         equatorial_symmetry=equatorial_symmetry,
-                        nev=nev)
+                        nev=nev, solver_kwargs...)
 
     if basic_state !== nothing
         rayleigh_kwargs = (; rayleigh_kwargs..., basic_state=basic_state)
@@ -444,8 +448,10 @@ scale with Ra.
 - `basic_state::BasicState` - Fixed axisymmetric basic state (optional)
 - `basic_state_builder::Function` - Callback `f(Ra) -> BasicState` for Ra-dependent states (optional)
 - `Ra_guess::Real` - Initial guess for Ra_c
-- `tol::Real` - Tolerance for convergence
+- `tol::Real` - Relative tolerance on Ra
+- `growth_tol::Real` - Absolute growth-rate tolerance for accepting a root (default: `tol`)
 - `equatorial_symmetry::Symbol` - :both, :symmetric, or :antisymmetric
+- `backend`, `sigma`, `which`, `maxiter`, `nev` - Passed to the eigensolver
 
 # Returns
 - `Ra_c::Real` - Critical Rayleigh number
@@ -457,12 +463,18 @@ function find_critical_Ra_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
                                     basic_state_builder::Union{Nothing,Function}=nothing,
                                     Ra_guess::Real=1e6,
                                     tol::Real=1e-6,
+                                    growth_tol::Real=tol,
                                     Ra_bracket::Tuple{<:Real,<:Real}=(Ra_guess/10, Ra_guess*10),
                                     mechanical_bc::Symbol=:no_slip,
                                     thermal_bc::Symbol=:fixed_temperature,
                                     equatorial_symmetry::Symbol=:both,
                                     nev::Int=6,
+                                    backend::Symbol=:slepc,
+                                    sigma=nothing,
+                                    which::Symbol=:LR,
+                                    maxiter::Int=1000,
                                     verbose::Bool=false)
+    _check_backend(backend)
 
     if (basic_state === nothing) && (basic_state_builder === nothing)
         error("find_critical_Ra_biglobal requires either `basic_state` or `basic_state_builder`")
@@ -478,11 +490,12 @@ function find_critical_Ra_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
 
     rayleigh_kwargs = _biglobal_rayleigh_kwargs(
         mechanical_bc, thermal_bc, equatorial_symmetry, nev,
-        basic_state, basic_state_builder)
+        basic_state, basic_state_builder;
+        backend=backend, sigma=sigma, which=which, maxiter=maxiter)
 
     Ra_c, ω_c, vec_c = find_critical_rayleigh(
         T(E), T(Pr), T(χ), m, lmax, Nr;
-        Ra_guess=T(Ra_guess), tol=T(tol),
+        Ra_guess=T(Ra_guess), tol=T(tol), growth_tol=T(growth_tol),
         Ra_bracket=(T(Ra_bracket[1]), T(Ra_bracket[2])),
         rayleigh_kwargs...
     )

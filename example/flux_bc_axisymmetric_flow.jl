@@ -9,9 +9,9 @@
 #
 #  Axisymmetric forcing drives both zonal flow and viscous meridional circulation.
 #  The momentum solve is Stokes–Coriolis with both mechanical boundaries.
-#  The standard temperature constructor neglects advection; the self-consistent
-#  constructor includes transport with diffusivity E/Pr. Momentum inertia is
-#  neglected in both. Use mean_flow_velocity for physical vector fields.
+#  The standard constructor used here neglects thermal advection and momentum
+#  inertia; basic_state_selfconsistent includes both (momentum_model=:stokes
+#  drops the inertia). Use mean_flow_velocity for physical vector fields.
 # =============================================================================
 
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
@@ -37,7 +37,7 @@ Nr = 32         # Radial points
 lmax_bs = 8     # Maximum spherical harmonic degree for basic state
 
 # Flux amplitudes
-flux_inner = -1.0    # Constant heat flux at inner boundary (negative = into domain)
+flux_mean = -1.0     # Y₀₀ part of the outer radial temperature gradient ∂T̄/∂r
 flux_Y20 = -0.2      # Y₂₀ amplitude at outer boundary (negative = polar cooling)
 
 println("=" ^ 70)
@@ -51,8 +51,8 @@ println("  Rayleigh number Ra = $Ra")
 println("  Prandtl number Pr = $Pr")
 println()
 println("Boundary Conditions:")
-println("  Inner: constant flux = $flux_inner (uniform heating)")
-println("  Outer: Y₀₀ + Y₂₀ pattern, Y₂₀ amplitude = $flux_Y20")
+println("  Inner: fixed temperature (temperature reference)")
+println("  Outer: ∂T̄/∂r = Y₀₀ ($flux_mean) + Y₂₀ ($flux_Y20)")
 println()
 println("Y₂₀ pattern: Y₂₀ ∝ (3cos²θ - 1)/2")
 println("  → Enhanced cooling at poles (cos²θ = 1)")
@@ -79,25 +79,25 @@ println()
 
 # Construct the outer boundary flux pattern
 # Y00 carries the mean heat flux, Y20 adds the latitudinal variation
-outer_flux = Y00(flux_inner) + Y20(flux_Y20)
+outer_flux = Y00(flux_mean) + Y20(flux_Y20)
 
 println("Outer boundary flux pattern:")
 println("  $outer_flux")
 println()
 
 # =============================================================================
-#  Compute Basic State (Standard Solver - No Iteration Needed!)
+#  Compute Basic State (Standard Solver: Conduction + Stokes–Coriolis Flow)
 # =============================================================================
 
 println("-" ^ 70)
 println("Computing basic state...")
 println("-" ^ 70)
 println()
-println("Note: For axisymmetric basic states (m=0 only), the advection term")
-println("      ū·∇T̄ = ū_φ/(r sinθ) × ∂T̄/∂φ = 0")
-println("      because ∂T̄/∂φ = 0 for m=0 modes.")
-println()
-println("      Therefore, no iteration is needed - we can use the standard solver.")
+println("Note: basic_state solves conduction with the prescribed boundary flux and")
+println("      the viscous Stokes–Coriolis flow that temperature drives. It does not")
+println("      iterate thermal advection: axisymmetric forcing still drives meridional")
+println("      circulation (ū_r, ū_θ), so use basic_state_selfconsistent when that")
+println("      transport matters.")
 println()
 
 # Use the standard basic_state function (which detects axisymmetry)
@@ -108,7 +108,7 @@ bs = basic_state(
     lmax_bs = lmax_bs
 )
 
-println("Basic state computed (no iteration required for axisymmetric case).")
+println("Basic state computed (thermal advection neglected).")
 
 # =============================================================================
 #  Analyze the Basic State
@@ -213,7 +213,7 @@ if is_3d
             end
         end
         if !has_radial
-            println("  (No radial flow - expected for axisymmetric basic state!)")
+            println("  (No significant radial flow)")
         end
     end
 
@@ -317,8 +317,8 @@ if is_3d
         println("  " * "-"^60)
 
         n_print = min(12, Nr)
-        step = max(1, Nr ÷ n_print)
-        for i in 1:step:Nr
+        print_step = max(1, Nr ÷ n_print)
+        for i in 1:print_step:Nr
             @printf("  %.4f     %+.4e     %+.4e     %+.4e\n",
                     r[i], T_20[i], u_40[i], u_20[i])
         end
@@ -337,8 +337,8 @@ else
         println("  " * "-"^60)
 
         n_print = min(12, Nr)
-        step = max(1, Nr ÷ n_print)
-        for i in 1:step:Nr
+        print_step = max(1, Nr ÷ n_print)
+        for i in 1:print_step:Nr
             @printf("  %.4f     %+.4e     %+.4e     %+.4e\n",
                     r[i], T_20[i], u_40[i], u_20[i])
         end
@@ -413,9 +413,9 @@ println("│     Property       │        Y₂₀ (m=0)     │        Y₂₂ 
 println("├────────────────────┼──────────────────────┼──────────────────────┤")
 println("│ Symmetry           │ Axisymmetric         │ Sectoral (4-fold)    │")
 println("│ ∂T̄/∂φ              │ = 0                  │ ≠ 0                  │")
-println("│ Advection ū·∇T̄     │ = 0 (no iteration)   │ ≠ 0 (needs iteration)│")
+println("│ Advection ū·∇T̄     │ ≠ 0 (meridional ū)   │ ≠ 0 (needs iteration)│")
 println("│ Zonal flow ū_φ     │ Yes (thermal wind)   │ Yes (thermal wind)   │")
-println("│ Meridional u_θ,u_r │ No (∂T/∂φ=0)         │ Yes (mode coupling)  │")
+println("│ Meridional u_θ,u_r │ Yes (viscous)        │ Yes (mode coupling)  │")
 println("│ Velocity modes     │ Y₁₀, Y₃₀ (from ∂/∂θ) │ Y₁₂-Y₈₂ (coupled)    │")
 println("└────────────────────┴──────────────────────┴──────────────────────┘")
 println()

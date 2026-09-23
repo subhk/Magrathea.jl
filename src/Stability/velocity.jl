@@ -821,68 +821,49 @@ function _triglobal_velocity_3d(eigenvector::AbstractVector{<:Complex},
 end
 
 
-const _mode_layout_cache = WeakKeyDict{Any, Dict{Int, NamedTuple{(:P, :T, :Θ),
-    Tuple{Vector{Int}, Vector{Int}, Vector{Int}}}}}()
+# Per-problem reconstruction data, keyed weakly by the problem object. Each entry
+# remembers the `params` it was built from: `CoupledModeProblem` is mutable, so a
+# replaced `problem.params` (new lmax, Nr, symmetry, …) must not reuse stale
+# reductions. The lock makes the cache safe to use from several threads.
 const _mode_reconstruction_cache = WeakKeyDict{Any, Any}()
-
-function _mode_layout(problem, m_abs::Int)
-    # Key caches by problem object so repeated triglobal reconstructions do not
-    # rebuild equivalent single-mode layouts for every eigenvector.
-    cache = get!(_mode_layout_cache, problem) do
-        Dict{Int, NamedTuple{(:P, :T, :Θ), Tuple{Vector{Int}, Vector{Int}, Vector{Int}}}}()
-    end
-
-    return get!(cache, m_abs) do
-        params_tri = problem.params
-        params_m = OnsetParams(
-            E = params_tri.E,
-            Pr = params_tri.Pr,
-            Ra = params_tri.Ra,
-            χ = params_tri.χ,
-            m = m_abs,
-            lmax = params_tri.lmax,
-            Nr = params_tri.Nr,
-            mechanical_bc = params_tri.mechanical_bc,
-            thermal_bc = params_tri.thermal_bc,
-            equatorial_symmetry = params_tri.equatorial_symmetry,
-            basic_state = nothing
-        )
-        op = LinearStabilityOperator(params_m)
-        return (P = copy(op.l_sets[:P]), T = copy(op.l_sets[:T]), Θ = copy(op.l_sets[:Θ]))
-    end
-end
+const _mode_reconstruction_lock = ReentrantLock()
 
 function _mode_reconstruction(problem, m_abs::Int)
     T = typeof(problem.params.E)
     CacheType = Dict{Int, NamedTuple{(:op, :reduction),
         Tuple{LinearStabilityOperator{T, Nothing}, ConstraintReduction{T}}}}
-    # The outer cache is intentionally `Any` because `WeakKeyDict` stores many
-    # problem parameterizations; this assertion recovers the concrete cache type
-    # for the hot reconstruction path.
-    cache = get!(_mode_reconstruction_cache, problem) do
-        CacheType()
-    end::CacheType
+    return lock(_mode_reconstruction_lock) do
+        entry = get(_mode_reconstruction_cache, problem, nothing)
+        if entry === nothing || entry.params !== problem.params
+            entry = (params = problem.params, modes = CacheType())
+            _mode_reconstruction_cache[problem] = entry
+        end
+        # The outer cache is intentionally `Any` because `WeakKeyDict` stores many
+        # problem parameterizations; this assertion recovers the concrete cache type
+        # for the hot reconstruction path.
+        cache = entry.modes::CacheType
 
-    return get!(cache, m_abs) do
-        params_tri = problem.params
-        params_m = OnsetParams(
-            E = params_tri.E,
-            Pr = params_tri.Pr,
-            Ra = params_tri.Ra,
-            χ = params_tri.χ,
-            m = m_abs,
-            lmax = params_tri.lmax,
-            Nr = params_tri.Nr,
-            mechanical_bc = params_tri.mechanical_bc,
-            thermal_bc = params_tri.thermal_bc,
-            equatorial_symmetry = params_tri.equatorial_symmetry,
-            basic_state = nothing
-        )
-        op = LinearStabilityOperator(params_m)
-        A, B, interior_dofs, boundary_dofs = assemble_matrices(op)
-        _, _, reduction = _constrained_reduced_matrices(
-            A, B, op, interior_dofs, boundary_dofs)
-        return (op = op, reduction = reduction)
+        get!(cache, m_abs) do
+            params_tri = problem.params
+            params_m = OnsetParams(
+                E = params_tri.E,
+                Pr = params_tri.Pr,
+                Ra = params_tri.Ra,
+                χ = params_tri.χ,
+                m = m_abs,
+                lmax = params_tri.lmax,
+                Nr = params_tri.Nr,
+                mechanical_bc = params_tri.mechanical_bc,
+                thermal_bc = params_tri.thermal_bc,
+                equatorial_symmetry = params_tri.equatorial_symmetry,
+                basic_state = nothing
+            )
+            op = LinearStabilityOperator(params_m)
+            # The tau-row nullspace depends only on the boundary conditions, so it
+            # comes straight from the BC formulas without assembling A.
+            reduction = _constraint_reduction_from_subblocks(op)
+            (op = op, reduction = reduction)
+        end
     end
 end
 
@@ -925,48 +906,12 @@ end
 """
     _build_chebyshev_grid(Nr, ri, ro)
 
-Build simple Chebyshev grid and differentiation matrix.
+Chebyshev–Gauss–Lobatto grid on `[ri, ro]` and its first-derivative matrix, i.e.
+the radial grid of [`ChebyshevDiffn`](@ref) used by the stability operators.
 """
 function _build_chebyshev_grid(Nr::Int, ri::T, ro::Real) where {T<:Real}
-    roT = T(ro)
-
-    # Chebyshev nodes on [-1, 1]
-    x_cheb = [-cos(T(pi) * T(k) / T(Nr - 1)) for k in 0:(Nr - 1)]
-
-    # Map to [ri, ro]
-    x = ri .+ (roT - ri) .* (x_cheb .+ one(T)) ./ T(2)
-
-    # Differentiation matrix
-    D1 = _chebyshev_diff_matrix(Nr, T) .* (T(2) / (roT - ri))
-
-    return (x=x, D1=D1)
-end
-
-
-_chebyshev_diff_matrix(N::Int) = _chebyshev_diff_matrix(N, Float64)
-
-function _chebyshev_diff_matrix(N::Int, ::Type{T}) where {T<:Real}
-    D = zeros(T, N, N)
-    x = [-cos(T(pi) * T(k) / T(N - 1)) for k in 0:(N - 1)]
-
-    c = ones(T, N)
-    c[1] = T(2)
-    c[end] = T(2)
-    c[1:2:end] .*= -one(T)
-
-    for i in 1:N
-        row_sum = zero(T)
-        for j in 1:N
-            if i != j
-                val = c[i] / (c[j] * (x[i] - x[j]))
-                D[i, j] = val
-                row_sum += val
-            end
-        end
-        D[i, i] = -row_sum
-    end
-
-    return D
+    cd = ChebyshevDiffn(Nr, T[ri, T(ro)], 1)
+    return (x=cd.x, D1=cd.D1)
 end
 
 
@@ -995,29 +940,34 @@ end
     perturbation_temperature(evec, op::LinearStabilityOperator; Nθ=nothing, grid=nothing)
 
 Reconstruct the physical perturbation temperature field
-`θ(r, θ) = Σ_ℓ Θ_ℓ(r) Y_ℓ^m(θ)` on a meridional grid. `Θ_ℓ(r)` are the
-temperature collocation values stored in the eigenvector's `:Θ` blocks.
+`θ(r, θ) = Σ_ℓ Θ_ℓ(r) Y_ℓ^m(θ)/√(2ℓ+1)` on a meridional grid. `Θ_ℓ(r)` are the
+temperature collocation values stored in the eigenvector's `:Θ` blocks; like the
+velocity potentials they multiply the `Y_ℓ^m/√(2ℓ+1)` harmonics (orthonormal
+`Y_ℓ^m`, Condon–Shortley phase). For `m = 0` the operator keeps degrees up to
+`lmax + 1`, so the default grid covers `maximum(op.l_sets[:Θ])`.
 """
 function perturbation_temperature(evec::AbstractVector{<:Complex},
                                   op::LinearStabilityOperator;
                                   Nθ::Union{Int,Nothing}=nothing,
                                   grid::Union{MeridionalGrid,Nothing}=nothing)
+    length(evec) == op.total_dof || throw(DimensionMismatch(
+        "eigenvector has length $(length(evec)); the operator has $(op.total_dof) DOFs"))
     m    = op.params.m
-    lmax = op.params.lmax
     Nr   = op.params.Nr
+    T    = typeof(op.params.E)
+    l_top = maximum(op.l_sets[:Θ]; init=max(m, op.params.lmax))
     g = grid === nothing ?
-        build_meridional_grid(Nθ === nothing ? 2 * lmax : Nθ, m, lmax;
-                              T=typeof(op.params.E)) : grid
+        build_meridional_grid(Nθ === nothing ? 2 * l_top : Nθ, m, l_top; T=T) : grid
 
-    θfield = zeros(ComplexF64, Nr, length(g.θ))
-    offset = (length(op.l_sets[:P]) + length(op.l_sets[:T])) * Nr
-    for (i, l) in enumerate(op.l_sets[:Θ])
-        block = offset + (i - 1) * Nr + 1 : offset + i * Nr
-        (last(block) <= length(evec)) || continue
-        Θl = @view evec[block]
+    θfield = zeros(promote_type(eltype(evec), Complex{T}), Nr, length(g.θ))
+    for l in op.l_sets[:Θ]
+        haskey(g.Ylm, l) || throw(ArgumentError(
+            "grid has no Y_$(l)^$(m); build it with lmax ≥ $l_top"))
+        Θl = @view evec[op.index_map[(l, :Θ)]]
         ylm = g.Ylm[l]
+        norm = inv(sqrt(T(2l + 1)))
         @inbounds for j in eachindex(g.θ), k in 1:Nr
-            θfield[k, j] += Θl[k] * ylm[j]
+            θfield[k, j] += norm * Θl[k] * ylm[j]
         end
     end
     return θfield, op.r, g

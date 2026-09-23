@@ -8,7 +8,7 @@
 # =============================================================================
 
 # Dependencies provided by Magrathea module:
-# LinearAlgebra, LinearMaps, Parameters, Random
+# LinearAlgebra, Parameters
 # ChebyshevDiffn is available in the Magrathea namespace
 
 const _fourπ = 4π
@@ -58,7 +58,19 @@ Parameters for rotating spherical shell convection.
 - `Nr::Int` — radial collocation points
 - `mechanical_bc::Symbol` — `:no_slip` (default) or `:stress_free`
 - `thermal_bc::Symbol` — `:fixed_temperature` (default) or `:fixed_flux`
-- `equatorial_symmetry::Symbol` — `:both` (default), `:symmetric`, or `:antisymmetric`
+- `equatorial_symmetry::Symbol` — `:both` (default), `:symmetric`, or `:antisymmetric`.
+  A truncated symmetry class requires an equatorially symmetric `basic_state`,
+  since an asymmetric basic state couples the two classes.
+- `heating::Symbol` — conduction profile used when `basic_state === nothing`:
+  `:differential` (default; fixed inner/outer temperatures, dT̄/dr ∝ -1/r²) or
+  `:internal` (uniform heat sources, dT̄/dr ∝ -r). With a basic state the
+  temperature gradient comes from the basic state.
+- `use_sparse_weighting::Bool` — weight the temperature rows by r³ (default) or
+  r². This only rescales rows of the collocation system and leaves the spectrum
+  unchanged. For backward compatibility, `use_sparse_weighting=false` without an
+  explicit `heating` still selects `heating=:internal` (with a deprecation warning).
+
+Lengths are scaled by the outer radius, so `ro` must be 1 and `ri == χ`.
 
 # Example
 ```julia
@@ -83,13 +95,20 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
     use_sparse_weighting::Bool = true
     equatorial_symmetry::Symbol = :both
     basic_state::BS = nothing
+    heating::Symbol = :auto
 
     function OnsetParams{T,BS}(E, Pr, Ra, χ, m, lmax, Nr, ri, ro, L,
                            mechanical_bc, thermal_bc, use_sparse_weighting,
                            equatorial_symmetry,
-                           basic_state::BS) where {T,BS}
+                           basic_state::BS, heating=:auto) where {T,BS}
         0 < χ < 1 || throw(ArgumentError(
             "Radius ratio χ must be in (0,1), got $χ"))
+        isapprox(ro, one(ro)) || throw(ArgumentError(
+            "Lengths are scaled by the outer radius, so ro must be 1, got ro=$ro"))
+        isapprox(ri, χ * ro) || throw(ArgumentError(
+            "Inner radius ri=$ri is inconsistent with χ=$χ and ro=$ro (need ri = χ·ro)"))
+        isapprox(L, ro - ri) || throw(ArgumentError(
+            "Shell thickness L=$L is inconsistent with ro - ri = $(ro - ri)"))
         E > 0 || throw(ArgumentError(
             "Ekman number E must be positive, got $E"))
         Pr > 0 || throw(ArgumentError(
@@ -106,11 +125,74 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
             "thermal_bc must be :fixed_temperature or :fixed_flux, got :$thermal_bc"))
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
+        heating = _resolve_onset_heating(heating, use_sparse_weighting, basic_state)
+        if equatorial_symmetry !== :both && basic_state !== nothing &&
+           !_basic_state_equatorially_symmetric(basic_state)
+            throw(ArgumentError(
+                "equatorial_symmetry=:$equatorial_symmetry requires an equatorially " *
+                "symmetric basic state, but this basic state has components that break " *
+                "equatorial symmetry and would couple symmetric and antisymmetric modes. " *
+                "Use equatorial_symmetry=:both."))
+        end
 
         new{T,BS}(E, Pr, Ra, χ, m, lmax, Nr, ri, ro, L,
                mechanical_bc, thermal_bc, use_sparse_weighting, equatorial_symmetry,
-               basic_state)
+               basic_state, heating)
     end
+end
+
+"""Resolve the `heating` keyword of `OnsetParams`. `:auto` keeps the historical
+meaning of `use_sparse_weighting=false` (internal heating) with a deprecation
+warning; otherwise heating is independent of the row weighting."""
+function _resolve_onset_heating(heating::Symbol, use_sparse_weighting::Bool, basic_state)
+    if heating === :auto
+        if !use_sparse_weighting && basic_state === nothing
+            Base.depwarn("OnsetParams(use_sparse_weighting=false) selecting internal heating " *
+                         "is deprecated; pass heating=:internal explicitly. " *
+                         "use_sparse_weighting only selects the row weighting.",
+                         :OnsetParams)
+            return :internal
+        end
+        return :differential
+    end
+    heating in (:differential, :internal) || throw(ArgumentError(
+        "heating must be :differential or :internal, got :$heating"))
+    heating === :internal && basic_state !== nothing && throw(ArgumentError(
+        "heating=:internal applies to the built-in conduction profile only; with a " *
+        "basic state the temperature gradient comes from the basic state"))
+    return heating
+end
+
+"""
+    _basic_state_equatorially_symmetric(bs; rtol=1e-10) -> Bool
+
+True when every component of `bs` that feeds the stability coupling is
+equatorially symmetric: temperature and poloidal potential with even `ℓ+m`,
+toroidal potential with odd `ℓ+m` (and, for states given by scalar velocity
+components, `u_r`, `u_φ` with even and `u_θ` with odd `ℓ+m`). Components below
+`rtol` times the largest coefficient of their field are treated as zero.
+"""
+function _basic_state_equatorially_symmetric(bs; rtol=1e-10)
+    hasproperty(bs, :theta_coeffs) || return true
+    lm(key) = key isa Integer ? (key, 0) : (key[1], key[2])
+    function field_ok(d, want_even)
+        (d === nothing || isempty(d)) && return true
+        scale = maximum(v -> isempty(v) ? 0.0 : Float64(maximum(abs, v)), values(d); init=0.0)
+        scale == 0 && return true
+        for (key, v) in d
+            l, m = lm(key)
+            iseven(l + m) == want_even && continue
+            !isempty(v) && maximum(abs, v) > rtol * scale && return false
+        end
+        return true
+    end
+    field_ok(bs.theta_coeffs, true) || return false
+    flow = hasproperty(bs, :flow) ? bs.flow : nothing
+    if flow !== nothing
+        return field_ok(flow.p, true) && field_ok(flow.t, false)
+    end
+    return field_ok(bs.ur_coeffs, true) && field_ok(bs.utheta_coeffs, false) &&
+           field_ok(bs.uphi_coeffs, true)
 end
 
 # -----------------------------------------------------------------------------
@@ -163,6 +245,7 @@ struct LinearStabilityOperator{T<:Real, BS}
     l_sets::Dict{Symbol, Vector{Int}}
     total_dof::Int
     radial_cache::Dict{Tuple{Int,Int}, Matrix{T}}
+    radial_cache_lock::ReentrantLock
 end
 
 """Build a Chebyshev radial grid, field index map, and derivative cache."""
@@ -185,7 +268,7 @@ function LinearStabilityOperator(params::OnsetParams{T, BS}) where {T, BS}
 
     total_dof = idx - 1
     return LinearStabilityOperator{T, BS}(params, cd, r, index_map, l_sets, total_dof,
-                                          Dict{Tuple{Int,Int}, Matrix{T}}())
+                                          Dict{Tuple{Int,Int}, Matrix{T}}(), ReentrantLock())
 end
 
 # -----------------------------------------------------------------------------
@@ -196,14 +279,16 @@ end
     radial_matrix(op, power, order)
 
 Return and cache the dense radial matrix `r^power * d^order/dr^order` on the
-operator grid.
+operator grid. The cache is guarded by a lock, so one operator can be shared
+across threads.
 """
 function radial_matrix(op::LinearStabilityOperator{T}, power::Int, order::Int) where {T}
     cache = op.radial_cache
     key = (power, order)
-    if haskey(cache, key)
-        return cache[key]
+    cached = lock(op.radial_cache_lock) do
+        get(cache, key, nothing)
     end
+    cached === nothing || return cached
 
     mat = if order == 0
         _radial_diagonal_matrix(op.r, power)
@@ -221,8 +306,9 @@ function radial_matrix(op::LinearStabilityOperator{T}, power::Int, order::Int) w
         throw(ArgumentError("Unsupported derivative order $order"))
     end
 
-    cache[key] = mat
-    return mat
+    return lock(op.radial_cache_lock) do
+        get!(cache, key, mat)
+    end
 end
 
 @inline function _integer_power(x::T, power::Int) where {T}
@@ -405,18 +491,25 @@ function _assemble_onset_radial_coo(op::LinearStabilityOperator{T};
             _emit_block!(A_rows, A_cols, A_vals, P_idx, op.index_map[(ℓ+1, :T)], Complex.(coupling); owned=owned_julia_rows)
         end
 
-        # Temperature equation blocks for matching Θ ℓ
+        # Temperature equation blocks for matching Θ ℓ, weighted by r^w. The
+        # weighting only rescales rows; `heating` selects the conduction gradient
+        # -dT̄/dr: ri·ro/(gap·r²) (differential) or r (internal). With u_r = L P/r
+        # the advection -u_r dT̄/dr weighted by r^w is L·c·r^(w-3)·P or L·r^w·P.
         if Θ_idx !== nothing
             if p.use_sparse_weighting
                 B_theta = R3D0
-                adv_coeff = ri / gap
-                adv_matrix = R0
                 diffusion = -L * R1D0 + 2 * R2D1 + R3D2
             else
                 B_theta = R2D0
-                adv_coeff = one(TT)
-                adv_matrix = R2D0
                 diffusion = -L * R0 + 2 * R1D1 + R2D2
+            end
+            w = p.use_sparse_weighting ? 3 : 2
+            if p.heating === :differential
+                adv_coeff = ri * ro / gap
+                adv_matrix = radial_matrix(op, w - 3, 0)
+            else
+                adv_coeff = one(TT)
+                adv_matrix = radial_matrix(op, w, 0)
             end
 
             _emit_block!(B_rows, B_cols, B_vals, Θ_idx, Θ_idx, Complex.(B_theta); owned=owned_julia_rows)
@@ -809,11 +902,14 @@ end
 """
     solve_eigenvalue_problem(op; nev, tol, maxiter, which, sigma)
 
-Compute the leading eigenpairs of the constrained linear-stability problem with
-the SLEPc backend (the sole supported backend). The distributed
-constrained-reduction path assembles the full tau pencil and the S/P projection
-matrices, forms the reduced pencil `S·A·P` / `S·B·P`, runs the EPS shift-invert
-solve, and reconstructs eigenvectors to full DOFs on rank 0.
+Compute the leading eigenpairs of the constrained linear-stability problem.
+
+With `backend=:slepc` (default), the distributed constrained-reduction path
+assembles the full tau pencil and the S/P projection matrices, forms the reduced
+pencil `S·A·P` / `S·B·P`, runs the EPS shift-invert solve, and reconstructs
+eigenvectors to full DOFs on rank 0. With `backend=:dense`, the reduced pencil is
+formed in memory and solved with LAPACK (small problems and tests); `tol` and
+`maxiter` are ignored.
 """
 function solve_eigenvalue_problem(op::LinearStabilityOperator{T};
                                   nev::Int=6,
@@ -823,8 +919,20 @@ function solve_eigenvalue_problem(op::LinearStabilityOperator{T};
                                   which::Symbol=:LR,
                                   sigma::Union{Nothing,Number}=nothing) where {T<:Real}
 
-    backend === :slepc || throw(ArgumentError(
-        "Unknown eigensolver backend $(backend); only :slepc is supported"))
+    _check_backend(backend)
+    if backend === :dense
+        A, B, interior_dofs, boundary_dofs = assemble_matrices(op)
+        Ared, Bred, reduction = _constrained_reduced_matrices(A, B, op, interior_dofs,
+                                                              boundary_dofs)
+        vals, vecs_red, info = _dense_generalized_eigen(Ared, Bred; nev=nev, sigma=sigma,
+                                                        which=which, selection=:maxreal)
+        vecs = Matrix{Complex{T}}(undef, op.total_dof, size(vecs_red, 2))
+        for j in axes(vecs_red, 2)
+            vecs[:, j] = _reconstruct_full_vector(reduction,
+                                                  Vector{Complex{T}}(vecs_red[:, j]))
+        end
+        return vals, vecs, info
+    end
 
     return Magrathea._solve_constrained_slepc(op;
         nev=nev, sigma=sigma, which=which, tol=tol, maxiter=maxiter)
@@ -850,10 +958,16 @@ end
 
 Search for the Rayleigh number where the leading hydrodynamic growth rate
 changes sign, optionally rebuilding a basic state at each sample.
+
+`tol` is the relative tolerance on Ra; `growth_tol` (default `tol`) is the
+absolute tolerance on the growth rate for accepting a sample as the root.
+Keywords that are `OnsetParams` fields configure the operator; the rest
+(`nev`, `backend`, `sigma`, `which`, `maxiter`) go to the eigensolver.
 """
 function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
                                 Ra_guess::T=one(T)*1e6,
                                 tol::T=1e-6,
+                                growth_tol::T=tol,
                                 Ra_bracket::Tuple{T,T}=(Ra_guess/10, Ra_guess*10),
                                 basic_state_builder=nothing,
                                 kwargs...) where {T<:Real}
@@ -904,7 +1018,7 @@ function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
 
     function add_sample!(Ra_val::T)
         σ_val = sigma_cached(Ra_val)
-        if abs(σ_val) < tol
+        if abs(σ_val) < growth_tol
             return (:root, Ra_val)
         elseif σ_val > 0
             pos[] = (Ra_val, σ_val)
@@ -1005,9 +1119,10 @@ function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
     d = b - a
     e = d
 
+    converged = false
     for _ in 1:200
-        if fb == zero(fb)
-            a, fa = b, fb
+        if fb == zero(fb) || abs(fb) < growth_tol
+            converged = true
             break
         end
         if sign(fa) == sign(fb)
@@ -1020,9 +1135,12 @@ function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
             b, fb = a, fa
             a, fa = c, fc
         end
-        tol_act = 2 * eps(T) * abs(b) + tol / 2
+        # Relative tolerance on Ra: Ra_c is O(1e4–1e9), so an absolute `tol`
+        # would demand near machine-precision brackets.
+        tol_act = 2 * eps(T) * abs(b) + tol * abs(b) / 2
         mid = (a - b) / 2
-        if abs(mid) <= tol_act || fb == zero(fb)
+        if abs(mid) <= tol_act
+            converged = true
             break
         end
         if abs(e) >= tol_act && abs(fc) > abs(fb)
@@ -1060,6 +1178,7 @@ function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
         end
         fb = sigma_cached(b)
     end
+    converged || @warn "Critical-Ra search did not converge in 200 Brent iterations" Ra=b σ=fb
 
     Ra_c = b
     op_c = build_operator(Ra_c)

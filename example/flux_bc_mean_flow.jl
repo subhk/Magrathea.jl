@@ -4,17 +4,18 @@
 #
 #  This example demonstrates computing the self-consistent basic state
 #  (temperature + thermal wind flow) driven by:
-#    - Inner boundary: constant heat flux (uniform heating)
+#    - Inner boundary: fixed temperature (temperature reference)
 #    - Outer boundary: -Y₂₂ heat flux pattern (sectoral cooling variation)
 #
 #  The Y₂₂ pattern creates a non-axisymmetric temperature field which drives
-#  zonal flow (u_φ) via thermal wind balance, and meridional circulation
-#  (u_r, u_θ) via the full geostrophic balance.
+#  zonal flow (u_φ) and meridional circulation (u_r, u_θ).
 #
-#  Physics:
-#    - Heat equation: κ∇²T̄ = ū·∇T̄ (advection-diffusion balance)
-#    - Thermal wind: 2Ω(ẑ·∇)ū = (Ra E²/Pr) ∇T̄ × r̂
+#  Physics (basic_state_selfconsistent):
+#    - Heat equation: (E/Pr)∇²T̄ = ū·∇T̄ (advection-diffusion balance)
+#    - Momentum: steady Navier–Stokes–Coriolis balance forced by buoyancy
 #    - Continuity: ∇·ū = 0
+#  The damped Picard iteration converges for moderate forcing; at much smaller
+#  E or larger Ra it can stagnate (info.termination_reason === :stagnation).
 # =============================================================================
 
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
@@ -31,8 +32,8 @@ using LinearAlgebra
 χ = 0.35        # Radius ratio r_i/r_o (Earth's core: ~0.35)
 
 # Non-dimensional numbers
-E = 1e-4        # Ekman number (rotation dominance)
-Ra = 1e6        # Rayleigh number (buoyancy strength)
+E = 1e-3        # Ekman number (rotation dominance)
+Ra = 3e3        # Rayleigh number (buoyancy strength)
 Pr = 1.0        # Prandtl number (ν/κ)
 
 # Resolution
@@ -40,7 +41,7 @@ Nr = 32         # Radial points
 lmax_bs = 8     # Maximum spherical harmonic degree for basic state
 
 # Flux amplitudes
-flux_inner = -1.0    # Constant heat flux at inner boundary (negative = into domain)
+flux_mean = -1.0     # Y₀₀ part of the outer radial temperature gradient ∂T̄/∂r
 flux_Y22 = -0.2      # Y₂₂ amplitude at outer boundary (negative = enhanced cooling)
 
 println("=" ^ 70)
@@ -54,8 +55,8 @@ println("  Rayleigh number Ra = $Ra")
 println("  Prandtl number Pr = $Pr")
 println()
 println("Boundary Conditions:")
-println("  Inner: constant flux = $flux_inner (uniform heating)")
-println("  Outer: Y₀₀ + Y₂₂ pattern, Y₂₂ amplitude = $flux_Y22")
+println("  Inner: fixed temperature (temperature reference)")
+println("  Outer: ∂T̄/∂r = Y₀₀ ($flux_mean) + Y₂₂ ($flux_Y22)")
 println()
 println("Resolution: Nr = $Nr, lmax = $lmax_bs")
 println()
@@ -76,17 +77,13 @@ println()
 #  Define Flux Boundary Condition using Symbolic Spherical Harmonics
 # =============================================================================
 
-# The flux BC specifies ∂T/∂r at the boundaries
-#
-# At inner boundary: uniform flux (Y₀₀ pattern)
-# At outer boundary: Y₀₀ (mean) + Y₂₂ (sectoral variation)
-#
-# Note: The basic_state_selfconsistent function handles this through
-# the outer_fluxes parameter in the underlying solver.
+# The flux BC specifies the outer radial temperature gradient ∂T̄/∂r
+# (increasing-radius derivative): Y₀₀ (mean) + Y₂₂ (sectoral variation).
+# The inner boundary keeps a fixed temperature, which sets the reference.
 
 # Construct the outer boundary flux pattern
 # Y00 carries the mean heat flux, Y22 adds the non-axisymmetric variation
-outer_flux = Y00(flux_inner) + Y22(flux_Y22)
+outer_flux = Y00(flux_mean) + Y22(flux_Y22)
 
 println("Outer boundary flux pattern:")
 println("  $outer_flux")
@@ -100,30 +97,26 @@ println("-" ^ 70)
 println("Computing self-consistent basic state...")
 println("-" ^ 70)
 
-# Use the self-consistent solver which iterates:
-# 1. Solve temperature from ∇²T = (1/κ) ū·∇T
-# 2. Compute thermal wind ū from temperature
-# 3. Repeat until convergence
+# The self-consistent solver iterates (damped Picard):
+# 1. Solve the temperature with advection by the current mean flow
+# 2. Solve the steady momentum balance for that temperature
+# 3. Repeat until the momentum, thermal and boundary residuals meet `tolerance`
 
 bs, info = basic_state_selfconsistent(
     cd, χ, E, Ra, Pr;
     flux_bc = outer_flux,
     mechanical_bc = :no_slip,
     lmax_bs = lmax_bs,
-    max_iterations = 30,
-    tolerance = 1e-10,
+    max_iterations = 60,
+    tolerance = 1e-8,
     verbose = true
 )
 
 println()
-if info !== nothing
-    if info.converged
-        println("✓ Converged in $(info.iterations) iterations")
-    else
-        println("⚠ Did not converge after $(info.iterations) iterations")
-        println("  Final residual: $(info.residual_history[end])")
-    end
-end
+info.converged || error("Self-consistent basic state did not converge " *
+    "($(info.termination_reason), residual $(info.residual_history[end])); " *
+    "reduce Ra or the flux amplitude, or increase E")
+println("✓ Converged in $(info.iterations) iterations")
 
 # =============================================================================
 #  Analyze the Basic State
@@ -268,8 +261,8 @@ if haskey(bs.theta_coeffs, (2, 2)) && haskey(bs.uphi_coeffs, (2, 2))
 
     # Print at selected radial points
     n_print = min(10, Nr)
-    step = max(1, Nr ÷ n_print)
-    for i in 1:step:Nr
+    print_step = max(1, Nr ÷ n_print)
+    for i in 1:print_step:Nr
         @printf("  %.4f     %+.4e     %+.4e\n", r[i], T_22[i], u_22[i])
     end
 end
@@ -300,13 +293,13 @@ let u_phi_max = 0.0, u_theta_max = 0.0, u_r_max = 0.0
     @printf("  max|ū_θ|  = %.4e  (meridional flow)\n", u_theta_max)
     @printf("  max|ū_r|  = %.4e  (radial flow)\n", u_r_max)
 
-    # Rossby number estimate
-    Ro = u_phi_max * E
+    # Rossby number estimate (velocities are in units of Ω r_o)
+    Ro = u_phi_max
     @printf("\n  Rossby number Ro = U/(ΩL) ≈ %.4e\n", Ro)
     @printf("  (Geostrophic balance valid for Ro << 1)\n")
 
-    # Péclet number estimate
-    Pe = u_phi_max * Pr
+    # Péclet number estimate: U r_o / κ = u Pr / E
+    Pe = u_phi_max * Pr / E
     @printf("\n  Péclet number Pe = UL/κ ≈ %.4e\n", Pe)
     if Pe > 1
         println("  (Advection significant: self-consistent solution important)")

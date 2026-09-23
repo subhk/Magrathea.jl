@@ -167,17 +167,22 @@ end
 # ============================================================================
 
 """
-    solve(problem::TriglobalProblem; nev=6, sigma=nothing, verbose=true)
+    solve(problem::TriglobalProblem; nev=6, sigma=nothing, tol=1e-8, maxiter=200,
+          which=:LR, backend=:slepc, verbose=true)
 
 Solve the triglobal stability eigenvalue problem with non-axisymmetric basic state.
 
 Constructs `TriglobalParams` from the wrapped `OnsetParams`, `BasicState3D`,
 and `m_range`, calls `solve_triglobal_eigenvalue_problem`, and wraps the result
-in a `StabilityResult`.
+in a `StabilityResult`. With `sigma === nothing` the shift is chosen from `which`
+like the other problem types.
 """
 function solve(problem::TriglobalProblem{T};
                nev::Int=6,
                sigma=nothing,
+               tol::Real=1e-8,
+               maxiter::Int=200,
+               which::Symbol=:LR,
                backend::Symbol=:slepc,
                verbose::Bool=true) where T
 
@@ -192,9 +197,9 @@ function solve(problem::TriglobalProblem{T};
         equatorial_symmetry=p.equatorial_symmetry
     )
 
-    σ_target = sigma === nothing ? 0.0 : sigma
     eigenvalues, eigenvectors = solve_triglobal_eigenvalue_problem(triglobal_params;
-        σ_target=σ_target, nev=nev, verbose=verbose, backend=backend)
+        σ_target=sigma, nev=nev, verbose=verbose, which=which, tol=tol,
+        maxiter=maxiter, backend=backend)
 
     # eigenvectors is already a Matrix from the triglobal solver
     evec_matrix = Matrix{Complex{T}}(eigenvectors)
@@ -212,13 +217,23 @@ end
 # ============================================================================
 
 """
-    solve(problem::MHDProblem; nev=6, sigma=nothing)
+    solve(problem::MHDProblem; nev=6, sigma=nothing, tol=1e-10, maxiter=1000,
+          which=:LR, backend=:slepc)
 
 Solve the MHD eigenvalue problem.
 
 Constructs an `MHDStabilityOperator` from the MHD parameters, assembles the
-matrices via `assemble_mhd_matrices`, solves with `solve_eigenvalue_problem`,
-and wraps the result in a `StabilityResult`.
+matrices (boundary-recombined Galerkin for insulating walls, tau otherwise),
+solves with the selected backend (`:slepc` or `:dense`), and wraps the result in
+a `StabilityResult`.
+
+Each returned eigenvector is checked for radial resolution:
+`result.extra.spectral_tail[j]` holds the share of mode `j`'s norm in the top
+quarter of its Chebyshev coefficients (`radial`) and of its retained degrees
+(`angular`). A warning is issued when the leading mode's radial tail exceeds
+1e-2: such modes sit at the truncation scale (typically
+spurious growth at strong field and low `N`), so increase `N` until the leading
+eigenvalue converges.
 """
 function solve(problem::MHDProblem{T, BS};
                nev::Int=6,
@@ -228,6 +243,7 @@ function solve(problem::MHDProblem{T, BS};
                which::Symbol=:LR,
                backend::Symbol=:slepc) where {T, BS}
 
+    _check_backend(backend)
     _warn_if_large(problem, "MHDProblem")
 
     mhd_params = problem.params
@@ -238,31 +254,23 @@ function solve(problem::MHDProblem{T, BS};
         # Hydro AND axial-field MHD with insulating magnetic BCs: tau-free
         # ultraspherical-Galerkin assembly. (Dipole and conducting/perfect-conductor
         # magnetic BCs are not yet supported by the Galerkin path → tau below.)
-        # Spurious-free, so `:LR`/`:maxreal` selects the convective mode with no
-        # σ-targeting. The reduced pencil is small ⇒ a dense solve gives the exact
-        # spectrum (no Krylov fragility). The dipole case still routes through the
-        # tau path below (Galerkin dipole not implemented — see galerkin_assembly.jl).
+        # The recombined basis removes the tau method's spurious eigenvalues, but an
+        # under-resolved pencil can still have unphysical growing modes (strong
+        # field, low N); the spectral-tail check below flags those. The dipole case
+        # still routes through the tau path (see galerkin_assembly.jl).
         A_gal, B_gal, layout = assemble_mhd_galerkin(op)
         if backend === :slepc
             vals_s, vecs_s, _ = Magrathea._solve_generalized_eigen_slepc(
                 sparse(A_gal), sparse(B_gal); nev=nev,
-                sigma = sigma === nothing ? zero(Complex{T}) : Complex{T}(sigma),
+                sigma = sigma === nothing ? nothing : ComplexF64(sigma),
                 which=which, selection=:maxreal, tol=tol, maxiter=maxiter, verbosity=0)
-            eigenvalues = vals_s
-            evecs_full = [reconstruct_mhd_galerkin_full(op, layout, vecs_s[:, j])
-                          for j in 1:size(vecs_s, 2)]
         else
-            F = eigen(A_gal, B_gal)
-            keep = findall(isfinite, F.values)
-            vals = F.values[keep]
-            order = sigma !== nothing ? sortperm(abs.(vals .- Complex{T}(sigma))) :
-                    which === :LM      ? sortperm(abs.(vals); rev=true) :
-                    which === :LI      ? sortperm(imag.(vals); rev=true) :
-                                         sortperm(real.(vals); rev=true)
-            sel = order[1:min(nev, length(order))]
-            eigenvalues = vals[sel]
-            evecs_full = [reconstruct_mhd_galerkin_full(op, layout, F.vectors[:, keep[s]]) for s in sel]
+            vals_s, vecs_s, _ = _dense_generalized_eigen(A_gal, B_gal; nev=nev,
+                sigma=sigma, which=which, selection=:maxreal)
         end
+        eigenvalues = vals_s
+        evecs_full = [reconstruct_mhd_galerkin_full(op, layout, vecs_s[:, j])
+                      for j in 1:size(vecs_s, 2)]
         evec_matrix = _eigvecs_to_matrix(eigenvalues, evecs_full, T)
         info = (method = "MHD ultraspherical-Galerkin", n_reduced = layout.nred)
         return StabilityResult(
@@ -270,7 +278,8 @@ function solve(problem::MHDProblem{T, BS};
             evec_matrix,
             problem;
             extra=(operator=op, interior_dofs=collect(1:layout.nred),
-                   assembly_info=info, galerkin_layout=layout)
+                   assembly_info=info, galerkin_layout=layout,
+                   spectral_tail=_check_mhd_resolution(op, eigenvalues, evec_matrix))
         )
     end
 
@@ -296,8 +305,30 @@ function solve(problem::MHDProblem{T, BS};
         convert(Vector{Complex{T}}, eigenvalues),
         evec_matrix,
         problem;
-        extra=(operator=op, interior_dofs=interior_dofs, assembly_info=info_assembly)
+        extra=(operator=op, interior_dofs=interior_dofs, assembly_info=info_assembly,
+               spectral_tail=_check_mhd_resolution(op, eigenvalues, evec_matrix))
     )
+end
+
+"""Radial spectral-tail share above which a leading MHD mode is reported as
+under-resolved. Converged modes measure ≲1e-3; spurious truncation-scale growth
+measures ~0.4–0.6."""
+const _MHD_RADIAL_TAIL_WARN = 1e-2
+
+"""Compute `_mhd_spectral_tails` for every returned eigenvector (full tau layout)
+and warn when the leading mode is radially under-resolved. Workers of a
+distributed solve hold no eigenvectors and skip the check."""
+function _check_mhd_resolution(op, eigenvalues, evecs::AbstractMatrix)
+    size(evecs, 1) == op.matrix_size ||
+        return NamedTuple{(:radial, :angular), Tuple{Float64, Float64}}[]
+    tails = [_mhd_spectral_tails(op, view(evecs, :, j)) for j in axes(evecs, 2)]
+    if !isempty(tails) && tails[1].radial > _MHD_RADIAL_TAIL_WARN
+        @warn "MHD leading eigenmode is under-resolved: $(round(100 * tails[1].radial; sigdigits=2))% " *
+              "of its norm lies in the top quarter of the Chebyshev coefficients, so its " *
+              "eigenvalue $(eigenvalues[1]) is likely a truncation artefact. Increase N " *
+              "(currently $(op.params.N)) until the leading eigenvalue converges."
+    end
+    return tails
 end
 
 # ============================================================================
