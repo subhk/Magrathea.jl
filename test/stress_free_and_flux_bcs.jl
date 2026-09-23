@@ -101,7 +101,7 @@ end
         mhd = quiet(() -> solve(MHDProblem(mp); nev=3, backend=:dense)).eigenvalues
         on = onset_spectrum(OnsetParams(E=1e-3, Pr=1.0, Ra=3e4, χ=0.35, m=m, lmax=10,
                                         Nr=26, mechanical_bc=:stress_free))
-        @test leading(mhd) ≈ on[1] rtol=1e-6
+        @test leading(mhd) ≈ on[1] rtol=1e-5   # collocation vs ultraspherical truncation
     end
 end
 
