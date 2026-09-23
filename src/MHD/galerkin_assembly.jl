@@ -166,8 +166,34 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
         end
     end
 
+    if _mhd_angular_momentum_gauge(op)
+        A, B, nred = _galerkin_angular_momentum_gauge!(op, A, B, idx, Rmap)
+    end
+
     layout = (index_map = idx, M = Mof, R = Rmap, fields = (:u, :v, :f, :g, :h), nred = nred)
     return A, B, layout
+end
+
+"""Restrict the ℓ = 1 toroidal trial basis to zero angular momentum and drop the
+block's highest test function, removing the stress-free rigid rotation (see
+`_mhd_angular_momentum_gauge`). Updates `idx` and `Rmap` in place and returns the
+reduced `(A, B, nred)`."""
+function _galerkin_angular_momentum_gauge!(op::MHDStabilityOperator{T}, A, B,
+                                           idx, Rmap) where T
+    V = idx[(:v, 1)]
+    K = nullspace(reshape(_mhd_angular_momentum_functional(op), 1, :) * Rmap[(:v, 1)])
+    keep_rows = setdiff(axes(A, 1), last(V))
+    project(M) = hcat(M[keep_rows, 1:first(V)-1], M[keep_rows, V] * K,
+                      M[keep_rows, last(V)+1:end])
+    Rmap[(:v, 1)] = Rmap[(:v, 1)] * K
+    for (key, rng) in idx
+        if key == (:v, 1)
+            idx[key] = first(rng):(last(rng) - 1)
+        elseif first(rng) > last(V)
+            idx[key] = (first(rng) - 1):(last(rng) - 1)
+        end
+    end
+    return project(A), project(B), size(A, 1) - 1
 end
 
 """Full-eigenvector layout range for `(field, ℓ)` (sections u, v, f, g, h)."""
