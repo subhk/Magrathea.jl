@@ -354,13 +354,13 @@ derived from `params.Nr` and `params.χ`.
                        `Σ Y(2,m)(amplitude)` at the outer wall, as a temperature or,
                        for a fixed-flux outer wall, a flux added to the conduction
                        flux (`basic_state_selfconsistent`)
+- `:nonaxisymmetric` — 3-D state with `m≠0` boundary forcing of strength
+                       `amplitude` at degree 2, `m=1…min(mmax_bs, 2)`
+                       (`nonaxisymmetric_basic_state`) → `BasicState3D`
 
 The basic state uses the outer-wall condition of `params.thermal_bc`, and its inner
 wall is held at a fixed temperature, so `params.thermal_bc` must be
 `:fixed_temperature` or `(:fixed_temperature, :fixed_flux)`.
-- `:nonaxisymmetric` — 3-D state with `m≠0` boundary forcing of strength
-                       `amplitude` at degree 2, `m=1…min(mmax_bs, 2)`
-                       (`nonaxisymmetric_basic_state`) → `BasicState3D`
 
 `momentum_model` applies to `:selfconsistent`; choose `:stokes` to omit momentum
 inertia. This mode throws if momentum, thermal, or boundary residuals fail `tol`.

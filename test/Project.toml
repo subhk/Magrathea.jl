@@ -1,5 +1,0 @@
-[deps]
-Magrathea = "b5134ede-7642-4071-804d-4ebd12280027"
-
-[sources]
-Magrathea = {path = ".."}

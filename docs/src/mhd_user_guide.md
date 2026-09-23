@@ -246,6 +246,12 @@ params = MHDParams(..., bci=1, bco=1)  # No-slip both boundaries
 params = MHDParams(..., bci=0, bco=0)  # Stress-free both boundaries
 ```
 
+With stress-free walls at both boundaries, a rigid rotation about the axis
+(``m=0``) induces no field and is an exactly neutral mode. The solver removes it
+by requiring zero net angular momentum when that momentum is conserved: for
+``m=0`` with insulating magnetic walls, and for ``m=0`` or ``m=1`` when `Le = 0`.
+Mechanical codes other than 0 and 1 are rejected.
+
 ### Thermal Boundary Conditions
 
 #### Fixed Temperature (bci_thermal=0, bco_thermal=0)
