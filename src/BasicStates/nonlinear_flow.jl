@@ -53,11 +53,16 @@ function _blend_mean_flow(a::SolenoidalMeanFlow{T},b::SolenoidalMeanFlow{T},α,D
         Dict(k=>D2*v for (k,v) in p),Dict(k=>D*v for (k,v) in t))
 end
 
-"""Residual of projected momentum equations and mechanical constraints."""
+"""Momentum collocation defect relative to the size of the equation's terms, and the
+mechanical boundary/gauge defect of the row-scaled system relative to the largest
+potential.
+
+A diagnostic, not a convergence measure: through the viscous D⁴ rows even an exact
+linear solve leaves a defect that grows roughly like N⁹."""
 function _mean_momentum_residual(theta,flow,D,D2,E,Ra,Pr,mechanical_bc,inertia,systems)
     r=flow.r; T=eltype(r); N=length(r)
     θ=_sh_rescale(theta,+1); β=T(Ra*E^2/(Pr*(last(r)-first(r))^3))
-    residual=zero(T); boundary=zero(T)
+    residual=zero(T); boundary=zero(T); terms=zero(T); xscale=zero(T)
     for am in 0:flow.mmax
         active=any(l>0 && abs(m)==am && any(!iszero,v) for ((l,m),v) in θ) ||
             any(abs(m)==am for (l,m) in keys(flow.p))
@@ -76,66 +81,85 @@ function _mean_momentum_residual(theta,flow,D,D2,E,Ra,Pr,mechanical_bc,inertia,s
         end
         # A stress-free gauge multiplier is not a physical applied torque. Keep
         # it zero here so nonzero torque cannot be hidden in the residual.
-        defect=system.matrix*x-f
-        residual=max(residual,maximum(abs,defect[system.physical]))
-        boundary=max(boundary,maximum(abs,defect[setdiff(eachindex(f),system.physical)]))
+        Ax=system.matrix*x; defect=Ax-f
+        physical=system.physical; constraints=setdiff(eachindex(f),physical)
+        residual=max(residual,maximum(abs,defect[physical]))
+        terms=max(terms,maximum(abs,Ax[physical]),maximum(abs,f[physical]))
+        boundary=max(boundary,maximum(abs,defect[constraints]./system.scales[constraints]))
+        xscale=max(xscale,maximum(abs,x))
     end
-    residual,boundary
+    (iszero(terms) ? residual : residual/terms),(iszero(xscale) ? boundary : boundary/xscale)
 end
 
-function _mean_thermal_residual(theta,flow,D,D2,κ,bc)
-    T=eltype(flow.r); r=flow.r
-    dtheta=Dict(k=>D*v for (k,v) in theta)
-    adv=_mean_flow_advection(theta,dtheta,flow)
-    residual=zero(T); boundary=zero(T)
+"""Thermal boundary-condition defect relative to the largest orthonormal temperature
+coefficient. Flux rows are divided by the largest derivative weight at the wall."""
+function _mean_thermal_boundary_residual(theta,D,bc)
+    T=eltype(D); flux_row=maximum(abs,D[end,:])
+    defect=zero(T); scale=zero(T)
     for (k,v) in theta
-        l,m=k; scale=_sh_nf_to_orth_factor(l,m,T)
-        defect=κ.*(D2*v+2 .*dtheta[k]./r-l*(l+1).*v./r.^2)-adv[k]
-        residual=max(residual,scale*maximum(abs,defect[2:end-1]))
-        inner,outer,kind=bc[k]
-        boundary=max(boundary,scale*abs(v[1]-inner),
-            scale*abs((kind===:fixed_temperature ? v[end] : dtheta[k][end])-outer))
+        f=_sh_nf_to_orth_factor(k...,T); inner,outer,kind=bc[k]
+        outer_defect=kind===:fixed_temperature ? v[end]-outer : (dot(D[end,:],v)-outer)/flux_row
+        defect=max(defect,f*abs(v[1]-inner),f*abs(outer_defect))
+        scale=max(scale,f*maximum(abs,v))
     end
-    residual,boundary
+    iszero(scale) ? defect : defect/scale
 end
 
-"""Damped coupled Picard iteration with residual-based backtracking."""
+"""Largest change between the coefficient dictionaries of each `(a, b, weight)` triple,
+relative to their largest weighted coefficient. Missing modes count as zero."""
+function _relative_change(triples,::Type{T},N) where T
+    change=zero(T); scale=zero(T)
+    for (a,b,weight) in triples, k in union(keys(a),keys(b))
+        va=get(a,k,zeros(T,N)); vb=get(b,k,zeros(T,N)); w=weight(k)
+        change=max(change,w*maximum(abs,vb-va))
+        scale=max(scale,w*maximum(abs,va),w*maximum(abs,vb))
+    end
+    iszero(scale) ? change : change/scale
+end
+
+"""Damped coupled Picard iteration, backtracking on the fixed-point residual.
+
+One undamped Picard update solves heat transport at fixed velocity, then momentum
+with that temperature and frozen inertia. Its relative change of the orthonormal
+temperature coefficients and flow potentials measures convergence; unlike the
+momentum collocation defect, it reaches round-off at any radial resolution."""
 function _iterate_mean_state(theta,flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
         momentum_model=:navier_stokes,max_iterations=50,tolerance=1e-8,
         relaxation=.5,verbose=false)
-    T=eltype(flow.r); systems=Dict{Int,Any}()
+    T=eltype(flow.r); N=length(flow.r); systems=Dict{Int,Any}()
     inertial=momentum_model===:navier_stokes
-    inertia=inertial ? _mean_inertia(flow,D) : nothing
-    function residuals(temperature,velocity,forcing)
-        mom,mbc=_mean_momentum_residual(temperature,velocity,D,D2,E,Ra,Pr,mechanical_bc,forcing,systems)
-        heat,hbc=_mean_thermal_residual(temperature,velocity,D,D2,E/Pr,bc)
-        (momentum=mom,thermal=heat,boundary=max(mbc,hbc),total=max(mom,heat,mbc,hbc))
+    orthonormal=k->_sh_nf_to_orth_factor(k...,T); unit=_->one(T)
+    function picard(temperature,velocity)
+        inertia=inertial ? _mean_inertia(velocity,D) : nothing
+        θ=_mean_temperature_step(velocity,D,D2,E/Pr,bc)
+        u=_steady_mean_flow(θ,velocity.r,D,D2,E,Ra,Pr,velocity.lmax,velocity.mmax;
+            mechanical_bc=mechanical_bc,inertia=inertia,systems=systems)
+        heat=_relative_change(((temperature,θ,orthonormal),),T,N)
+        mom=_relative_change(((velocity.p,u.p,unit),(velocity.t,u.t,unit)),T,N)
+        _,mbc=_mean_momentum_residual(temperature,velocity,D,D2,E,Ra,Pr,mechanical_bc,inertia,systems)
+        hbc=_mean_thermal_boundary_residual(temperature,D,bc)
+        (theta=θ,flow=u,momentum=mom,thermal=heat,boundary=max(mbc,hbc),total=max(mom,heat,mbc,hbc))
     end
-    residual=residuals(theta,flow,inertia)
+    image=picard(theta,flow)
     history=T[]; mhistory=T[]; thistory=T[]; steps=T[]
     reason=:max_iterations
     for iter in 1:max_iterations
-        candidate_theta=_mean_temperature_step(flow,D,D2,E/Pr,bc)
-        candidate_flow=_steady_mean_flow(candidate_theta,flow.r,D,D2,E,Ra,Pr,flow.lmax,flow.mmax;
-            mechanical_bc=mechanical_bc,inertia=inertia,systems=systems)
         α=T(relaxation); accepted=false
         for backtrack in 0:10
-            trial_theta=Dict(k=>(1-α).*v.+α.*candidate_theta[k] for (k,v) in theta)
-            trial_flow=_blend_mean_flow(flow,candidate_flow,α,D,D2)
-            trial_inertia=inertial ? _mean_inertia(trial_flow,D) : nothing
-            trial_residual=residuals(trial_theta,trial_flow,trial_inertia)
-            if isfinite(trial_residual.total) && (trial_residual.total<=tolerance ||
-                    trial_residual.total < (1-T(1e-4)*α)*residual.total)
-                theta=trial_theta; flow=trial_flow; inertia=trial_inertia
-                residual=trial_residual; accepted=true
+            trial_theta=Dict(k=>(1-α).*v.+α.*image.theta[k] for (k,v) in theta)
+            trial_flow=_blend_mean_flow(flow,image.flow,α,D,D2)
+            trial=picard(trial_theta,trial_flow)
+            if isfinite(trial.total) && (trial.total<=tolerance ||
+                    trial.total < (1-T(1e-4)*α)*image.total)
+                theta=trial_theta; flow=trial_flow; image=trial; accepted=true
                 break
             end
             α/=2
         end
-        push!(history,residual.total); push!(mhistory,residual.momentum)
-        push!(thistory,residual.thermal); push!(steps,accepted ? α : zero(T))
-        verbose && println("  Iteration $iter: momentum=$(residual.momentum), thermal=$(residual.thermal), step=$(steps[end])")
-        if residual.total<=tolerance
+        push!(history,image.total); push!(mhistory,image.momentum)
+        push!(thistory,image.thermal); push!(steps,accepted ? α : zero(T))
+        verbose && println("  Iteration $iter: momentum=$(image.momentum), thermal=$(image.thermal), step=$(steps[end])")
+        if image.total<=tolerance
             reason=:converged
             break
         elseif !accepted
@@ -144,8 +168,8 @@ function _iterate_mean_state(theta,flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
         end
     end
     info=(iterations=length(history),converged=reason===:converged,
-        residual_history=history,thermal_residual=residual.thermal,
-        momentum_residual=residual.momentum,boundary_residual=residual.boundary,
+        residual_history=history,thermal_residual=image.thermal,
+        momentum_residual=image.momentum,boundary_residual=image.boundary,
         momentum_residual_history=mhistory,thermal_residual_history=thistory,
         step_history=steps,momentum_model=momentum_model,termination_reason=reason)
     theta,flow,info

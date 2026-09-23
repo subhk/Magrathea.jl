@@ -45,7 +45,7 @@ Hydrodynamic `Nr` counts **collocation points**. MHD `N` is **polynomial degree*
 | `src/BasicStates/BasicStates.jl` | Includes the basic-state files |
 | `src/BasicStates/basic_state.jl` | `BasicState`, `BasicState3D`, symbolic boundary harmonics, and conductive/Stokes constructors |
 | `src/BasicStates/steady_flow.jl` | Internal `SolenoidalMeanFlow`, viscous Coriolis balance, thermal transport, and `mean_flow_velocity` |
-| `src/BasicStates/nonlinear_flow.jl` | Nonlinear momentum forcing, coupled residuals, and damped iteration |
+| `src/BasicStates/nonlinear_flow.jl` | Nonlinear momentum forcing, fixed-point residuals, and damped Picard iteration |
 | `src/BasicStates/advection_diffusion.jl` | Self-consistent constructors, scalar transport helpers, and radial Poisson solves |
 | `src/BasicStates/basic_state_operators.jl` | Harmonic coupling utilities and axisymmetric stability-assembly adapters |
 | `src/BasicStates/sh_transform.jl` | Spherical-harmonic evaluation and transforms |

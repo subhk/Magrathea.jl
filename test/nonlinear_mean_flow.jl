@@ -182,3 +182,17 @@ end
               collect(mean_flow_velocity(sine,r,θ,φ)) rtol=1e-8 atol=1e-11
     end
 end
+
+@testset "Self-consistent convergence does not depend on radial resolution" begin
+    # Convergence is the relative change under one Picard update. The momentum
+    # collocation defect has a round-off floor that grows roughly like N⁹ through
+    # the D⁴ rows; measured that way, N=64 stalled above the default tolerance.
+    uphi=map((32,64)) do N
+        cd=ChebyshevDiffn(N,[.35,1.],4)
+        bs,info=basic_state_selfconsistent(cd,.35,1e-2,2e3,1.;temperature_bc=Y20(.1),lmax_bs=12)
+        @test info.converged
+        @test max(info.momentum_residual,info.thermal_residual,info.boundary_residual)<=1e-8
+        mean_flow_velocity(bs,.7,1.,0.).uphi
+    end
+    @test uphi[2] ≈ uphi[1] rtol=1e-8
+end

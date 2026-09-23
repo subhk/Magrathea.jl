@@ -661,7 +661,7 @@ velocity, then solves momentum with frozen nonlinear forcing. It uses
 ``-({\mathbf U}\cdot\nabla){\mathbf U}={\mathbf U}\times(\nabla\times{\mathbf U})
 -\nabla(|{\mathbf U}|^2/2)`` and absorbs the gradient in pressure. Angular
 products use an oversampled grid and the native vector-harmonic flow.
-Backtracking accepts updates that reduce the coupled residual.
+Backtracking accepts updates that reduce the fixed-point residual described below.
 `momentum_model=:stokes` explicitly retains the earlier weak-inertia model
 while still solving thermal transport.
 
@@ -676,8 +676,15 @@ v = mean_flow_velocity(bs, 0.7, pi/3, pi/8)
 ```
 
 `info.converged` requires momentum, heat, and boundary/gauge residuals to meet
-`tolerance`. Residuals are maximum absolute orthonormal spectral coefficients
-in the nondimensional equations, at the retained collocation equations.
+`tolerance`. The momentum and heat residuals are fixed-point residuals: the
+largest change of the orthonormal flow potentials and temperature coefficients
+under one undamped Picard update, relative to their largest coefficient. The
+distance to the steady state is about this residual divided by one minus the
+iteration's contraction rate. The collocation defect of the momentum equations
+is not used, because its round-off floor grows roughly like ``N^9`` through the
+fourth-derivative viscous rows and exceeds `1e-8` near 64 radial nodes. The
+boundary residual is the relative defect of the mechanical, gauge, and thermal
+boundary conditions.
 `info.residual_history` records their maximum, and
 `info.momentum_residual_history`, `info.thermal_residual_history`, and
 `info.step_history` record each accepted update (a zero step indicates a
