@@ -6,7 +6,7 @@ using Magrathea
     # Regression: apply_velocity_boundary_conditions! used Complex{T} without
     # binding T (no `where`), so the stress-free toroidal branch (bco!=1 / bci!=1)
     # threw UndefVarError. No-slip (bci=bco=1) masked it. Exercise stress-free.
-    for (bci, bco) in ((2, 2), (1, 2), (2, 1))
+    for (bci, bco) in ((0, 0), (1, 0), (0, 1))
         params = MHDParams(
             E = 1e-3, Pr = 1.0, Pm = 1.0, Ra = 100.0, Le = 1.0,
             ricb = 0.35, m = 1, lmax = 3, N = 12,
