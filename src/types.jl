@@ -347,15 +347,17 @@ derived from `params.Nr` and `params.χ`.
 - `:selfconsistent`  — nonlinear steady momentum and heat balance from a flux BC
                        `Y00(-1) + Σ Y(2,m)(amplitude)` (`basic_state_selfconsistent`)
 - `:nonaxisymmetric` — 3-D state with `m≠0` boundary forcing of strength
-                       `amplitude` at degree 2, `m=1…mmax_bs`
+                       `amplitude` at degree 2, `m=1…min(mmax_bs, 2)`
                        (`nonaxisymmetric_basic_state`) → `BasicState3D`
 
 `momentum_model` applies to `:selfconsistent`; choose `:stokes` to omit momentum
 inertia. This mode throws if momentum, thermal, or boundary residuals fail `tol`.
 Use `basic_state_selfconsistent` for detailed convergence information, or
 `allow_unconverged=true` to explicitly inspect an incomplete iterate. In this
-convenience wrapper `mmax_bs` selects the imposed degree-2 boundary modes;
-the nonlinear solve retains azimuthal orders through `lmax_bs`.
+convenience wrapper the imposed degree-2 boundary modes are `m = 1…min(mmax_bs, 2)`
+(degree 2 has no higher orders); for `:nonaxisymmetric`, `mmax_bs` also sets the
+retained azimuthal truncation. The nonlinear solve retains azimuthal orders
+through `lmax_bs`.
 """
 function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
                      amplitude::Real=0.05, mmax_bs::Int=2, lmax_bs::Int=4,
@@ -372,7 +374,7 @@ function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
                                       thermal_bc=params.thermal_bc)
     elseif mode === :selfconsistent
         flux = Y00(-one(T))
-        for mm in 1:mmax_bs
+        for mm in 1:min(mmax_bs, 2)
             flux = flux + Ylm(2, mm, T(amplitude))
         end
         bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; flux_bc=flux,
@@ -386,7 +388,7 @@ function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
         end
         return bs
     elseif mode === :nonaxisymmetric
-        amps = Dict{Tuple{Int,Int},T}((2, mm) => T(amplitude) for mm in 1:mmax_bs)
+        amps = Dict{Tuple{Int,Int},T}((2, mm) => T(amplitude) for mm in 1:min(mmax_bs, 2))
         return nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, lmax_bs, mmax_bs, amps;
                                            mechanical_bc=params.mechanical_bc,
                                            thermal_bc=params.thermal_bc)

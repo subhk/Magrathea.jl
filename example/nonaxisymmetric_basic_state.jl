@@ -7,10 +7,15 @@
 #
 # This enables tri-global instability analysis where perturbations couple
 # across multiple azimuthal modes m.
+#
+# Runs without PETSc. Plots.jl is optional: when it is installed the radial
+# profiles are saved to nonaxisymmetric_basic_state.png.
 
 using Magrathea
 using Printf
-using Plots
+
+have_plots = Base.find_package("Plots") !== nothing
+have_plots && @eval using Plots
 
 println("="^70)
 println("Non-Axisymmetric (3D) Basic State")
@@ -47,8 +52,8 @@ println()
 println("Defining 3D boundary temperature pattern...")
 println()
 
-# Specify amplitudes for different (ℓ,m) modes
-# θ̄(r_o, θ, φ) = 1 + Σ_{ℓ,m} amplitude_{ℓm} × Y_ℓm(θ,φ)
+# Specify amplitudes for different (ℓ,m) modes (θ̄ = 1 on the inner boundary)
+# θ̄(r_o, θ, φ) = Σ_{ℓ,m} amplitude_{ℓm} × P_ℓ^m(cos θ) cos(mφ)
 amplitudes = Dict(
     (2, 0) => 0.10,   # Meridional Y₂₀: pole-to-equator contrast
     (2, 2) => 0.05,   # Longitudinal Y₂₂: wavenumber-2 pattern
@@ -78,7 +83,7 @@ println()
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 2)
 
 # Create 3D basic state with specified amplitudes
-bs3d = nonaxisymmetric_basic_state(cd, χ, Ra, Pr, lmax_bs, mmax_bs, amplitudes)
+bs3d = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, lmax_bs, mmax_bs, amplitudes)
 
 println("✓ Basic state created successfully!")
 println()
@@ -162,7 +167,7 @@ println("Visualization")
 println("="^70)
 println()
 
-try
+if have_plots
     plots = []
 
     # Temperature profiles for each significant mode
@@ -197,10 +202,8 @@ try
 
     println("✓ Saved plot to: nonaxisymmetric_basic_state.png")
     println()
-
-catch e
-    println("Note: Plotting skipped (Plots.jl may not be available)")
-    println("Error: ", e)
+else
+    println("Note: Plots.jl is not installed; skipping the figure")
     println()
 end
 
@@ -212,9 +215,9 @@ println("Summary")
 println("="^70)
 println()
 println("✓ Created 3D basic state with meridional AND longitudinal variations")
-println("✓ Outer boundary: θ̄(r_o,θ,φ) = 1 + Y₂₀ + Y₂₂ + Y₃₁")
+println("✓ Outer boundary: θ̄(r_o,θ,φ) = Y₂₀ + Y₂₂ + Y₃₁ pattern (θ̄ = 1 at r_i)")
 println("✓ Interior: Solves ∇²θ̄ = 0 for each (ℓ,m) mode")
-println("✓ Zonal flow: From thermal wind balance (simplified)")
+println("✓ Mean flow: steady Stokes–Coriolis solve (zonal and meridional)")
 println()
 println("Mode Structure:")
 println("  - Y₂₀ (m=0): Axisymmetric pole-to-equator contrast")
@@ -228,8 +231,9 @@ println("  - Example: If basic state has m_bs=2, perturbation modes m and m±2 c
 println("  - This requires TRI-GLOBAL analysis (solve for multiple m simultaneously)")
 println()
 println("Next Steps:")
-println("  1. Implement mode-coupling in linear_stability.jl")
-println("  2. Solve coupled eigenvalue problem for critical parameters")
+println("  1. Couple perturbation modes with TriglobalProblem(params, bs3d, m_range)")
+println("     (see example/triglobal_analysis_demo.jl)")
+println("  2. Solve the coupled eigenvalue problem for critical parameters")
 println("  3. Compare onset with/without 3D basic state")
 println("  4. Study how longitudinal variations affect Ra_c, m_c, ω_c")
 println()

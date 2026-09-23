@@ -144,12 +144,18 @@ end
     @test valtype(typeof(summary)) === NamedTuple{(:θ_max, :uphi_max), Tuple{T, T}}
 end
 
+# m = 1 fails, m = 2 has a synthetic mode crossing neutral at Ra = 1000. (A scan
+# where every m fails now raises instead of returning m_c = 0.)
+_scan_factory(::Type{T}) where {T} = (E, χ, Pr, m) -> m == 1 ? error("synthetic failure") :
+    (Ra -> (sparse(Diagonal(Complex{T}[(Ra - 1000) / 1000, -1])),
+            sparse(Diagonal(Complex{T}[1, 1]))))
+
 @testset "Onset scan result dictionary keeps integer keys" begin
-    failing_factory = (E, χ, Pr, m) -> error("synthetic failure")
+    _, m_c, _, results = Magrathea.find_onset_parameters(
+        _scan_factory(Float64), 1e-3, 0.35, 1.0, [1, 2];
+        Ra_min=100.0, Ra_max=1e4, backend=:dense)
 
-    _, _, _, results = Magrathea.find_onset_parameters(
-        failing_factory, 1e-3, 0.35, 1.0, [1, 2])
-
+    @test m_c == 2
     @test keytype(typeof(results)) === Int
     @test valtype(typeof(results)) !== Any
 end
@@ -157,17 +163,18 @@ end
 @testset "Critical-Rayleigh helpers accept Float32 inputs" begin
     T = Float32
     failing_builder = Ra -> error("synthetic failure")
-    failing_factory = (E, χ, Pr, m) -> error("synthetic failure")
 
     @test_throws ErrorException Magrathea.find_critical_rayleigh(
         failing_builder, T(1e-3), T(0.35), 1;
         Ra_min = T(1), Ra_max = T(2), tol = T(1e-3), growth_tol = T(1e-3))
 
     _, _, _, results = Magrathea.find_onset_parameters(
-        failing_factory, T(1e-3), T(0.35), one(T), [1])
+        _scan_factory(T), T(1e-3), T(0.35), one(T), [1, 2];
+        Ra_min = T(100), Ra_max = T(1e4), backend = :dense)
 
     @test keytype(typeof(results)) === Int
     @test valtype(typeof(results)) !== Any
+    @test results[2].Ra_c isa T
 end
 
 @testset "Sparse assemblies preserve Float32 storage" begin
@@ -420,14 +427,6 @@ end
     second=Magrathea._mean_coriolis(8,2,Float64)
     @test first[1] === second[1]
     @test first[2] === second[2]
-end
-
-@testset "Triglobal unweighted coupling avoids quadrature node allocation" begin
-    Magrathea.compute_sh_coupling_unweighted(3, 1, 2, 0, 3, 1)
-    GC.gc()
-    bytes = @allocated Magrathea.compute_sh_coupling_unweighted(3, 1, 2, 0, 3, 1)
-
-    @test bytes < 512
 end
 
 @testset "Zero mean-flow forcing avoids coupled solves" begin

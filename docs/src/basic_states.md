@@ -53,24 +53,29 @@ The `basic_state()` function automatically selects the appropriate implementatio
 
 ### The `SphericalHarmonicBC` Type
 
-`SphericalHarmonicBC` represents boundary conditions expanded in spherical harmonics:
+`SphericalHarmonicBC` represents boundary conditions expanded in spherical harmonics.
+An amplitude ``A_{\ell m}`` multiplies the unnormalized associated Legendre function:
 
 ```math
-\bar{T}(r_o, \theta, \phi) = \sum_{\ell,m} A_{\ell m} Y_{\ell m}(\theta, \phi)
+\bar{T}(r_o, \theta, \phi) = \sum_{\ell,m} A_{\ell m} P_\ell^m(\cos\theta)\cos(m\phi),
 ```
+
+where ``P_\ell^m`` includes the Condon–Shortley phase ``(-1)^m``, so odd-``m``
+patterns carry a minus sign. A `flux_bc` prescribes ``\partial\bar T/\partial r``
+at ``r_o`` with the same pattern (the outward heat flux is its negative).
 
 ### Available Constructors
 
-| Function | Pattern | Physical Meaning |
-|----------|---------|------------------|
-| `Ylm(ℓ, m, amp)` | General ``Y_{\ell m}`` | Any valid mode |
-| `Y00(amp)` | Constant | Uniform (monopole) |
+| Function | Pattern per unit amplitude | Physical Meaning |
+|----------|----------------------------|------------------|
+| `Ylm(ℓ, m, amp)` | ``P_\ell^m(\cos\theta)\cos(m\phi)`` | Any valid mode |
+| `Y00(amp)` | ``1`` | Uniform (monopole) |
 | `Y10(amp)` | ``\cos\theta`` | North-south dipole |
-| `Y11(amp)` | ``\sin\theta\cos\phi`` | East-west dipole |
-| `Y20(amp)` | ``3\cos^2\theta - 1`` | Equator-pole contrast |
-| `Y21(amp)` | ``\sin\theta\cos\theta\cos\phi`` | Tesseral quadrupole |
-| `Y22(amp)` | ``\sin^2\theta\cos(2\phi)`` | Four-fold longitudinal |
-| `Y30`-`Y44` | Higher orders | Complex patterns |
+| `Y11(amp)` | ``-\sin\theta\cos\phi`` | East-west dipole |
+| `Y20(amp)` | ``(3\cos^2\theta - 1)/2`` | Equator-pole contrast |
+| `Y21(amp)` | ``-3\sin\theta\cos\theta\cos\phi`` | Tesseral quadrupole |
+| `Y22(amp)` | ``3\sin^2\theta\cos(2\phi)`` | Four-fold longitudinal |
+| `Y30`-`Y44` | Higher orders (see docstrings) | Complex patterns |
 
 ### Combining Harmonics
 
@@ -124,7 +129,9 @@ basic_state(cd, χ, E, Ra, Pr;
 - `temperature_bc` : `SphericalHarmonicBC` for fixed temperature at outer boundary
 - `flux_bc` : `SphericalHarmonicBC` for fixed heat flux at outer boundary
 - `mechanical_bc` : `:no_slip` (default) or `:stress_free`
-- `lmax_bs` : Maximum ``\ell`` for expansion (auto-determined if not specified)
+- `lmax_bs` : Maximum ``\ell`` for expansion (auto-determined if not specified).
+  An explicit value must retain every nonzero boundary mode; otherwise an
+  `ArgumentError` is thrown rather than silently dropping the forcing.
 
 **Automatic Dispatch:**
 
@@ -242,9 +249,11 @@ Solution:
 
 For prescribed heat flux at the outer boundary:
 - ``\bar{T}(r_i) = 1`` (hot inner boundary)
-- ``\partial\bar{T}/\partial r|_{r_o} = q`` (prescribed flux)
+- ``\partial\bar{T}/\partial r|_{r_o} = q`` (prescribed gradient; the outward
+  heat flux is ``-q``, so ``q < 0`` carries heat outward)
 
-Use `thermal_bc = :fixed_flux` and specify `outer_flux`.
+Use `thermal_bc = :fixed_flux` and specify `outer_flux`. For example,
+`outer_flux = -χ/(1 - χ)` reproduces the fixed-temperature profile.
 
 ### Meridional Variations
 
@@ -279,7 +288,8 @@ bs_flux = meridional_basic_state(
 
 This generates the prescribed conductive temperature and a three-component
 axisymmetric velocity. Viscous meridional circulation is generally nonzero,
-even when the temperature has no azimuthal dependence.
+even when the temperature has no azimuthal dependence. A nonzero ``Y_{2,0}``
+forcing requires `lmax_bs ≥ 2`; smaller values throw an `ArgumentError`.
 
 ### Thermal Wind Balance
 
@@ -314,7 +324,9 @@ through `lmax_bs`. The component dictionaries remain available as scalar
 projections for existing consumers. Tangential vector components are not
 band-limited scalar harmonics: use `mean_flow_velocity` for physical fields,
 pole regularity, and continuity checks, rather than differentiating the
-truncated scalar component projections.
+truncated scalar component projections. Likewise, `compute_full_advection_spectral(bs)`
+evaluates ``\bar{\mathbf u}\cdot\nabla\bar T`` from `bs.flow`; its older
+form taking component coefficients is approximate and warns once.
 
 The old `solve_thermal_wind_balance!`, `solve_thermal_wind_balance_3d!`, and
 `solve_thermal_wind_coupled!` interfaces now return component projections of
@@ -408,6 +420,10 @@ bs3d_flux = nonaxisymmetric_basic_state(
     outer_fluxes = outer_fluxes,
 )
 ```
+
+Every nonzero entry must satisfy `ℓ ≤ lmax_bs` and `|m| ≤ min(ℓ, mmax_bs)`;
+keys `(ℓ, -m)` select the ``\sin(m\phi)`` phase. Modes outside this range throw
+an `ArgumentError`.
 
 #### Manual Construction
 
@@ -706,8 +722,10 @@ At each boundary, no-slip requires ``p=p'=t=0``. Stress-free requires
 zero axial angular momentum fixes the axisymmetric solid-rotation nullspace.
 
 The historical `coupled_thermal_wind` and `include_meridional_flow` constructor
-keywords are accepted for source compatibility; all values now construct the
-complete viscous flow. The old diagonal approximation is no longer used.
+keywords (and `use_full_coupling` of `solve_meridional_circulation_toroidal_poloidal!`)
+are accepted for source compatibility but ignored: all values construct the
+complete viscous flow, and passing `false` emits a one-time warning. The old
+diagonal approximation is no longer used.
 
 For quantitative work, increase radial resolution and `lmax_bs` until the
 physical velocity, temperature, and balance residuals converge. Small equation

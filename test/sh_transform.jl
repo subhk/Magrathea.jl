@@ -1,18 +1,20 @@
 # Tests for the real-orthonormal SH transform + vector-harmonic horizontal
-# divergence (src/BasicStates/sh_transform.jl). These pin the machinery that a
-# future correct nonaxisymmetric ū·∇T̄ = ∇·(ūT̄) will use, so it can't regress.
+# divergence (src/BasicStates/sh_transform.jl). These pin the machinery used by
+# the mean-state products (advective ū·∇T̄, Coriolis and inertia projections).
 
 using Test
 using Magrathea
 using LinearAlgebra
-import Random
+
+# Deterministic, irregular coefficients (the identities hold for any values;
+# this avoids depending on the Random stdlib).
+_sh_coef(ℓ, m, s) = sin(1.7ℓ + 2.3m + s) + 0.3cos(0.9ℓ * m - s)
 
 @testset "Real-orthonormal SH transform (cos+sin, ±m)" begin
-    Random.seed!(11)
     g = Magrathea.sh_grid(8, 4, Float64)
 
     @testset "synthesis ↔ analysis round-trip" begin
-        c0 = Dict{Tuple{Int,Int},Float64}((ℓ, m) => randn()
+        c0 = Dict{Tuple{Int,Int},Float64}((ℓ, m) => _sh_coef(ℓ, m, 0.4)
               for m in -4:4 for ℓ in abs(m):8)
         c1 = Magrathea.sh_analyze(Magrathea.sh_synthesize(c0, g), g)
         err = maximum(abs(c1[k] - c0[k]) for k in keys(c0))
@@ -20,7 +22,7 @@ import Random
     end
 
     @testset "horizontal divergence: ∇_h·∇_hψ = -ℓ(ℓ+1)ψ" begin
-        ψ = Dict{Tuple{Int,Int},Float64}((ℓ, m) => randn()
+        ψ = Dict{Tuple{Int,Int},Float64}((ℓ, m) => _sh_coef(ℓ, m, 1.1)
               for m in -4:4 for ℓ in max(1, abs(m)):6)
         Vθ = Magrathea.sh_synthesize(ψ, g; Yf=Magrathea._sh_dYθ)            # ∂θψ
         Vφ = Magrathea.sh_synthesize(ψ, g; Yf=Magrathea._sh_dYφ_over_sin)   # (1/sinθ)∂φψ
@@ -31,7 +33,7 @@ import Random
     end
 
     @testset "toroidal field is divergence-free" begin
-        χ = Dict{Tuple{Int,Int},Float64}((ℓ, m) => randn()
+        χ = Dict{Tuple{Int,Int},Float64}((ℓ, m) => _sh_coef(ℓ, m, -0.7)
               for m in -4:4 for ℓ in max(1, abs(m)):6)
         # u_h = r̂×∇_hχ  ⇒  (Vθ, Vφ) = (-(1/sinθ)∂φχ, ∂θχ)
         Vθ = -Magrathea.sh_synthesize(χ, g; Yf=Magrathea._sh_dYφ_over_sin)
@@ -48,10 +50,9 @@ import Random
         theta      = Dict{Tuple{Int,Int},Vector{Float64}}((1, 0) => r)
         dtheta_dr  = Dict{Tuple{Int,Int},Vector{Float64}}((1, 0) => ones(length(r)))
         ur         = Dict{Tuple{Int,Int},Vector{Float64}}((0, 0) => 1.0 ./ r .^ 2)
-        dur_dr     = Dict{Tuple{Int,Int},Vector{Float64}}((0, 0) => -2.0 ./ r .^ 3)
         utheta     = Dict{Tuple{Int,Int},Vector{Float64}}()
         uphi       = Dict{Tuple{Int,Int},Vector{Float64}}()
-        F = Magrathea.vecsh_advection(theta, dtheta_dr, ur, dur_dr, utheta, uphi, 2, 0, r)
+        F = Magrathea.vecsh_advection(theta, dtheta_dr, ur, utheta, uphi, 2, 0, r)
         expected = N00 ./ r .^ 2
         @test maximum(abs.(F[(1, 0)] .- expected)) < 1e-10
         # purely radial incompressible flow ⇒ no spurious other-mode forcing
@@ -61,9 +62,9 @@ import Random
 
     @testset "vecsh_advection smoke (±m runs, finite)" begin
         r = collect(range(0.35, 1.0, length=12))
-        mk() = Dict{Tuple{Int,Int},Vector{Float64}}((ℓ, m) => randn(length(r))
+        mk() = Dict{Tuple{Int,Int},Vector{Float64}}((ℓ, m) => _sh_coef.(ℓ, m, 3 .* r)
                 for m in -2:2 for ℓ in abs(m):3)
-        F = Magrathea.vecsh_advection(mk(), mk(), mk(), mk(), mk(), mk(), 3, 2, r)
+        F = Magrathea.vecsh_advection(mk(), mk(), mk(), mk(), mk(), 3, 2, r)
         @test all(all(isfinite, v) for v in values(F))
         @test haskey(F, (3, -2)) && length(F[(3, 0)]) == length(r)
     end
@@ -87,7 +88,7 @@ import Random
 
     @testset "Float32 grid constructs and round-trips" begin
         g32 = Magrathea.sh_grid(6, 2, Float32)
-        c0 = Dict{Tuple{Int,Int},Float32}((ℓ, m) => randn(Float32)
+        c0 = Dict{Tuple{Int,Int},Float32}((ℓ, m) => Float32(_sh_coef(ℓ, m, 0.2))
               for m in -2:2 for ℓ in abs(m):6)
         c1 = Magrathea.sh_analyze(Magrathea.sh_synthesize(c0, g32), g32)
         @test maximum(abs(c1[k] - c0[k]) for k in keys(c0)) < 1f-4

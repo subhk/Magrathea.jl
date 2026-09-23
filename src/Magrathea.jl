@@ -2,13 +2,10 @@ module Magrathea
 
     using LinearAlgebra
     using SparseArrays
-    using JLD2
     using Printf
-    using Random
 
     using Parameters
 
-    using LinearMaps
     using WignerSymbols
     using SpecialFunctions
 
@@ -64,7 +61,6 @@ module Magrathea
         nonaxisymmetric_basic_state_selfconsistent,
         basic_state_selfconsistent,
         AdvectionDiffusionSolver,
-        compute_phi_advection_spectral,
         compute_full_advection_spectral,
         solve_poisson_mode,
 
@@ -72,7 +68,6 @@ module Magrathea
         solve_meridional_coupled!,
         solve_meridional_simple!,
         solve_meridional_circulation_toroidal_poloidal!,
-        sin_theta_coupling,
         cos_theta_coupling,
         theta_derivative_coupling,
         inv_sin_theta_gaunt,
@@ -92,7 +87,6 @@ module Magrathea
         # Thermal wind solvers
         solve_thermal_wind_balance!,
         solve_thermal_wind_balance_3d!,
-        theta_derivative_coeff_3d,
 
         # Basic state operators
         BasicStateOperators,

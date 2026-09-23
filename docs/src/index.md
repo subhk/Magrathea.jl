@@ -116,7 +116,7 @@ conditions, and sparse factorization.
 
 ## Requirements and citation
 
-Julia compatibility is declared in `Project.toml` (currently Julia 1.9 and
+Julia compatibility is declared in `Project.toml` (currently Julia 1.10 and
 later in the 1.x series). Sparse eigensolves additionally require the SLEPc
 extension. Plotting packages are optional weak dependencies.
 

@@ -20,7 +20,7 @@ _silent(f) = with_logger(f, NullLogger())
 #    - velocity_from_potentials θ→sinθ derivation + Float32 storage
 #    - DimensionMismatch / ArgumentError branches of the residual BC helpers
 #    - pure SH coupling helpers (gaunt, wigner3j_000, θ-derivative, meridional,
-#      azimuthal-coupling matrix) + diagonal block accumulators
+#      azimuthal-coupling tables) + diagonal block accumulators
 #    - build_basic_state_operators in the axisymmetric (m=0) regime + the dense
 #      add_basic_state_operators! accumulation path
 #
@@ -197,7 +197,7 @@ end
 
 # Angular-derivative physics is tested independently in mean_flow_coupling.jl.
 
-@testset "Spherical-harmonic and azimuthal coupling builders" begin
+@testset "Spherical-harmonic coupling and azimuthal table builders" begin
     coeffs = Magrathea.compute_spherical_harmonic_coupling(2, 1, 0)
     @test coeffs isa Dict{Int,Float64}
     # Parity selection: every coupled ℓ' satisfies ℓ'+ℓ_pert+ℓ_bs even and ℓ' ≥ m.
@@ -210,17 +210,11 @@ end
     cache = Magrathea._build_azimuthal_coupling_cache(0, 4, 4, Float64)
     @test cache.m == 0
     @test eltype(cache.y_m) === Float64
-    M = Magrathea._azimuthal_coupling_matrix(cache, 0)
-    @test size(M, 1) == size(M, 2)
-    @test eltype(M) === Float64
-    @test isapprox(M, transpose(M))   # quadrature coupling is symmetric
 
     # Float32 cache preserves real precision.
     cache32 = Magrathea._build_azimuthal_coupling_cache(1, 3, 3, Float32)
     @test eltype(cache32.y_m) === Float32
     @test typeof(cache32.weight) === Float32
-    M32 = Magrathea._azimuthal_coupling_matrix(cache32, 1)
-    @test eltype(M32) === Float32
 end
 
 @testset "Diagonal block accumulators write exactly where expected" begin

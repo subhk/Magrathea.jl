@@ -1,25 +1,25 @@
 #!/usr/bin/env julia
 #
-# Example: MHD Dynamo Stability Analysis
+# Example: Magnetoconvection Stability with an Imposed Axial Field
 #
-# Demonstrates how to use the MHD module to analyze dynamo onset
-# in a rotating spherical shell with an imposed axial magnetic field.
+# Demonstrates how to use the MHD module to analyze the onset of convection
+# in a rotating spherical shell with an imposed axial magnetic field. The
+# linearization is about a motionless conductive state and the imposed
+# current-free field; despite the file name this is not a kinematic-dynamo
+# calculation.
 #
-# This follows the classic benchmarks from:
-# - Jones et al. (2011) - Anelastic convection-driven dynamo benchmarks
-# - Christensen et al. (2001) - A numerical dynamo benchmark
+# The eigenvalue solve uses SLEPc. Run this script in an initialized SLEPc
+# session (see docs/src/examples.md).
 
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 
-using LinearAlgebra
-using SparseArrays
 using Printf
 
 # Load Magrathea (includes MHD and eigenvalue solver functionality)
 using Magrathea
 
 println("="^80)
-println("MHD Dynamo Stability Analysis Example")
+println("MHD Magnetoconvection Stability Example")
 println("="^80)
 println()
 
@@ -33,9 +33,9 @@ println()
 # Non-dimensional parameters
 E = 1e-3          # Ekman number
 Pr = 1.0          # Prandtl number
-Pm = 5.0          # Magnetic Prandtl number (typical for liquid metals)
-Ra = 1.0e4        # Rayleigh number (supercritical)
-Le = 0.1          # Lehnert number (weak background field)
+Pm = 5.0          # Magnetic Prandtl number
+Ra = 1.0e4        # Rayleigh number
+Le = 0.1          # Lehnert number (sets the imposed field strength)
 
 # Geometry
 χ = 0.35          # Radius ratio (Earth-like)
@@ -62,11 +62,11 @@ println("Geometry:")
 @printf("  Radius ratio (χ):     %.2f\n", χ)
 @printf("  Azimuthal mode (m):   %d\n", m)
 @printf("  Max degree (lmax):    %d\n", lmax)
-@printf("  Radial points (N):    %d\n", N)
+@printf("  Radial degree (N):    %d\n", N)
 println()
 
 # =============================================================================
-# Create MHD Operator
+# Create MHD Problem
 # =============================================================================
 
 params = MHDParams(
@@ -81,7 +81,6 @@ params = MHDParams(
     symm = 1,              # Equatorially symmetric
     N = N,
     B0_type = axial,       # Axial background field
-    B0_amplitude = Le,
     bci = bci,
     bco = bco,
     bci_thermal = bci_thermal,
@@ -91,110 +90,82 @@ params = MHDParams(
     heating = :differential
 )
 
-println("Building MHD operator...")
-op = MHDStabilityOperator(params)
-println()
-
-# =============================================================================
-# Assemble Matrices
-# =============================================================================
-
-println("Assembling MHD matrices...")
-A_full, B_full, interior_dofs, info = assemble_mhd_matrices(op)
-println()
-
-# Retain boundary constraints in the full coefficient-space pencil
-A = A_full
-B = B_full
-
-println("System information:")
-println("  Full matrix size:     $(size(A_full))")
-println("  Solve matrix size: $(size(A))")
-println("  A sparsity: $(nnz(A)) nonzeros ($(100*nnz(A)/length(A))%)")
-println("  B sparsity: $(nnz(B)) nonzeros ($(100*nnz(B)/length(B))%)")
+problem = MHDProblem(params)
+estimate_size(problem)
 println()
 
 # =============================================================================
 # Solve Eigenvalue Problem
 # =============================================================================
 
+# Axial field with insulating walls routes through the boundary-recombined
+# (tau-free) Galerkin assembly; dipole fields or conducting walls use tau.
 println("Solving MHD eigenvalue problem...")
-println("  (This may take a few minutes for large systems)")
 println()
 
-try
-    eigenvalues, eigenvectors, info = solve_eigenvalue_problem(A, B; nev=10, maxiter=200)
+result = solve(problem; nev = 10, which = :LR)
+eigenvalues = result.eigenvalues
 
-    println("✓ Eigenvalue problem solved successfully!")
-    println()
+println("✓ Eigenvalue problem solved successfully!")
+println()
 
-    # Leading eigenvalue (first one after sorting by real part)
-    σ_lead = eigenvalues[1]
-    println("Leading eigenvalue:")
-    println("  Growth rate (σ_r):      $(real(σ_lead))")
-    println("  Drift frequency (ω):    $(imag(σ_lead))")
-    println()
+# Leading eigenvalue (largest real part)
+σ_lead = eigenvalues[result.leading_index]
+println("Leading eigenvalue:")
+println("  Growth rate (σ_r):      $(growth_rate(result))")
+println("  Drift frequency (ω):    $(frequency(result))")
+println()
 
-    if real(σ_lead) > 0
-        println("  → System is UNSTABLE (growing mode)")
-        println("    Dynamo instability detected!")
-    elseif real(σ_lead) < 0
-        println("  → System is STABLE (decaying mode)")
-        println("    Below dynamo onset")
-    else
-        println("  → System is MARGINALLY STABLE")
-        println("    At critical point for dynamo onset")
-    end
-    println()
-
-    println("Solver information:")
-    println("  Converged: $(get(info, "converged", "unknown"))")
-    println()
-
-    # Display top 5 eigenvalues
-    n_display = min(5, length(eigenvalues))
-    if n_display > 0
-        println("Top $n_display eigenvalues:")
-        for (i, λ) in enumerate(eigenvalues[1:n_display])
-            @printf("  %d: σ = %12.6f + %12.6fi\n", i, real(λ), imag(λ))
-        end
-        println()
-    end
-
-    println("="^80)
-    println("Physical Interpretation")
-    println("="^80)
-    println()
-    println("This calculation shows the stability of magnetohydrodynamic")
-    println("perturbations in a rotating spherical shell with:")
-    println("  - Thermal convection (Ra = $(Ra))")
-    println("  - Imposed axial magnetic field (Le = $(Le))")
-    println("  - Rotation (E = $(E))")
-    println()
-    println("The leading eigenvalue determines:")
-    println("  - Growth rate: how fast perturbations grow/decay")
-    println("  - Drift frequency: rotation rate of the pattern")
-    println()
-
-    if Le > 0
-        println("The Lorentz force from the background field:")
-        println("  - Stabilizes certain modes")
-        println("  - Can lead to magnetic buoyancy instabilities")
-        println("  - Enables dynamo action (self-sustaining fields)")
-    else
-        println("No background field (Le = 0): hydrodynamic stability problem")
-    end
-    println()
-
-catch err
-    println("✗ ERROR during eigenvalue solve:")
-    println("  $err")
-    println()
-    println("This may occur if:")
-    println("  - Resolution is too low (try larger N or lmax)")
-    println("  - Parameters are at a critical point")
-    println("  - Matrix is ill-conditioned")
+if real(σ_lead) > 0
+    println("  → System is UNSTABLE (growing mode)")
+    println("    Magnetoconvection sets in at these parameters")
+elseif real(σ_lead) < 0
+    println("  → System is STABLE (decaying mode)")
+    println("    Below the onset of magnetoconvection")
+else
+    println("  → System is MARGINALLY STABLE")
+    println("    At the critical point for onset")
 end
+println()
+
+println("Solver information:")
+println("  Assembly: $(result.extra.assembly_info)")
+println()
+
+# Display top 5 eigenvalues (sorted by growth rate)
+n_display = min(5, length(eigenvalues))
+if n_display > 0
+    println("Top $n_display eigenvalues:")
+    for (i, λ) in enumerate(sort(eigenvalues; by = real, rev = true)[1:n_display])
+        @printf("  %d: σ = %12.6f + %12.6fi\n", i, real(λ), imag(λ))
+    end
+    println()
+end
+
+println("="^80)
+println("Physical Interpretation")
+println("="^80)
+println()
+println("This calculation shows the stability of magnetohydrodynamic")
+println("perturbations in a rotating spherical shell with:")
+println("  - Thermal convection (Ra = $(Ra))")
+println("  - Imposed axial magnetic field (Le = $(Le))")
+println("  - Rotation (E = $(E))")
+println()
+println("The leading eigenvalue determines:")
+println("  - Growth rate: how fast perturbations grow/decay")
+println("  - Drift frequency: rotation rate of the pattern")
+println()
+
+if Le > 0
+    println("The imposed field:")
+    println("  - Couples the flow to magnetic perturbations (induction and Lorentz force)")
+    println("  - Can stabilize or destabilize convective modes, shifting the")
+    println("    critical Rayleigh number and drift frequency")
+else
+    println("No background field (Le = 0): hydrodynamic stability problem")
+end
+println()
 
 println("="^80)
 println("Example Complete")

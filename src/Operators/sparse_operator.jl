@@ -100,15 +100,17 @@ struct SparseOnsetParams{T<:Real}
     end
 end
 
-# Outer constructor to infer type
-function SparseOnsetParams(; E::T, Pr::T=one(T), Ra::T, ricb::T,
+# Outer constructor to infer type. Pr defaults to 1; the default cannot be
+# written `one(T)` because keyword defaults are evaluated before T is bound.
+function SparseOnsetParams(; E::T, Pr::Union{T,Nothing}=nothing, Ra::T, ricb::T,
                           m::Int, lmax::Int, symm::Int=1, N::Int,
                           bci::Int=1, bco::Int=1,
                           bci_thermal::Int=0, bco_thermal::Int=0,
                           heating::Symbol=:differential) where {T<:Real}
+    Pr_T = something(Pr, one(T))
     L = one(T) - ricb
-    Etherm = E / Pr
-    return SparseOnsetParams{T}(E, Pr, Ra, ricb, m, lmax, symm, N,
+    Etherm = E / Pr_T
+    return SparseOnsetParams{T}(E, Pr_T, Ra, ricb, m, lmax, symm, N,
                              bci, bco, bci_thermal, bco_thermal, heating, L, Etherm)
 end
 
@@ -120,6 +122,13 @@ end
     SparseStabilityOperator
 
 Stores pre-computed sparse radial operators and problem parameters.
+
+Every radial operator maps Chebyshev coefficients to Chebyshev coefficients;
+the `_u`/`_v`/`_h` suffix names the equation (row section) that uses it, which
+fixes its radial weighting: r⁴ for the poloidal 2curl equation, r² for the
+toroidal 1curl equation, r³ (differential) or r² (internal heating) for the heat
+equation. `assemble_sparse_matrices` projects each residual to its ultraspherical
+test basis (C⁴ for u, C² for v and h).
 """
 struct SparseStabilityOperator{T<:Real}
     params::SparseOnsetParams{T}
@@ -144,8 +153,6 @@ struct SparseStabilityOperator{T<:Real}
     r2_D0_v::SparseMatrixCSC{T,Int}  # For Coriolis (toroidal diagonal)
     r2_D1_v::SparseMatrixCSC{T,Int}  # For toroidal-poloidal coupling
     r2_D2_v::SparseMatrixCSC{T,Int}
-    r3_D0_v::SparseMatrixCSC{T,Int}  # Extra weighting for coupling terms
-    r4_D1_v::SparseMatrixCSC{T,Int}
 
     # Radial operators for temperature (section h)
     r0_D0_h::SparseMatrixCSC{T,Int}
@@ -156,7 +163,6 @@ struct SparseStabilityOperator{T<:Real}
     r2_D2_h::SparseMatrixCSC{T,Int}
     r3_D0_h::SparseMatrixCSC{T,Int}  # For differential heating
     r3_D2_h::SparseMatrixCSC{T,Int}  # For differential heating
-    r4_D0_h::SparseMatrixCSC{T,Int}
 
     # l-mode information
     ll_top::Vector{Int}  # l values for poloidal (equatorially symmetric)
@@ -199,8 +205,6 @@ function SparseStabilityOperator(params::SparseOnsetParams{T}) where {T}
     r2_D0_v = sparse_radial_operator(2, 0, N, ri, ro)  # For Coriolis (toroidal diagonal)
     r2_D1_v = sparse_radial_operator(2, 1, N, ri, ro)  # For toroidal-poloidal coupling
     r2_D2_v = sparse_radial_operator(2, 2, N, ri, ro)
-    r3_D0_v = sparse_radial_operator(3, 0, N, ri, ro)
-    r4_D1_v = sparse_radial_operator(4, 1, N, ri, ro)
 
     # Pre-compute radial operators for temperature
     @debug "Computing temperature operators..."
@@ -212,7 +216,6 @@ function SparseStabilityOperator(params::SparseOnsetParams{T}) where {T}
     r2_D2_h = sparse_radial_operator(2, 2, N, ri, ro)
     r3_D0_h = sparse_radial_operator(3, 0, N, ri, ro)  # For differential heating
     r3_D2_h = sparse_radial_operator(3, 2, N, ri, ro)  # For differential heating
-    r4_D0_h = sparse_radial_operator(4, 0, N, ri, ro)
 
     # Determine l-mode structure based on equatorial symmetry
     ll_top, ll_bot = compute_l_modes(params.m, params.lmax, params.symm)
@@ -231,8 +234,8 @@ function SparseStabilityOperator(params::SparseOnsetParams{T}) where {T}
     return SparseStabilityOperator{T}(
         params,
         r0_D0_u, r2_D0_u, r2_D2_u, r3_D0_u, r3_D1_u, r4_D0_u, r4_D1_u, r4_D2_u, r3_D3_u, r4_D4_u,
-        r0_D0_v, r1_D0_v, r1_D1_v, r2_D0_v, r2_D1_v, r2_D2_v, r3_D0_v, r4_D1_v,
-        r0_D0_h, r1_D0_h, r1_D1_h, r2_D0_h, r2_D1_h, r2_D2_h, r3_D0_h, r3_D2_h, r4_D0_h,
+        r0_D0_v, r1_D0_v, r1_D1_v, r2_D0_v, r2_D1_v, r2_D2_v,
+        r0_D0_h, r1_D0_h, r1_D1_h, r2_D0_h, r2_D1_h, r2_D2_h, r3_D0_h, r3_D2_h,
         ll_top, ll_bot, nl_modes,
         matrix_size
     )
@@ -353,28 +356,29 @@ end
     operator_coriolis_offdiag(op, l, m, offset)
 
 Coriolis force operator for off-diagonal (l, l±1) coupling.
-Implements op.coriolis(l, 'u', 'utor', ±1).
+Implements op.coriolis(l, 'u', 'utor', ±1): the poloidal (2curl, r⁴-weighted)
+equation at degree l acting on the toroidal velocity at degree l±1.
 
 Returns: [operator, offset] where offset indicates which l-mode it couples to.
 
 Following Kore lines 68-86:
 - For l-1: C = (l²-1)*sqrt(l²-m²)/(2l-1)
-  out = 2*C*((l-1)*r³D⁰ - r⁴D¹)
+  out = 2*C*((l-1)*r³D⁰_u - r⁴D¹_u)
 - For l+1: C = l*(l+2)*sqrt((l+m+1)*(l-m+1))/(2l+3)
-  out = 2*C*(-(l+2)*r³D⁰ - r⁴D¹)
+  out = 2*C*(-(l+2)*r³D⁰_u - r⁴D¹_u)
 """
 function operator_coriolis_offdiag(op::SparseStabilityOperator{T},
                                   l::Int, m::Int, offset::Int) where {T}
     if offset == -1
         # Coupling to l-1 mode (acts on toroidal coefficients)
         C = (l^2 - 1) * sqrt(T(l^2 - m^2)) / (2l - 1)
-        mtx = 2 * C * ((l - 1) * op.r3_D0_v - op.r4_D1_v)
+        mtx = 2 * C * ((l - 1) * op.r3_D0_u - op.r4_D1_u)
         return mtx, -1
 
     elseif offset == 1
         # Coupling to l+1 mode (acts on toroidal coefficients)
         C = l * (l + 2) * sqrt(T((l + m + 1) * (l - m + 1))) / (2l + 3)
-        mtx = 2 * C * (-(l + 2) * op.r3_D0_v - op.r4_D1_v)
+        mtx = 2 * C * (-(l + 2) * op.r3_D0_u - op.r4_D1_u)
         return mtx, 1
 
     else
@@ -433,18 +437,21 @@ function operator_buoyancy(op::SparseStabilityOperator{T},
     # L factor
     L = l * (l + 1)
 
-    # Full buoyancy operator couples temperature → poloidal via temperature basis
-    return beyonce * L * op.r4_D0_h
+    # Buoyancy enters the r⁴-weighted poloidal equation, acting on θ
+    return beyonce * L * op.r4_D0_u
 end
 
 """
     operator_coriolis_v_to_u(op, l, m, offset)
 
-Coriolis force coupling from toroidal velocity (v) to poloidal velocity (u).
+Coriolis coupling between the toroidal equation (v rows) at degree l and the
+poloidal velocity (u columns) at degree l±1.
 Implements op.coriolis(l, 'v', 'upol', ±1).
 
-This is the REVERSE coupling to operator_coriolis_offdiag (which does u→v).
+This is the REVERSE coupling to operator_coriolis_offdiag (u rows ← v).
 Both directions are required for correct rotating convection physics!
+It lives in the r²-weighted 1curl equation, so it uses the toroidal-row
+operators r¹D⁰_v and r²D¹_v, not the r⁴-weighted poloidal ones.
 
 Following Kore operators.py lines 93-113:
 - For l-1: C = (l²-1)*sqrt(l²-m²)/(2l-1)
@@ -457,14 +464,14 @@ Returns: operator matrix
 function operator_coriolis_v_to_u(op::SparseStabilityOperator{T},
                                  l::Int, m::Int, offset::Int) where {T}
     if offset == -1
-        # Coupling from v at mode l to u at mode l-1
+        # Toroidal equation at l, poloidal velocity at l-1
         C = (l^2 - 1) * sqrt(T(l^2 - m^2)) / (2l - 1)
-        return 2 * C * ((l - 1) * op.r3_D0_u - op.r4_D1_u)
+        return 2 * C * ((l - 1) * op.r1_D0_v - op.r2_D1_v)
 
     elseif offset == 1
-        # Coupling from v at mode l to u at mode l+1
+        # Toroidal equation at l, poloidal velocity at l+1
         C = l * (l + 2) * sqrt(T((l + m + 1) * (l - m + 1))) / (2l + 3)
-        return 2 * C * (-(l + 2) * op.r3_D0_u - op.r4_D1_u)
+        return 2 * C * (-(l + 2) * op.r1_D0_v - op.r2_D1_v)
 
     else
         error("offset must be ±1 for Coriolis v→u coupling")
@@ -601,10 +608,10 @@ function operator_thermal_advection(op::SparseStabilityOperator{T},
         # dT/dr = -beta * r⁻², eq. times r³
         ricb = op.params.ricb
         gap = one(T) - ricb
-        return L * op.r0_D0_u * (ricb / gap)
+        return L * op.r0_D0_h * (ricb / gap)
     else  # :internal
         # dT/dr = -beta * r, eq. times r²
-        return L * op.r2_D0_u
+        return L * op.r2_D0_h
     end
 end
 
@@ -618,9 +625,23 @@ end
 Assemble the full sparse matrices A and B for the generalized eigenvalue problem:
     A * x = λ * B * x
 
-Assembly structure from assemble.py.
+Assembly structure from assemble.py. Unknowns are Chebyshev coefficients, in
+blocks of N+1 per l-mode: poloidal velocity (`ll_top`), toroidal velocity
+(`ll_bot`), then temperature (`ll_top`). Each residual is projected to the
+ultraspherical basis matching its derivative order (C⁴ for the poloidal 2curl
+equation, C² for the toroidal and heat equations), and the tau boundary rows
+replace its highest-degree coefficients (last 4 rows of a poloidal block, last
+2 of a toroidal or temperature block); see `_compute_sparse_bc`. This is the
+hydrodynamic part of `assemble_mhd_matrices`: for the same l-modes the finite
+spectrum matches the MHD pencil with `B0_type = no_field`.
 
-Returns: (A, B, interior_dofs, info)
+B is zero on the tau rows, so the pencil has exactly one infinite eigenvalue
+per boundary row; discard those (e.g. by magnitude) and keep the rest.
+
+Returns: (A, B, interior_dofs, info). `interior_dofs` lists the differential
+equation rows (all rows except the tau rows), not removable coefficient
+columns: solve the full pencil, since deleting the tau rows and the matching
+columns destroys the boundary conditions.
 """
 function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
     params = op.params
@@ -649,20 +670,25 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
     B_cols = Int[]
     B_vals = Complex{T}[]
 
-    # Helper function to add block to matrix
+    # Project each residual to its derivative-order ultraspherical basis before
+    # the tau rows truncate it, as the MHD assembly does. Fourth-order velocity
+    # equations in a C⁰ test basis admit artificial growing modes even with
+    # correct boundary rows. Unknowns and boundary functionals stay Chebyshev.
+    C4 = _convert_up(T, 0, 4, N)
+    C2 = _convert_up(T, 0, 2, N)
+    poloidal_rows = nb_top * n_per_mode
+
+    # Helper function to add a projected block to the COO triplets
     function add_block!(rows, cols, vals, block::SparseMatrixCSC,
                        row_offset::Int, col_offset::Int)
+        block = (row_offset < poloidal_rows ? C4 : C2) * block
         I, J, V = findnz(block)
-        nnz_block = length(I)
-        nnz_block == 0 && return
-        Base.sizehint!(rows, length(rows) + nnz_block)
-        Base.sizehint!(cols, length(cols) + nnz_block)
-        Base.sizehint!(vals, length(vals) + nnz_block)
-        @inbounds for k in 1:nnz_block
+        @inbounds for k in eachindex(V)
             push!(rows, I[k] + row_offset)
             push!(cols, J[k] + col_offset)
             push!(vals, V[k])
         end
+        return nothing
     end
 
     # =========================================================================
@@ -739,7 +765,7 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
         visc_tor_op = operator_viscous_toroidal(op, l, E)
         add_block!(A_rows, A_cols, A_vals, -visc_tor_op, row_base, col_base)
 
-        # Coriolis coupling from toroidal to poloidal velocity (v → u, l±1)
+        # Coriolis coupling between toroidal and poloidal velocity (l±1)
         # This coupling goes in the TOROIDAL equation (v-rows), coupling to POLOIDAL variable (u-columns)
         # Physical meaning: Coriolis force in toroidal equation depends on poloidal velocity
         for offset in (-1, 1)
@@ -748,11 +774,9 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
             if k_coupled !== nothing
                 col_coupled = (k_coupled - 1) * n_per_mode  # Column for u at l_coupled
 
-                # Compute Coriolis v→u coupling operator
                 cori_v_to_u = operator_coriolis_v_to_u(op, l, m, offset)
                 add_block!(A_rows, A_cols, A_vals, cori_v_to_u,
-                          row_base, col_coupled)  # FIXED: v-rows (this equation), u-columns (coupled variable)
-
+                          row_base, col_coupled)
             end
         end
 
@@ -794,10 +818,10 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
     # =========================================================================
     # Apply boundary conditions at the COO stage, then build CSC once
     # =========================================================================
-    # Tau BCs overwrite whole boundary rows. Doing that on the assembled CSC
-    # forces O(nnz) structural insertions per row (~63 MB/assembly here). Instead
-    # drop the operator entries on the boundary rows and append the BC functionals
-    # to the triplets, so the single sparse() build carries the BCs with no churn.
+    # Tau BCs overwrite the highest-degree residual rows of each block. Doing
+    # that on the assembled CSC forces O(nnz) structural insertions per row.
+    # Instead drop the operator entries on the boundary rows and append the BC
+    # functionals to the triplets, so the single sparse() build carries the BCs.
     @debug "Applying boundary conditions (COO stage)..."
     bc_rows, bcA = _compute_sparse_bc(op)
     _filter_coo_rows!(A_rows, A_cols, A_vals, bc_rows)
@@ -812,11 +836,8 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
 
     @debug "Post-BC sparsity" A_nnz=nnz(A) B_nnz=nnz(B)
 
-    # Identify interior DOFs (those with nonzero B diagonal after BCs)
-    # Boundary conditions zero out rows in B, making it singular
-    # For eigenvalue solving, we need only the interior DOFs
-    B_diag = diag(B)
-    interior_dofs = findall(i -> abs(B_diag[i]) > 1e-14, 1:n)
+    # Differential-equation rows: everything except the tau rows (zero in B)
+    interior_dofs = setdiff(1:n, sort!(collect(bc_rows)))
     @info "Sparse assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
 
     info = Dict(
@@ -857,8 +878,20 @@ end
 Tau boundary-condition specification for the sparse hydro+temperature operator,
 as data rather than matrix mutation: `bc_rows` are the rows overwritten by BCs
 (zeroed in B, replaced in A) and `bcA` are the (row, col, value) entries of the
-replacement A rows. Mirrors `apply_sparse_boundary_conditions!` exactly; the two
-share `_bc_row_values` for the dirichlet/neumann/neumann2 functionals.
+replacement A rows. Same functionals and row placement as `_compute_mhd_bc`.
+
+Each constraint replaces one of the highest-degree coefficients of its block's
+projected residual, never the T₀/T₁ rows: rows N-2..N+1 of a poloidal block
+(outer u, outer 2nd condition, inner u, inner 2nd condition) and rows N, N+1 of
+a toroidal or temperature block (outer, inner).
+
+Mechanical BCs (controlled by bci/bco):
+- 0 = stress-free: u = 0, ∂²u/∂r² = 0 (poloidal); v - r·∂v/∂r = 0 (toroidal)
+- 1 = no-slip: u = 0, ∂u/∂r = 0 (poloidal); v = 0 (toroidal)
+
+Thermal BCs (controlled by bci_thermal/bco_thermal):
+- 0 = fixed temperature: θ = 0
+- 1 = fixed flux: ∂θ/∂r = 0
 """
 function _compute_sparse_bc(op::SparseStabilityOperator{T}) where {T}
     params = op.params
@@ -872,192 +905,48 @@ function _compute_sparse_bc(op::SparseStabilityOperator{T}) where {T}
     bc_rows = Set{Int}()
     bcA = Tuple{Int,Int,Complex{T}}[]
 
-    push_row! = (row, bc_type) -> begin
+    # Write one functional (Chebyshev coefficient row) into its own block
+    function add!(row, block_start, values)
         push!(bc_rows, row)
-        rng, vals = _bc_row_values(bc_type, row, N, ri, ro, T)
-        @inbounds for (j, c) in enumerate(rng)
-            push!(bcA, (row, c, Complex{T}(vals[j])))
+        for (j, v) in enumerate(values)
+            iszero(v) || push!(bcA, (row, block_start + j - 1, Complex{T}(v)))
         end
     end
-    push_explicit! = (row, row_base, rowvec) -> begin
-        push!(bc_rows, row)
-        @inbounds for i in 0:N
-            push!(bcA, (row, row_base + 1 + i, Complex{T}(rowvec[i + 1])))
-        end
-    end
+
+    # Boundary evaluation of T_n, dT_n/dr and d²T_n/dr²
+    scale = T(2) / (ro - ri)
+    vo = _chebyshev_boundary_values(N, :outer, T)
+    vi = _chebyshev_boundary_values(N, :inner, T)
+    do_ = scale .* _chebyshev_boundary_derivative(N, :outer, T)
+    di = scale .* _chebyshev_boundary_derivative(N, :inner, T)
+    d2o = scale^2 .* _chebyshev_boundary_second_derivative(N, :outer, T)
+    d2i = scale^2 .* _chebyshev_boundary_second_derivative(N, :inner, T)
 
     # Poloidal velocity BCs
-    for (k, l) in enumerate(op.ll_top)
-        row_base = (k - 1) * n_per_mode
-        push_row!(row_base + 1, :dirichlet)
-        push_row!(row_base + 2, params.bco == 1 ? :neumann : :neumann2)
-        push_row!(row_base + n_per_mode, :dirichlet)
-        push_row!(row_base + n_per_mode - 1, params.bci == 1 ? :neumann : :neumann2)
+    for k in eachindex(op.ll_top)
+        first_row = (k - 1) * n_per_mode + 1
+        last_row = first_row + N
+        add!(last_row - 3, first_row, vo)
+        add!(last_row - 2, first_row, params.bco == 1 ? do_ : d2o)
+        add!(last_row - 1, first_row, vi)
+        add!(last_row, first_row, params.bci == 1 ? di : d2i)
     end
 
-    # Toroidal velocity BCs (stress-free uses explicit row functionals)
-    scale = _radial_scale(ri, ro)
-    outer_vals = _chebyshev_boundary_values(N, :outer, T)
-    inner_vals = _chebyshev_boundary_values(N, :inner, T)
-    outer_deriv = _chebyshev_boundary_derivative(N, :outer, T)
-    inner_deriv = _chebyshev_boundary_derivative(N, :inner, T)
-    r_outer = _boundary_radius(ri, ro, :outer)
-    r_inner = _boundary_radius(ri, ro, :inner)
-    outer_row = @. -r_outer * scale * outer_deriv + outer_vals
-    inner_row = @. -r_inner * scale * inner_deriv + inner_vals
-    for (k, l) in enumerate(op.ll_bot)
-        row_base = (nb_top + k - 1) * n_per_mode
-        params.bco == 1 ? push_row!(row_base + 1, :dirichlet) :
-                          push_explicit!(row_base + 1, row_base, outer_row)
-        params.bci == 1 ? push_row!(row_base + n_per_mode, :dirichlet) :
-                          push_explicit!(row_base + n_per_mode, row_base, inner_row)
+    # Toroidal velocity BCs
+    for k in eachindex(op.ll_bot)
+        first_row = (nb_top + k - 1) * n_per_mode + 1
+        last_row = first_row + N
+        add!(last_row - 1, first_row, params.bco == 1 ? vo : vo .- ro .* do_)
+        add!(last_row, first_row, params.bci == 1 ? vi : vi .- ri .* di)
     end
 
     # Temperature BCs
-    for (k, l) in enumerate(op.ll_top)
-        row_base = (nb_top + nb_bot + k - 1) * n_per_mode
-        push_row!(row_base + 1, params.bco_thermal == 0 ? :dirichlet : :neumann)
-        push_row!(row_base + n_per_mode, params.bci_thermal == 0 ? :dirichlet : :neumann)
+    for k in eachindex(op.ll_top)
+        first_row = (nb_top + nb_bot + k - 1) * n_per_mode + 1
+        last_row = first_row + N
+        add!(last_row - 1, first_row, params.bco_thermal == 0 ? vo : do_)
+        add!(last_row, first_row, params.bci_thermal == 0 ? vi : di)
     end
 
     return bc_rows, bcA
-end
-
-"""
-    apply_sparse_boundary_conditions!(A, B, op)
-
-Apply boundary conditions by replacing appropriate rows in A and B matrices.
-Uses the tau method.
-
-Mechanical BCs (controlled by bci/bco):
-- 0 = stress-free: u = 0, r·∂²u/∂r² = 0 (poloidal); -r·∂v/∂r + v = 0 (toroidal)
-- 1 = no-slip: u = 0, ∂u/∂r = 0 (poloidal); v = 0 (toroidal)
-
-Thermal BCs (controlled by bci_thermal/bco_thermal):
-- 0 = fixed temperature: θ = 0
-- 1 = fixed flux: ∂θ/∂r = 0
-"""
-function apply_sparse_boundary_conditions!(A::SparseMatrixCSC,
-                                        B::SparseMatrixCSC,
-                                        op::SparseStabilityOperator{T}) where {T}
-    params = op.params
-    N = params.N
-    n_per_mode = N + 1
-
-    nb_top = length(op.ll_top)
-    nb_bot = length(op.ll_bot)
-
-    # -------------------------------------------------------------------------
-    # Poloidal velocity BCs
-    # -------------------------------------------------------------------------
-    for (k, l) in enumerate(op.ll_top)
-        row_base = (k - 1) * n_per_mode
-
-        # Outer boundary (r = ro = 1.0)
-        if params.bco == 1
-            # No-slip: u = 0, du/dr = 0
-            apply_boundary_conditions!(A, B, [row_base + 1], :dirichlet, N,
-                                      params.ricb, one(T))
-            apply_boundary_conditions!(A, B, [row_base + 2], :neumann, N,
-                                      params.ricb, one(T))
-        else
-            # Stress-free: u = 0, r·d²u/dr² = 0
-            bc_rows = [row_base + 1, row_base + 2]
-            apply_boundary_conditions!(A, B, [row_base + 1], :dirichlet, N,
-                                      params.ricb, one(T))
-            apply_boundary_conditions!(A, B, [row_base + 2], :neumann2, N,
-                                      params.ricb, one(T))
-        end
-
-        # Inner boundary (r = ri = ricb)
-        if params.bci == 1
-            # No-slip: u = 0, du/dr = 0
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode], :dirichlet, N,
-                                      params.ricb, one(T))
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode - 1], :neumann, N,
-                                      params.ricb, one(T))
-        else
-            # Stress-free: u = 0, r·d²u/dr² = 0
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode], :dirichlet, N,
-                                      params.ricb, one(T))
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode - 1], :neumann2, N,
-                                      params.ricb, one(T))
-        end
-    end
-
-    # -------------------------------------------------------------------------
-    # Toroidal velocity BCs
-    # -------------------------------------------------------------------------
-    scale = _radial_scale(params.ricb, one(T))
-    outer_vals = _chebyshev_boundary_values(N, :outer, T)
-    inner_vals = _chebyshev_boundary_values(N, :inner, T)
-    outer_deriv = _chebyshev_boundary_derivative(N, :outer, T)
-    inner_deriv = _chebyshev_boundary_derivative(N, :inner, T)
-    r_outer = _boundary_radius(params.ricb, one(T), :outer)
-    r_inner = _boundary_radius(params.ricb, one(T), :inner)
-    outer_row = @. -r_outer * scale * outer_deriv + outer_vals
-    inner_row = @. -r_inner * scale * inner_deriv + inner_vals
-
-    for (k, l) in enumerate(op.ll_bot)
-        row_base = (nb_top + k - 1) * n_per_mode
-
-        # Outer boundary (r = ro = 1.0)
-        if params.bco == 1
-            # No-slip: v = 0
-            apply_boundary_conditions!(A, B, [row_base + 1], :dirichlet, N,
-                                      params.ricb, one(T))
-        else
-            # Stress-free: -r·∂v/∂r + v = 0
-            row = row_base + 1
-            _zero_row!(A, row)
-            _zero_row!(B, row)
-            block_start = row_base + 1
-            A[row, block_start:(block_start + N)] = Complex{T}.(outer_row)
-        end
-
-        # Inner boundary (r = ri = ricb)
-        if params.bci == 1
-            # No-slip: v = 0
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode], :dirichlet, N,
-                                      params.ricb, one(T))
-        else
-            # Stress-free: -r·∂v/∂r + v = 0
-            row = row_base + n_per_mode
-            _zero_row!(A, row)
-            _zero_row!(B, row)
-            block_start = row_base + 1
-            A[row, block_start:(block_start + N)] = Complex{T}.(inner_row)
-        end
-    end
-
-    # -------------------------------------------------------------------------
-    # Temperature BCs
-    # -------------------------------------------------------------------------
-    for (k, l) in enumerate(op.ll_top)
-        row_base = (nb_top + nb_bot + k - 1) * n_per_mode
-
-        # Outer boundary (r = ro = 1.0)
-        if params.bco_thermal == 0
-            # Fixed temperature: θ = 0
-            apply_boundary_conditions!(A, B, [row_base + 1], :dirichlet, N,
-                                      params.ricb, one(T))
-        else
-            # Fixed flux: dθ/dr = 0
-            apply_boundary_conditions!(A, B, [row_base + 1], :neumann, N,
-                                      params.ricb, one(T))
-        end
-
-        # Inner boundary (r = ri = ricb)
-        if params.bci_thermal == 0
-            # Fixed temperature: θ = 0
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode], :dirichlet, N,
-                                      params.ricb, one(T))
-        else
-            # Fixed flux: dθ/dr = 0
-            apply_boundary_conditions!(A, B, [row_base + n_per_mode], :neumann, N,
-                                      params.ricb, one(T))
-        end
-    end
-
-    return nothing
 end

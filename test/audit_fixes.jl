@@ -20,13 +20,13 @@ end
 @testset "Audit fixes #1–#6" begin
 
     # ----- #1: theta_derivative_coupling = sinθ∂θ projection -----------------
-    # Validated identity (basic_state.jl:2007-2008, quadrature-tested):
+    # Identity for orthonormal Y (quadrature-tested in basicstate_review_fixes.jl):
     #   sinθ ∂Yℓm/∂θ = +ℓ·α⁺ Y_{ℓ+1,m} − (ℓ+1)·α⁻ Y_{ℓ-1,m}
-    # where (α⁻, α⁺) = sin_theta_coupling(ℓ,m) (the verified recurrence coeffs).
+    # where (α⁻, α⁺) = cos_theta_coupling(ℓ,m) (the orthonormal cosθ recurrence).
     @testset "#1 theta_derivative_coupling sinθ∂θ coefficients" begin
         for (ℓ, m) in [(1, 1), (2, 1), (3, 2), (2, 0), (4, 3), (5, 0)]
             A_minus, A_plus, A_diag = Magrathea.theta_derivative_coupling(ℓ, m)
-            αminus, αplus = Magrathea.sin_theta_coupling(ℓ, m)
+            αminus, αplus = Magrathea.cos_theta_coupling(ℓ, m)
             @test A_plus  ≈ ℓ * αplus        atol=1e-12
             @test A_minus ≈ -(ℓ + 1) * αminus atol=1e-12
             @test A_diag  == 0
@@ -56,16 +56,6 @@ end
         ur, uθ, uφ = Magrathea.eigenvector_to_velocity_triglobal(ev, problem; φ_slice=0.0)
         @test maximum(abs, uθ) > 1e-8
         @test maximum(abs, uφ) > 1e-8
-    end
-
-    # ----- #5: unweighted SH self-overlap must be positive -------------------
-    # ∫|Y_{ℓm}|² (no sinθ weight) over a positive measure is strictly positive.
-    # The spurious (-1)^m phase made it negative for odd m.
-    @testset "#5 compute_sh_coupling_unweighted positivity" begin
-        for (ℓ, m) in [(1, 1), (2, 1), (3, 3), (1, 0), (2, 2), (4, 1)]
-            val = Magrathea.compute_sh_coupling_unweighted(ℓ, m, 0, 0, ℓ, m)
-            @test val > 0
-        end
     end
 
     # ----- #6: inv_sin_theta_gaunt = exact ⟨Y_Lm|1/sinθ|Y_ℓm⟩ = ∫₀^π P̄_Lm P̄_ℓm dθ ---

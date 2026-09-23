@@ -83,14 +83,15 @@ end
 
 """
 Distributed SLEPc solve of `A x = σ B x` over `MPI.COMM_WORLD`. Replicated Julia
-assembly (each rank holds full `A`/`B`, inserts only owned rows). MUMPS shift-invert
-comes from the option string set in `slepc_init!`. Returns the Magrathea contract
+assembly (each rank holds full `A`/`B`, inserts only owned rows). Shift-and-invert is
+the default spectral transform; the factorization package (e.g. MUMPS for parallel
+runs) comes from the option string set in `slepc_init!`. Returns the Magrathea contract
 `(eigenvalues, eigenvectors, info)`: eigenvalues on all ranks; eigenvectors full
 `n×nev` on rank 0, empty `n×0` on workers. Requires a complex-scalar PETSc build.
 """
 function _slepc_solve(A::SparseMatrixCSC, B::SparseMatrixCSC;
                       nev::Int, sigma, which::Symbol, selection::Symbol,
-                      tol::Float64, maxiter::Int, verbosity::Int=0)
+                      tol::Real, maxiter::Int, verbosity::Int=0)
     _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real &&
         error("PETSc/SLEPc must be built with complex scalars (--with-scalar-type=complex)")
@@ -108,68 +109,75 @@ end
 """
 Shared EPS shift-invert solve + rank-0 eigenvector gather, operating on already-built
 distributed PETSc matrices `Amat`, `Bmat` (`n×n`). Owns the EPS lifecycle and destroys
-`Amat`/`Bmat` before returning (NOT SlepcFinalize — that is the caller's explicit
-lifecycle). Used by both `_slepc_solve` (replicated sparse path) and `_slepc_mhd_solve`
-(distributed MHD path). Returns the Magrathea contract `(eigenvalues, eigenvectors, info)`:
-eigenvalues identical on all ranks; eigenvectors full `n×nout` on rank 0, empty `n×0`
-on workers.
+`Amat`/`Bmat` (and its work vectors) before returning, also when the solve fails (NOT
+SlepcFinalize — that is the caller's explicit lifecycle). Used by every distributed
+path. Returns the Magrathea contract `(eigenvalues, eigenvectors, info)`: eigenvalues
+identical on all ranks; eigenvectors full `n×nout` on rank 0, empty `n×0` on workers.
+
+Shift-and-invert about the target is set as the default spectral transform, so a bare
+`slepc_init!()` does not fall back to SLEPc's plain shift (which would have to invert
+the singular tau mass matrix). `-st_type` and the other options given to `slepc_init!`
+still override it; `info["strategy"]` reports the transform actually used.
 """
 function _eps_solve_and_gather(Amat, Bmat, n::Int;
                               nev::Int, sigma, which::Symbol, selection::Symbol,
-                              tol::Float64, maxiter::Int, verbosity::Int=0)
+                              tol::Real, maxiter::Int, verbosity::Int=0)
     target = sigma === nothing ?
         (which === :LR ? ComplexF64(10, 0) :
          which === :LI ? ComplexF64(0, 10) : ComplexF64(1, 0)) :
         ComplexF64(sigma)
 
     eps = EPSCreate(MPI.COMM_WORLD)
-    EPSSetOperators(eps, Amat, Bmat)
-    _eps_set_dimensions(eps, nev)
-    EPSSetTarget(eps, PetscScalar(target))
-    EPSSetWhichEigenpairs(eps, EPS_TARGET_MAGNITUDE)
-    _eps_set_tolerances(eps, tol, maxiter)
-    # Explicit PETSc options may override these Julia keyword defaults.
-    EPSSetFromOptions(eps)        # GNHEP + sinvert + MUMPS come from slepc_init! opts
-    EPSSetUp(eps)
-    EPSSolve(eps)
+    vr = vi = nothing
+    try
+        EPSSetOperators(eps, Amat, Bmat)
+        _eps_set_dimensions(eps, nev)
+        EPSSetTarget(eps, PetscScalar(target))
+        EPSSetWhichEigenpairs(eps, EPS_TARGET_MAGNITUDE)
+        _eps_set_tolerances(eps, tol, maxiter)
+        _eps_set_st_type(eps, "sinvert")
+        # Explicit PETSc options may override these Julia keyword defaults.
+        EPSSetFromOptions(eps)
+        EPSSetUp(eps)
+        EPSSolve(eps)
 
-    nconv = EPSGetConverged(eps)
-    nout = min(nconv, nev)
-    nout == 0 && (EPSDestroy(eps); MatDestroy(Amat); MatDestroy(Bmat);
-                  error("SLEPc returned no converged eigenpairs"))
+        nconv = EPSGetConverged(eps)
+        nout = min(nconv, nev)
+        nout == 0 && error("SLEPc returned no converged eigenpairs")
 
-    rank = MPI.Comm_rank(MPI.COMM_WORLD)
-    vals = Vector{ComplexF64}(undef, nout)
-    vecs = rank == 0 ? Matrix{ComplexF64}(undef, n, nout) : Matrix{ComplexF64}(undef, n, 0)
-    vr, vi = MatCreateVecs(Amat)
-    for j in 0:(nout - 1)
-        vpr, vpi, vecr, veci = EPSGetEigenpair(eps, j, vr, vi)
-        # Complex PETSc: EPSGetEigenpair returns the full eigenvalue in vpr (a
-        # complex PetscScalar); vpi is the unused 0 imaginary slot. The 2-arg
-        # ComplexF64(re, im) would coerce the complex vpr through Float64 -> InexactError.
-        vals[j + 1] = ComplexF64(vpr)                 # collective: identical all ranks
-        full = _vec_scatter_to_zero(vecr)             # length n on rank 0, else 0
-        rank == 0 && (vecs[:, j + 1] .= full)
+        rank = MPI.Comm_rank(MPI.COMM_WORLD)
+        vals = Vector{ComplexF64}(undef, nout)
+        vecs = rank == 0 ? Matrix{ComplexF64}(undef, n, nout) : Matrix{ComplexF64}(undef, n, 0)
+        vr, vi = MatCreateVecs(Amat)
+        for j in 0:(nout - 1)
+            vpr, vpi, vecr, veci = EPSGetEigenpair(eps, j, vr, vi)
+            # Complex PETSc: EPSGetEigenpair returns the full eigenvalue in vpr (a
+            # complex PetscScalar); vpi is the unused 0 imaginary slot. The 2-arg
+            # ComplexF64(re, im) would coerce the complex vpr through Float64 -> InexactError.
+            vals[j + 1] = ComplexF64(vpr)                 # collective: identical all ranks
+            full = _vec_scatter_to_zero(vecr)             # length n on rank 0, else 0
+            rank == 0 && (vecs[:, j + 1] .= full)
+        end
+
+        effective_tol, effective_maxiter = EPSGetTolerances(eps)
+        info = Dict{String,Any}("solver" => :slepc,
+            "strategy" => Symbol(_eps_get_st_type(eps)),
+            "target" => target, "nconv" => nconv, "selection" => selection,
+            "tol" => effective_tol, "maxiter" => effective_maxiter,
+            "ranks" => MPI.Comm_size(MPI.COMM_WORLD))
+
+        perm = _sort_indices_local(vals, selection)
+        return vals[perm], (size(vecs, 2) == 0 ? vecs : vecs[:, perm]), info
+    finally
+        if vr !== nothing
+            VecDestroy(vr); VecDestroy(vi)
+        end
+        EPSDestroy(eps); MatDestroy(Amat); MatDestroy(Bmat)   # NOT SlepcFinalize (explicit lifecycle)
     end
-
-    effective_tol, effective_maxiter = EPSGetTolerances(eps)
-    info = Dict{String,Any}("solver" => :slepc, "strategy" => :shift_invert,
-        "target" => target, "nconv" => nconv, "selection" => selection,
-        "tol" => effective_tol, "maxiter" => effective_maxiter,
-        "ranks" => MPI.Comm_size(MPI.COMM_WORLD))
-
-    EPSDestroy(eps); MatDestroy(Amat); MatDestroy(Bmat)   # NOT SlepcFinalize (explicit lifecycle)
-
-    perm = _sort_indices_local(vals, selection)
-    return vals[perm], (size(vecs, 2) == 0 ? vecs : vecs[:, perm]), info
 end
 
-function _sort_indices_local(ev::AbstractVector{<:Complex}, selection::Symbol)
-    selection === :maxreal      ? sortperm(real.(ev); rev=true) :
-    selection === :minabs       ? sortperm(abs.(ev)) :
-    selection === :closest_real ? sortperm(abs.(real.(ev))) :
-    error("Unknown selection strategy $(selection)")
-end
+_sort_indices_local(ev::AbstractVector{<:Complex}, selection::Symbol) =
+    Magrathea._selection_order(ev, selection)
 
 # ---------------------------------------------------------------------------
 # Distributed MHD assembly path
@@ -278,7 +286,7 @@ distributed PETSc A/B from the COO triplets (owned rows only), applies the tau B
 the distributed Mats, then runs the shared EPS shift-invert solve + rank-0 gather.
 Returns the Magrathea contract `(eigenvalues, eigenvectors, info)`. Requires a complex
 PETSc build and a prior `Magrathea.slepc_init!()`."""
-function _slepc_mhd_solve(op; nev::Int, sigma, which::Symbol, tol::Float64, maxiter::Int)
+function _slepc_mhd_solve(op; nev::Int, sigma, which::Symbol, tol::Real, maxiter::Int)
     _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real &&
         error("PETSc/SLEPc must be built with complex scalars (--with-scalar-type=complex)")
@@ -318,7 +326,7 @@ EPS shift-invert solve + rank-0 gather on the small reduced pencil. Reduced
 eigenvectors are mapped back to full DOF coordinates with `P` on rank 0. Returns the
 Magrathea contract `(eigenvalues, eigenvectors, info)`. Requires a complex PETSc build and
 a prior `Magrathea.slepc_init!()`."""
-function _slepc_constrained_solve(op; nev::Int, sigma, which::Symbol, tol::Float64, maxiter::Int)
+function _slepc_constrained_solve(op; nev::Int, sigma, which::Symbol, tol::Real, maxiter::Int)
     _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
     red = Magrathea._constraint_reduction_from_subblocks(op)        # no full A
@@ -349,28 +357,33 @@ end
 # Distributed triglobal path (CoupledModeProblem)
 # ---------------------------------------------------------------------------
 
-"""Distributed triglobal SLEPc solve from a `CoupledModeProblem`. Builds the
-single-mode and mode-coupling operators (verbose=false), assembles the block-coupled
-pencil `(A, B)` directly into distributed PETSc Mats from owned-row COO triplets
-(`Magrathea._assemble_block_coo` with `owned_julia_rows`), then runs the shared EPS
-shift-invert solve + rank-0 gather. Uses a small imaginary shift (`σ_target + 1e-6 i`)
-to avoid singularity from boundary-condition rows, mirroring the serial triglobal
-Krylov path. Returns `(eigenvalues, eigenvectors)` (eigenvectors full `n×nout` on rank
-0, empty `n×0` on workers). Requires a complex PETSc build and a prior
-`Magrathea.slepc_init!()`."""
-function _slepc_triglobal_solve(problem; σ_target, nev::Int, tol::Float64, maxiter::Int)
+"""Distributed triglobal SLEPc solve from a `CoupledModeProblem`. Uses the caller's
+single-mode and mode-coupling operators when given (otherwise builds them with
+verbose=false), assembles the block-coupled pencil `(A, B)` directly into distributed
+PETSc Mats from owned-row COO triplets (`Magrathea._assemble_block_coo` with
+`owned_julia_rows`), then runs the shared EPS shift-invert solve + rank-0 gather. With
+`σ_target === nothing` the target follows `which` like the other paths; an explicit
+target gets a small imaginary offset (`σ_target + 1e-6 i`) so an exactly real shift
+cannot coincide with an eigenvalue. Returns `(eigenvalues, eigenvectors)`
+(eigenvectors full `n×nout` on rank 0, empty `n×0` on workers). Requires a complex
+PETSc build and a prior `Magrathea.slepc_init!()`."""
+function _slepc_triglobal_solve(problem; σ_target=nothing, which::Symbol=:LR, nev::Int,
+                                tol::Real, maxiter::Int,
+                                single_mode_ops=nothing, coupling_ops=nothing)
     _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real && error("PETSc/SLEPc must be built with complex scalars")
-    single = Magrathea.build_single_mode_operators(problem, false)
-    coupling = Magrathea.build_mode_coupling_operators(problem, single, false)
+    single = single_mode_ops === nothing ?
+        Magrathea.build_single_mode_operators(problem, false) : single_mode_ops
+    coupling = coupling_ops === nothing ?
+        Magrathea.build_mode_coupling_operators(problem, single, false) : coupling_ops
     n = problem.total_dofs
     Amat, rs, re = _create_dist_mat(n); Bmat, _, _ = _create_dist_mat(n)
     coo = Magrathea._assemble_block_coo(problem, single, coupling; owned_julia_rows=(rs+1):re)
     _fill_dist_mat!(Amat, coo.A_rows, coo.A_cols, coo.A_vals, rs, re)
     _fill_dist_mat!(Bmat, coo.B_rows, coo.B_cols, coo.B_vals, rs, re)
-    shift = ComplexF64(σ_target, 1e-6)
+    shift = σ_target === nothing ? nothing : ComplexF64(σ_target) + 1e-6im
     vals, vecs, _ = _eps_solve_and_gather(Amat, Bmat, n;
-        nev=nev, sigma=shift, which=:LR, selection=:maxreal, tol=tol, maxiter=maxiter)
+        nev=nev, sigma=shift, which=which, selection=:maxreal, tol=tol, maxiter=maxiter)
     return vals, vecs
 end
 

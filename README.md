@@ -26,7 +26,7 @@ using Pkg
 Pkg.add(url="https://github.com/subhk/Magrathea.jl")
 ```
 
-See `Project.toml` for Julia compatibility (Julia 1.9 or later in the 1.x series). Sparse eigensolves require complex PETSc/SLEPc libraries and the `PetscWrap`/`SlepcWrap` weak dependencies; follow the [solver setup](https://subhk.github.io/Magrathea.jl/dev/getting_started/#SLEPc-setup).
+See `Project.toml` for Julia compatibility (Julia 1.10 or later in the 1.x series). Sparse eigensolves require complex PETSc/SLEPc libraries and the `PetscWrap`/`SlepcWrap` weak dependencies; follow the [solver setup](https://subhk.github.io/Magrathea.jl/dev/getting_started/#SLEPc-setup).
 
 ## Quick Start
 

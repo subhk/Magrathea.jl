@@ -138,6 +138,17 @@ Symbolic representation of boundary conditions expanded in spherical harmonics.
 This type provides a convenient way to specify temperature boundary conditions
 using standard spherical harmonic notation (Y_ℓm) rather than dictionary syntax.
 
+# Amplitude convention
+An amplitude `a` for mode `(ℓ, m)` prescribes the outer-boundary pattern
+
+    a · P_ℓ^m(cosθ) · cos(mφ)
+
+where `P_ℓ^m` is the unnormalized associated Legendre function *including the
+Condon–Shortley phase* `(-1)^m`, as used for the stored coefficients. Odd-`m`
+patterns therefore carry a minus sign: `Y11(a)` is `-a sinθ cosφ` and `Y21(a)`
+is `-3a sinθ cosθ cosφ`, while `Y20(a)` is `a (3cos²θ - 1)/2`. With a flux
+boundary condition the same pattern prescribes `∂θ̄/∂r` at `r_o`.
+
 # Constructor Functions
 - `Ylm(ℓ, m, amplitude)` - General spherical harmonic mode
 - `Y00(amp)`, `Y10(amp)`, `Y11(amp)` - Monopole and dipole
@@ -175,18 +186,19 @@ bc = 0.5 * (Y20(1.0) + 2.0 * Y40(0.5))
 
 ## Flux boundary condition
 ```julia
-bc = Y20(0.1)  # Interpreted as flux when thermal_bc=:fixed_flux
-bs = basic_state(cd, χ, E, Ra, Pr; temperature_bc=bc, thermal_bc=:fixed_flux)
+bc = Y20(0.1)  # Prescribes ∂θ̄/∂r at r_o when passed as flux_bc
+bs = basic_state(cd, χ, E, Ra, Pr; flux_bc=bc)
 ```
 
 # Physical Interpretation
 
-The spherical harmonics Y_ℓm represent different angular patterns:
+The spherical harmonics Y_ℓm represent different angular patterns (signs
+below are for a positive amplitude):
 
 - **Y₀₀**: Uniform (spherically symmetric)
-- **Y₁₀**: North-south dipole (one hemisphere hot, other cold)
-- **Y₁₁**: East-west dipole
-- **Y₂₀**: Equator-pole contrast (equator different from poles)
+- **Y₁₀**: North-south dipole (warm north pole, cold south pole)
+- **Y₁₁**: East-west dipole (`-sinθ cosφ`: cold at φ=0°, warm at φ=180°)
+- **Y₂₀**: Equator-pole contrast (warm poles, cool equator)
 - **Y₂₂**: Four-fold longitudinal pattern (warm at 0°,180°, cold at 90°,270°)
 - **Y₃₀**: More complex latitudinal structure
 - **Y₄₀**: Even more latitudinal bands
@@ -264,7 +276,10 @@ Base.iszero(bc::SphericalHarmonicBC) = isempty(bc.coeffs) || all(iszero, values(
 """
     Ylm(ℓ::Int, m::Int, amplitude::Real=1.0)
 
-Create a spherical harmonic boundary condition for mode (ℓ, m).
+Create a spherical harmonic boundary condition for mode (ℓ, m): the outer
+boundary pattern `amplitude · P_ℓ^m(cosθ) · cos(mφ)`, with the unnormalized
+associated Legendre function `P_ℓ^m` including the Condon–Shortley phase
+`(-1)^m` (see [`SphericalHarmonicBC`](@ref)).
 
 # Arguments
 - `ℓ` : Spherical harmonic degree (ℓ ≥ 0)
@@ -279,53 +294,53 @@ bc = Ylm(3, 2, 0.1)  # Y₃₂ mode with amplitude 0.1
 Ylm(ℓ::Int, m::Int, amplitude::Real=1.0) = SphericalHarmonicBC(ℓ, m, amplitude)
 
 # ℓ = 0: Monopole (uniform)
-"""Y00(amplitude=1.0) - Uniform (monopole) spherical harmonic"""
+"""Y00(amplitude=1.0) - Uniform (monopole): `amplitude` everywhere"""
 Y00(amplitude::Real=1.0) = SphericalHarmonicBC(0, 0, amplitude)
 
 # ℓ = 1: Dipole
-"""Y10(amplitude=1.0) - Axial dipole: cos(θ) pattern (north-south asymmetry)"""
+"""Y10(amplitude=1.0) - Axial dipole: `amplitude·cosθ` (north-south asymmetry)"""
 Y10(amplitude::Real=1.0) = SphericalHarmonicBC(1, 0, amplitude)
 
-"""Y11(amplitude=1.0) - Equatorial dipole: sin(θ)cos(φ) pattern"""
+"""Y11(amplitude=1.0) - Equatorial dipole: `-amplitude·sinθ·cosφ` (Condon–Shortley sign)"""
 Y11(amplitude::Real=1.0) = SphericalHarmonicBC(1, 1, amplitude)
 
 # ℓ = 2: Quadrupole
-"""Y20(amplitude=1.0) - Axisymmetric quadrupole: (3cos²θ - 1) pattern (equator-pole contrast)"""
+"""Y20(amplitude=1.0) - Axisymmetric quadrupole: `amplitude·(3cos²θ - 1)/2` (equator-pole contrast)"""
 Y20(amplitude::Real=1.0) = SphericalHarmonicBC(2, 0, amplitude)
 
-"""Y21(amplitude=1.0) - Tesseral quadrupole: sin(θ)cos(θ)cos(φ) pattern"""
+"""Y21(amplitude=1.0) - Tesseral quadrupole: `-3·amplitude·sinθ·cosθ·cosφ` (Condon–Shortley sign)"""
 Y21(amplitude::Real=1.0) = SphericalHarmonicBC(2, 1, amplitude)
 
-"""Y22(amplitude=1.0) - Sectoral quadrupole: sin²(θ)cos(2φ) pattern (four-fold longitudinal)"""
+"""Y22(amplitude=1.0) - Sectoral quadrupole: `3·amplitude·sin²θ·cos(2φ)` (four-fold longitudinal)"""
 Y22(amplitude::Real=1.0) = SphericalHarmonicBC(2, 2, amplitude)
 
 # ℓ = 3: Octupole
-"""Y30(amplitude=1.0) - Axisymmetric octupole"""
+"""Y30(amplitude=1.0) - Axisymmetric octupole: `amplitude·(5cos³θ - 3cosθ)/2`"""
 Y30(amplitude::Real=1.0) = SphericalHarmonicBC(3, 0, amplitude)
 
-"""Y31(amplitude=1.0) - Tesseral octupole m=1"""
+"""Y31(amplitude=1.0) - Tesseral octupole: `-(3/2)·amplitude·sinθ·(5cos²θ - 1)·cosφ` (Condon–Shortley sign)"""
 Y31(amplitude::Real=1.0) = SphericalHarmonicBC(3, 1, amplitude)
 
-"""Y32(amplitude=1.0) - Tesseral octupole m=2"""
+"""Y32(amplitude=1.0) - Tesseral octupole: `15·amplitude·sin²θ·cosθ·cos(2φ)`"""
 Y32(amplitude::Real=1.0) = SphericalHarmonicBC(3, 2, amplitude)
 
-"""Y33(amplitude=1.0) - Sectoral octupole"""
+"""Y33(amplitude=1.0) - Sectoral octupole: `-15·amplitude·sin³θ·cos(3φ)` (Condon–Shortley sign)"""
 Y33(amplitude::Real=1.0) = SphericalHarmonicBC(3, 3, amplitude)
 
 # ℓ = 4: Hexadecapole
-"""Y40(amplitude=1.0) - Axisymmetric hexadecapole"""
+"""Y40(amplitude=1.0) - Axisymmetric hexadecapole: `amplitude·(35cos⁴θ - 30cos²θ + 3)/8`"""
 Y40(amplitude::Real=1.0) = SphericalHarmonicBC(4, 0, amplitude)
 
-"""Y41(amplitude=1.0) - Tesseral hexadecapole m=1"""
+"""Y41(amplitude=1.0) - Tesseral hexadecapole: `-(5/2)·amplitude·sinθ·(7cos³θ - 3cosθ)·cosφ` (Condon–Shortley sign)"""
 Y41(amplitude::Real=1.0) = SphericalHarmonicBC(4, 1, amplitude)
 
-"""Y42(amplitude=1.0) - Tesseral hexadecapole m=2"""
+"""Y42(amplitude=1.0) - Tesseral hexadecapole: `(15/2)·amplitude·sin²θ·(7cos²θ - 1)·cos(2φ)`"""
 Y42(amplitude::Real=1.0) = SphericalHarmonicBC(4, 2, amplitude)
 
-"""Y43(amplitude=1.0) - Tesseral hexadecapole m=3"""
+"""Y43(amplitude=1.0) - Tesseral hexadecapole: `-105·amplitude·sin³θ·cosθ·cos(3φ)` (Condon–Shortley sign)"""
 Y43(amplitude::Real=1.0) = SphericalHarmonicBC(4, 3, amplitude)
 
-"""Y44(amplitude=1.0) - Sectoral hexadecapole"""
+"""Y44(amplitude=1.0) - Sectoral hexadecapole: `105·amplitude·sin⁴θ·cos(4φ)`"""
 Y44(amplitude::Real=1.0) = SphericalHarmonicBC(4, 4, amplitude)
 
 # =============================================================================
@@ -436,10 +451,12 @@ Arguments:
 - `thermal_bc` - Outer thermal boundary condition:
   - `:fixed_temperature` (default): θ̄(r_o) = 0
   - `:fixed_flux`: dθ̄/dr|_{r_o} = outer_flux
-- `outer_flux` - Heat flux at outer boundary (only used if thermal_bc=:fixed_flux)
-                 Positive = heat flowing outward, negative = heat flowing inward.
-                 For standard convection with hot inner boundary, use negative flux
-                 (e.g., outer_flux = -1/(r_o² × (1 - χ)) for unit total flux).
+- `outer_flux` - Prescribed radial temperature gradient ∂θ̄/∂r at r_o (only used
+                 if thermal_bc=:fixed_flux). The outward heat flux is -∂θ̄/∂r, so a
+                 negative value carries heat outward (the usual case with a hot inner
+                 boundary) and a positive value carries heat inward. For example,
+                 outer_flux = -χ/(1 - χ) reproduces the fixed-temperature conduction
+                 profile (θ̄(r_o) = 0).
 
 # Physical Interpretation
 For fixed temperature BCs:
@@ -448,7 +465,7 @@ For fixed temperature BCs:
 
 For fixed flux at outer:
   - θ̄(r_i) = 1 (hot inner boundary)
-  - dθ̄/dr|_{r_o} = outer_flux (prescribed heat flux)
+  - dθ̄/dr|_{r_o} = outer_flux (prescribed gradient; outward heat flux = -outer_flux)
 
 The conduction profile for ℓ=0 with fixed flux at outer is:
   θ̄_0(r) = √(4π) × [1 + outer_flux × r_o² × (1/r_i - 1/r)]
@@ -520,14 +537,20 @@ end
 
 """
 Construct the axisymmetric conductive-temperature / viscous mean-flow state.
-The outer anomaly is `amplitude * P₂(cosθ)` for fixed temperature, or
-`outer_flux_Y20 * P₂(cosθ)` for fixed flux. The inner temperature is uniform.
+The outer anomaly is `amplitude * P₂(cosθ)` for fixed temperature. For fixed
+flux, ∂θ̄/∂r at r_o is `outer_flux_mean` plus `F * P₂(cosθ)`, where
+`F = amplitude` when it is nonzero and `outer_flux_Y20` otherwise. The inner
+temperature is uniform.
 
 All three velocity components solve the steady Stokes–Coriolis equations in a
 solenoidal vector-harmonic basis, with both mechanical boundaries enforced.
 `Ra` is shell-gap based. This neglects momentum inertia and temperature
 advection; use `basic_state_selfconsistent` to include both nonlinear effects.
 Use `mean_flow_velocity` to evaluate the full vector field.
+
+A nonzero Y₂₀ forcing requires `lmax_bs ≥ 2`; smaller values throw an
+`ArgumentError` rather than dropping the forcing. Without Y₂₀ forcing any
+`lmax_bs ≥ 0` is accepted and gives the conduction profile with zero flow.
 """
 function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
                                lmax_bs::Int, amplitude::T;
@@ -546,76 +569,43 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
         error("thermal_bc must be :fixed_temperature or :fixed_flux, got: $thermal_bc")
     end
 
-    # Initialize dictionaries
-    theta_coeffs = Dict{Int,Vector{T}}()
-    dtheta_dr_coeffs = empty(theta_coeffs)
-    uphi_coeffs = empty(theta_coeffs)
-    duphi_dr_coeffs = empty(theta_coeffs)
+    # Degree-2 boundary forcing: a temperature amplitude, or a flux amplitude
+    # (a nonzero `amplitude` overrides `outer_flux_Y20`).
+    forcing_Y20 = (thermal_bc == :fixed_temperature || amplitude != zero(T)) ?
+                  amplitude : outer_flux_Y20
+    lmax_bs >= 0 || throw(ArgumentError("lmax_bs must be non-negative, got $lmax_bs"))
+    if lmax_bs < 2 && !iszero(forcing_Y20)
+        kind = thermal_bc == :fixed_temperature ? "temperature" : "flux"
+        throw(ArgumentError("meridional_basic_state imposes a nonzero Y₂₀ boundary " *
+            "$kind ($forcing_Y20), which lmax_bs=$lmax_bs cannot retain; use lmax_bs ≥ 2."))
+    end
 
     # Spherical harmonic normalization for Y_20
     norm_Y20 = sqrt(T(5) / (T(4) * T(pi)))
 
+    # Unforced degrees keep zero temperature.
+    theta_coeffs = Dict{Int,Vector{T}}(ℓ => zeros(T, Nr) for ℓ in 0:lmax_bs)
+    dtheta_dr_coeffs = Dict{Int,Vector{T}}(ℓ => zeros(T, Nr) for ℓ in 0:lmax_bs)
+
     if thermal_bc == :fixed_temperature
-        # =====================================================================
-        # Fixed temperature at both boundaries
-        # =====================================================================
-
         # ℓ=0 mode: uniform inner temp, zero outer temp
-        theta_0, dtheta_0 = laplace_mode_profile(0, r, r_i, r_o,
-                                                 sqrt(T(4)*T(pi)), zero(T);
-                                                 outer_bc=:fixed_temperature)
-        theta_coeffs[0] = theta_0
-        dtheta_dr_coeffs[0] = dtheta_0
-
-        # ℓ=2 mode: zero at inner, amplitude × Y_20 pattern at outer
-        theta_2, dtheta_2 = laplace_mode_profile(2, r, r_i, r_o,
-                                                zero(T), amplitude / norm_Y20;
-                                                outer_bc=:fixed_temperature)
-        theta_coeffs[2] = theta_2
-        dtheta_dr_coeffs[2] = dtheta_2
-
+        theta_coeffs[0], dtheta_dr_coeffs[0] = laplace_mode_profile(0, r, r_i, r_o,
+            sqrt(T(4)*T(pi)), zero(T); outer_bc=:fixed_temperature)
+        # ℓ=2 mode: zero at inner, amplitude × P₂ pattern at outer
+        if lmax_bs >= 2
+            theta_coeffs[2], dtheta_dr_coeffs[2] = laplace_mode_profile(2, r, r_i, r_o,
+                zero(T), forcing_Y20 / norm_Y20; outer_bc=:fixed_temperature)
+        end
     else  # fixed_flux
-        # =====================================================================
-        # Fixed temperature at inner, fixed flux at outer
-        # =====================================================================
-
         # ℓ=0 mode: uniform inner temp, prescribed mean flux at outer
         # Normalize flux by √(4π) for spherical harmonic coefficient
-        flux_0_normalized = outer_flux_mean * sqrt(T(4) * T(pi))
-        theta_0, dtheta_0 = laplace_mode_profile(0, r, r_i, r_o,
-                                                 sqrt(T(4)*T(pi)), flux_0_normalized;
-                                                 outer_bc=:fixed_flux)
-        theta_coeffs[0] = theta_0
-        dtheta_dr_coeffs[0] = dtheta_0
-
-        # ℓ=2 mode: zero at inner, prescribed Y_20 flux at outer
-        # Use amplitude as the flux amplitude (overrides outer_flux_Y20 if non-zero)
-        flux_Y20 = amplitude != zero(T) ? amplitude : outer_flux_Y20
-        flux_2_normalized = flux_Y20 / norm_Y20
-        theta_2, dtheta_2 = laplace_mode_profile(2, r, r_i, r_o,
-                                                zero(T), flux_2_normalized;
-                                                outer_bc=:fixed_flux)
-        theta_coeffs[2] = theta_2
-        dtheta_dr_coeffs[2] = dtheta_2
-    end
-
-    # Initialize velocity modes to zero
-    uphi_coeffs[0] = zeros(T, Nr)
-    duphi_dr_coeffs[0] = zeros(T, Nr)
-    uphi_coeffs[2] = zeros(T, Nr)
-    duphi_dr_coeffs[2] = zeros(T, Nr)
-
-    # =========================================================================
-    # Higher ℓ modes: zero (no higher-order boundary variations)
-    # =========================================================================
-    for ℓ in 1:lmax_bs
-        if ℓ == 0 || ℓ == 2
-            continue
+        theta_coeffs[0], dtheta_dr_coeffs[0] = laplace_mode_profile(0, r, r_i, r_o,
+            sqrt(T(4)*T(pi)), outer_flux_mean * sqrt(T(4) * T(pi)); outer_bc=:fixed_flux)
+        # ℓ=2 mode: zero at inner, prescribed P₂ flux at outer
+        if lmax_bs >= 2
+            theta_coeffs[2], dtheta_dr_coeffs[2] = laplace_mode_profile(2, r, r_i, r_o,
+                zero(T), forcing_Y20 / norm_Y20; outer_bc=:fixed_flux)
         end
-        theta_coeffs[ℓ] = zeros(T, Nr)
-        dtheta_dr_coeffs[ℓ] = zeros(T, Nr)
-        uphi_coeffs[ℓ] = zeros(T, Nr)
-        duphi_dr_coeffs[ℓ] = zeros(T, Nr)
     end
 
     theta3 = Dict((l,0)=>v for (l,v) in theta_coeffs)
@@ -748,6 +738,11 @@ end
 
 Evaluate the basic state at a given (r, θ) point.
 
+All radial profiles use the spectral (Chebyshev barycentric) interpolant on
+`bs.r`, the Chebyshev–Gauss–Lobatto grid produced by every constructor. When
+`bs.flow` is present, ū_φ and its derivatives come from the native toroidal
+potentials. θ-derivatives remain exact at the poles.
+
 Returns:
 - `theta_bar` - Temperature θ̄(r,θ)
 - `uphi_bar` - Zonal velocity ū_φ(r,θ)
@@ -762,6 +757,12 @@ function evaluate_basic_state(bs::BasicState{T}, r_eval::T, theta_eval::T) where
     if r_eval < rmin || r_eval > rmax
         throw(ArgumentError("r_eval must be within [$rmin, $rmax]"))
     end
+
+    # Spectral radial interpolation for every field (the barycentric formula
+    # expects an ascending grid, so reverse a descending one).
+    ascending = first(bs.r) <= last(bs.r)
+    rgrid = ascending ? bs.r : reverse(bs.r)
+    radial(v) = _mean_barycentric(rgrid, ascending ? v : reverse(v), r_eval)
 
     lmax = bs.lmax_bs
     x = cos(theta_eval)
@@ -782,25 +783,25 @@ function evaluate_basic_state(bs::BasicState{T}, r_eval::T, theta_eval::T) where
 
     for (ℓ, coeffs) in bs.theta_coeffs
         ℓ > lmax && continue
-        coeff = _linear_interpolate(bs.r, coeffs, r_eval)
+        coeff = radial(coeffs)
         Y = norms[ℓ + 1] * P[ℓ + 1]
         dY_dtheta = -sinθ * norms[ℓ + 1] * dPdx[ℓ + 1]
         theta_bar += coeff * Y
         dtheta_dtheta += coeff * dY_dtheta
         if haskey(bs.dtheta_dr_coeffs, ℓ)
-            dtheta_dr += _linear_interpolate(bs.r, bs.dtheta_dr_coeffs[ℓ], r_eval) * Y
+            dtheta_dr += radial(bs.dtheta_dr_coeffs[ℓ]) * Y
         end
     end
 
     for (ℓ, coeffs) in bs.uphi_coeffs
         ℓ > lmax && continue
-        coeff = _linear_interpolate(bs.r, coeffs, r_eval)
+        coeff = radial(coeffs)
         Y = norms[ℓ + 1] * P[ℓ + 1]
         dY_dtheta = -sinθ * norms[ℓ + 1] * dPdx[ℓ + 1]
         uphi_bar += coeff * Y
         duphi_dtheta += coeff * dY_dtheta
         if haskey(bs.duphi_dr_coeffs, ℓ)
-            duphi_dr += _linear_interpolate(bs.r, bs.duphi_dr_coeffs[ℓ], r_eval) * Y
+            duphi_dr += radial(bs.duphi_dr_coeffs[ℓ]) * Y
         end
     end
 
@@ -810,10 +811,11 @@ function evaluate_basic_state(bs::BasicState{T}, r_eval::T, theta_eval::T) where
         uphi_bar = zero(T); duphi_dr = zero(T); duphi_dtheta = zero(T)
         for ((l,m),values) in bs.flow.t
             m==0 || continue
-            t = _mean_barycentric(bs.r,values,r_eval)
-            dt = _mean_barycentric(bs.r,bs.flow.dt[(l,m)],r_eval)
+            t = radial(values)
+            dt = radial(bs.flow.dt[(l,m)])
             Y = norms[l+1]*P[l+1]
             dY = -sinθ*norms[l+1]*dPdx[l+1]
+            # ∂²θY from Legendre's equation; needs the exact P′ at the poles.
             d2Y = x*norms[l+1]*dPdx[l+1]-l*(l+1)*Y
             uphi_bar += t/r_eval*dY
             duphi_dr += (dt/r_eval-t/r_eval^2)*dY
@@ -831,31 +833,23 @@ function evaluate_basic_state(bs::BasicState{T}, r_eval::T, theta_eval::T) where
     )
 end
 
-"""Return Legendre values and x-derivatives up to `lmax` at one point."""
+"""
+Return Legendre values P_ℓ(x) and x-derivatives P_ℓ′(x) for ℓ = 0..`lmax`.
+The derivative recurrence P_ℓ′ = ℓP_{ℓ-1} + xP_{ℓ-1}′ has no 1/(1-x²) factor,
+so it stays exact at the poles, where P_ℓ′(±1) = (±1)^{ℓ+1} ℓ(ℓ+1)/2.
+"""
 function _legendre_values_and_derivs(lmax::Int, x::T) where T
     P = zeros(T, lmax + 1)
     dPdx = zeros(T, lmax + 1)
     P[1] = one(T)
     if lmax >= 1
         P[2] = x
+        dPdx[2] = one(T)
     end
     for l in 2:lmax
         P[l + 1] = ((2 * l - 1) * x * P[l] - (l - 1) * P[l - 1]) / l
+        dPdx[l + 1] = l * P[l] + x * dPdx[l]
     end
-
-    dPdx[1] = zero(T)
-    if lmax >= 1
-        denom = one(T) - x * x
-        tol = sqrt(eps(T))
-        for l in 1:lmax
-            if abs(denom) < tol
-                dPdx[l + 1] = zero(T)
-            else
-                dPdx[l + 1] = l * (P[l] - x * P[l + 1]) / denom
-            end
-        end
-    end
-
     return P, dPdx
 end
 
@@ -887,16 +881,65 @@ end
 # =============================================================================
 
 """
+Throw an `ArgumentError` unless every nonzero entry of `modes` (keyed by
+`(ℓ, m)`; boundary amplitudes or radial profiles) is a valid harmonic retained
+by the truncation `ℓ ≤ lmax_bs`, `|m| ≤ mmax_bs`. The constructors' mode loops
+and the transforms would otherwise drop such entries silently. `source` names
+the input in the message.
+"""
+function _check_retained_bc_modes(modes::AbstractDict, lmax_bs::Integer,
+                                  mmax_bs::Integer, source::AbstractString)
+    for (key, value) in modes
+        key isa Tuple{Integer,Integer} || throw(ArgumentError(
+            "$source must be keyed by (ℓ, m) tuples, got key $(repr(key))"))
+        iszero(value) && continue
+        ℓ, m = key
+        abs(m) <= ℓ || throw(ArgumentError(
+            "$source contains (ℓ,m)=($ℓ,$m), which is not a spherical harmonic (require |m| ≤ ℓ)"))
+        if ℓ > lmax_bs || abs(m) > mmax_bs
+            need = String[]
+            ℓ > lmax_bs && push!(need, "lmax_bs ≥ $ℓ")
+            abs(m) > mmax_bs && push!(need, "mmax_bs ≥ $(abs(m))")
+            throw(ArgumentError("Nonzero $source mode (ℓ,m)=($ℓ,$m) lies outside the " *
+                "retained harmonic range (lmax_bs=$lmax_bs, mmax_bs=$mmax_bs) and would be " *
+                "dropped; use $(join(need, " and "))."))
+        end
+    end
+    0 <= mmax_bs <= lmax_bs || throw(ArgumentError(
+        "Require 0 ≤ mmax_bs ≤ lmax_bs, got lmax_bs=$lmax_bs, mmax_bs=$mmax_bs"))
+    return nothing
+end
+
+# Legacy model switches that no longer select anything: the viscous solve always
+# couples every harmonic and returns the complete divergence-free velocity.
+function _warn_ignored_flow_keywords(; coupled_thermal_wind::Bool=true,
+                                     include_meridional_flow::Bool=true,
+                                     use_full_coupling::Bool=true)
+    coupled_thermal_wind || @warn("coupled_thermal_wind=false is ignored: the viscous " *
+        "Stokes–Coriolis solve always includes the full thermal-wind coupling.", maxlog=1)
+    include_meridional_flow || @warn("include_meridional_flow=false is ignored: the viscous " *
+        "solve always includes the meridional circulation, which continuity requires.", maxlog=1)
+    use_full_coupling || @warn("use_full_coupling=false is ignored: the viscous solve " *
+        "always includes the full Coriolis coupling between harmonics.", maxlog=1)
+    return nothing
+end
+
+"""
 Construct a conductive-temperature / steady Stokes–Coriolis basic state.
 Both shell boundaries satisfy the selected mechanical condition. Temperature
-and velocity retain cosine (`m>0`) and sine (`m<0`) modes. Public temperature
-amplitudes multiply the associated Legendre function and its real azimuthal
-factor; stored coefficients use the historical no-factorial normalization.
+and velocity retain cosine (`m>0`) and sine (`m<0`) modes. A public amplitude
+for `(ℓ, m)` multiplies the unnormalized associated Legendre function
+`P_ℓ^|m|(cosθ)` (Condon–Shortley phase, as for `SphericalHarmonicBC`) and
+`cos(mφ)` (`m ≥ 0`) or `sin(|m|φ)` (`m < 0`); stored coefficients use the
+historical no-factorial normalization. Every nonzero entry of `amplitudes`
+(and, for `:fixed_flux`, of `outer_fluxes`) must satisfy `ℓ ≤ lmax_bs` and
+`|m| ≤ min(ℓ, mmax_bs)`, otherwise an `ArgumentError` is thrown.
 
 `Ra` is shell-gap based. Momentum inertia and thermal advection are omitted;
 `nonaxisymmetric_basic_state_selfconsistent` includes both nonlinear effects.
-`coupled_thermal_wind` and `include_meridional_flow` are compatibility keywords:
-all values now use the complete viscous velocity solve.
+`coupled_thermal_wind` and `include_meridional_flow` are ignored compatibility
+keywords: the complete viscous velocity solve always includes the full coupling
+and the meridional circulation. Passing `false` emits a one-time warning.
 
 `flow` stores the authoritative orthonormal vector potentials. The component
 coefficient dictionaries are scalar projections for compatibility, not a
@@ -922,6 +965,12 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
     if !(thermal_bc in (:fixed_temperature, :fixed_flux))
         error("thermal_bc must be :fixed_temperature or :fixed_flux, got: $thermal_bc")
     end
+    # The mode loop below only reads retained modes; reject anything it would drop.
+    _check_retained_bc_modes(amplitudes, lmax_bs, mmax_bs, "amplitudes")
+    thermal_bc == :fixed_flux &&
+        _check_retained_bc_modes(outer_fluxes, lmax_bs, mmax_bs, "outer_fluxes")
+    _warn_ignored_flow_keywords(coupled_thermal_wind=coupled_thermal_wind,
+                                include_meridional_flow=include_meridional_flow)
 
     # Initialize all coefficient dictionaries
     theta_coeffs = Dict{Tuple{Int,Int},Vector{T}}()
@@ -1022,10 +1071,8 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
         end
     end
 
-    # Both legacy values of coupled_thermal_wind now use the viscous solve.
-    # Omitting meridional components would violate continuity for m != 0.
-    # include_meridional_flow is retained for source compatibility; the complete
-    # velocity is always returned because dropping components breaks continuity.
+    # The complete velocity is always returned (see _warn_ignored_flow_keywords):
+    # omitting meridional components would violate continuity for m != 0.
     flow = _steady_mean_flow(theta_coeffs, r, cd.D1, cd.D2, E, Ra, Pr,
                              lmax_bs, mmax_bs; mechanical_bc=mechanical_bc)
     ur_coeffs, utheta_coeffs, uphi_coeffs, dur_dr_coeffs, dutheta_dr_coeffs,
@@ -1079,10 +1126,15 @@ or `nonaxisymmetric_basic_state`).
 
 # Keyword Arguments
 - `temperature_bc` : SphericalHarmonicBC specifying temperature at outer boundary
-- `flux_bc` : SphericalHarmonicBC specifying heat flux at outer boundary
+- `flux_bc` : SphericalHarmonicBC specifying the outer radial temperature gradient
+  ∂θ̄/∂r (the outward heat flux is its negative)
   (Cannot specify both temperature_bc and flux_bc)
 - `mechanical_bc` : `:no_slip` (default) or `:stress_free`
-- `lmax_bs` : Maximum ℓ for basic state (auto-determined if not specified)
+- `lmax_bs` : Maximum ℓ for basic state (default `max(ℓ_bc + 2, 4)`). An explicit
+  value must retain every nonzero boundary mode, otherwise an `ArgumentError` is
+  thrown instead of silently dropping the forcing.
+- `coupled_thermal_wind` : ignored compatibility keyword (the viscous solve always
+  includes the full coupling); `false` emits a one-time warning
 
 # Returns
 - `BasicState` if boundary condition is axisymmetric (m=0 only)
@@ -1124,11 +1176,12 @@ bs = basic_state(cd, χ, E, Ra, Pr;
 
 The function automatically selects the appropriate implementation:
 
-1. If `temperature_bc` is `nothing` (or only Y00 component) and no `flux_bc`:
+1. If no boundary condition is given, or all its amplitudes are zero:
    → `conduction_basic_state` (pure conduction profile)
 
-2. If boundary condition is axisymmetric (only m=0 modes):
-   → `meridional_basic_state` (returns `BasicState`)
+2. If boundary condition is axisymmetric (only m=0 modes, including Y00 alone):
+   → the viscous solver of `nonaxisymmetric_basic_state` with `mmax_bs=0`
+     (returns `BasicState`)
 
 3. If boundary condition has m≠0 modes:
    → `nonaxisymmetric_basic_state` (returns `BasicState3D`)
@@ -1144,6 +1197,7 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
     if temperature_bc !== nothing && flux_bc !== nothing
         error("Cannot specify both temperature_bc and flux_bc. Choose one.")
     end
+    _warn_ignored_flow_keywords(coupled_thermal_wind=coupled_thermal_wind)
 
     T = eltype(cd.x)
 
@@ -1166,6 +1220,8 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
 
     # Use provided lmax_bs or auto-determine (add 2 for thermal wind coupling)
     _lmax = lmax_bs === nothing ? max(bc_lmax + 2, 4) : lmax_bs
+    _check_retained_bc_modes(bc.coeffs, _lmax, is_axisymmetric(bc) ? 0 : bc_mmax,
+                             flux_bc === nothing ? "temperature_bc" : "flux_bc")
 
     # Check if BC is effectively zero (only conduction)
     if iszero(bc)
@@ -1281,51 +1337,6 @@ function _orthonormal_plm(lmax::Int, m::Int, x::T) where {T<:Real}
 end
 
 """
-    _dtheta_sphere_projection(Kset, Lset, m, T) -> Dict{Tuple{Int,Int},T}
-
-Projection coefficients M[(K,ℓ)] = ⟨∂Y_ℓ^m/∂θ, Y_K^m⟩ over the unit sphere,
-for velocity modes K ∈ `Kset` and temperature modes ℓ ∈ `Lset`. Uses the exact
-identity sin(θ)∂_θY_ℓ = ℓα_ℓ⁺Y_{ℓ+1} - (ℓ+1)α_ℓ⁻Y_{ℓ-1} together with
-Gauss–Chebyshev quadrature of G(a,b) = ∫ P̄_a^m P̄_b^m / √(1-x²) dx. Unlike the
-diagonal-approximation coupling, this retains the full ℓ±1, ℓ±3, … structure
-required to be consistent with the coupled solver's (orthonormal) cosθ/sinθ∂θ
-operators.
-"""
-function _dtheta_sphere_projection(Kset, Lset, m::Int, ::Type{T}) where {T<:Real}
-    (isempty(Kset) || isempty(Lset)) && return Dict{Tuple{Int,Int},T}()
-    lmax_needed = max(maximum(Kset), maximum(Lset) + 1)
-    Nq = lmax_needed + 2
-    Ptab = Matrix{T}(undef, Nq, lmax_needed + 1)
-    for j in 1:Nq
-        x = cos(T(π) * (T(j) - T(0.5)) / T(Nq))
-        Ptab[j, :] .= _orthonormal_plm(lmax_needed, m, x)
-    end
-    Gw = T(π) / T(Nq)
-    Gint = function (a, b)
-        (a < m || b < m || a > lmax_needed || b > lmax_needed) && return zero(T)
-        s = zero(T)
-        @inbounds for j in 1:Nq
-            s += Ptab[j, a + 1] * Ptab[j, b + 1]
-        end
-        return Gw * s
-    end
-    αplus(l)  = (l + 1)^2 - m^2 > 0 ? sqrt(T((l + 1)^2 - m^2) / T((2l + 1) * (2l + 3))) : zero(T)
-    αminus(l) = l^2 - m^2 > 0 ? sqrt(T(l^2 - m^2) / T((2l - 1) * (2l + 1))) : zero(T)
-    M = Dict{Tuple{Int,Int},T}()
-    for ℓ in Lset
-        ℓ < m && continue
-        for K in Kset
-            val = T(ℓ) * αplus(ℓ) * Gint(K, ℓ + 1)
-            if ℓ - 1 >= m
-                val -= T(ℓ + 1) * αminus(ℓ) * Gint(K, ℓ - 1)
-            end
-            abs(val) > eps(T) && (M[(K, ℓ)] = val)
-        end
-    end
-    return M
-end
-
-"""
 Return a scalar zonal-component projection of the steady viscous mean flow.
 Temperature input uses the public no-factorial normalization and `Ra` is
 shell-gap based. `lmax` sets the retained vector-potential degree. This legacy
@@ -1345,67 +1356,8 @@ function solve_thermal_wind_coupled!(uphi_coeffs::Dict{Int,Vector{T}},
     mechanical_bc in (:no_slip,:stress_free) || error("mechanical_bc must be :no_slip or :stress_free")
     L = lmax === nothing ? max(2,maximum(keys(theta_coeffs);init=0)+2) : lmax
     theta = Dict((l,m_bs)=>v for (l,v) in theta_coeffs)
-    flow = _steady_mean_flow(theta,cd.x,cd.D1,cd.D2,E,Ra,Pr,L,abs(m_bs);
-                             mechanical_bc=mechanical_bc)
-    _,_,uphi,_,_,duphi = _mean_flow_components(flow)
-    empty!(uphi_coeffs); empty!(duphi_dr_coeffs)
-    for ((l,m),v) in uphi
-        m==m_bs || continue
-        uphi_coeffs[l]=v; duphi_dr_coeffs[l]=duphi[(l,m)]
-    end
+    _project_mean_flow!((uphi=uphi_coeffs, duphi=duphi_dr_coeffs), theta, cd.x, cd.D1, cd.D2,
+                        E, Ra, Pr, L, abs(m_bs); mechanical_bc=mechanical_bc,
+                        keep=k->k[2]==m_bs, key=first)
     return nothing
-end
-
-"""
-    theta_derivative_coeff_3d(ℓ::Int, m::Int)
-
-Compute θ-derivative coupling coefficients for ⟨∂Θ/∂θ, Y_Lm⟩ forcing.
-
-Returns (c_plus, c_minus), including the spherical-harmonic normalization ratio
-N_ℓ/N_L (4π-normalized Y, where N_ℓ = √((2ℓ+1)/4π)), so the coefficients are
-consistent with `solve_thermal_wind_balance_3d!` (the analytically-validated
-diagonal solver) and the test helper `coupling_coeff_plus_3d`:
-
-- c_plus  = -(ℓ+1) × √[((ℓ+1)²-m²)/((2ℓ+1)(2ℓ+3))] × √((2ℓ+1)/(2ℓ+3))   (Y_ℓm → Y_{ℓ+1,m})
-- c_minus = +ℓ     × √[(ℓ²-m²)/((2ℓ-1)(2ℓ+1))]     × √((2ℓ+1)/(2ℓ-1))   (Y_ℓm → Y_{ℓ-1,m})
-
-The √2 from real-harmonic normalization (m≠0) cancels in the ratio, so the same
-factor applies for all m.
-
-# Example
-```julia
-c_plus, c_minus = theta_derivative_coeff_3d(2, 1)  # For Y_21
-# c_plus ≈ -1.2127 (coupling to Y_31)
-# c_minus ≈ 1.1547 (coupling to Y_11)
-```
-"""
-function theta_derivative_coeff_3d(ℓ::Int, m::Int)
-    if ℓ < abs(m)
-        return (0.0, 0.0)
-    end
-
-    c_plus = 0.0
-    c_minus = 0.0
-
-    # Coupling to ℓ+1 (includes norm ratio N_ℓ/N_{ℓ+1} = √((2ℓ+1)/(2ℓ+3)))
-    if ℓ >= 0
-        num_plus = (ℓ + 1)^2 - m^2
-        den_plus = (2*ℓ + 1) * (2*ℓ + 3)
-        if num_plus >= 0 && den_plus > 0
-            c_plus = -(ℓ + 1) * sqrt(num_plus / den_plus) *
-                     sqrt((2*ℓ + 1) / (2*ℓ + 3))
-        end
-    end
-
-    # Coupling to ℓ-1 (includes norm ratio N_ℓ/N_{ℓ-1} = √((2ℓ+1)/(2ℓ-1)))
-    if ℓ > abs(m)
-        num_minus = ℓ^2 - m^2
-        den_minus = (2*ℓ - 1) * (2*ℓ + 1)
-        if num_minus >= 0 && den_minus > 0
-            c_minus = ℓ * sqrt(num_minus / den_minus) *
-                      sqrt((2*ℓ + 1) / (2*ℓ - 1))
-        end
-    end
-
-    return (c_plus, c_minus)
 end

@@ -8,6 +8,9 @@
 #
 # The solver finds eigenvalues of the coupled system where different m modes
 # interact through the non-axisymmetric basic state flow.
+#
+# Steps 1-4 run without PETSc; the eigenvalue solve in Step 5 uses SLEPc. Run
+# this script in an initialized SLEPc session (see docs/src/examples.md).
 
 using Magrathea
 using Printf
@@ -222,7 +225,7 @@ println("-"^70)
 println()
 
 println("Solving eigenvalue problem...")
-println("This uses shift-invert with KrylovKit for the coupled system.")
+println("This uses SLEPc shift-invert on the coupled system.")
 println()
 
 # Solve the tri-global eigenvalue problem
@@ -260,7 +263,7 @@ if max_σ > 0
     println("  - System is UNSTABLE (σ > 0)")
     println("  - Most unstable mode has growth rate σ = ", @sprintf("%.6e", max_σ))
     e_folding_time = 1.0 / max_σ
-    println("  - E-folding time: ", @sprintf("%.4f", e_folding_time), " (viscous time units)")
+    println("  - E-folding time: ", @sprintf("%.4f", e_folding_time), " (rotation time units, 1/Ω)")
 else
     println("  - System is STABLE (σ < 0)")
     println("  - Least damped mode has decay rate |σ| = ", @sprintf("%.6e", abs(max_σ)))
@@ -314,7 +317,7 @@ println("Completed:")
 println("  1. Created 3D non-axisymmetric basic state with Y_22 pattern")
 println("  2. Analyzed mode coupling structure (m couples to m +/- 2)")
 println("  3. Set up block-coupled eigenvalue problem")
-println("  4. Solved for leading eigenvalues using shift-invert Krylov method")
+println("  4. Solved for leading eigenvalues using SLEPc shift-invert")
 println("  5. Identified stability characteristics")
 println()
 

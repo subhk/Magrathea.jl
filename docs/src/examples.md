@@ -7,30 +7,39 @@ scripts that compute eigenvalues.
 
 ## Repository scripts
 
-| File | Purpose |
-|------|---------|
-| `example/linear_stability_demo.jl` | Onset eigenvalues over azimuthal orders and perturbation reconstruction |
-| `example/Rac_lm.jl` | Critical-Rayleigh scans |
-| `example/basic_state_onset_example.jl` | Stability about conductive and meridional basic states |
-| `example/boundary_driven_jet.jl` | Axisymmetric boundary-forced mean flow |
-| `example/nonaxisymmetric_basic_state.jl` | Nonaxisymmetric temperature and flow construction |
-| `example/flux_bc_mean_flow.jl` | Nonaxisymmetric flux forcing and self-consistent transport |
-| `example/flux_bc_axisymmetric_flow.jl` | Axisymmetric flux forcing using the noniterated constructor |
-| `example/triglobal_analysis_demo.jl` | Coupled azimuthal stability |
-| `example/mhd_dynamo_example.jl` | Magnetoconvection with imposed axial/dipole fields |
-| `example/figure2_benchmark.jl` | Onset benchmark parameter scan |
+| File | Purpose | Needs SLEPc |
+|------|---------|-------------|
+| `example/linear_stability_demo.jl` | Onset eigenvalues over azimuthal orders and perturbation reconstruction | Yes (initializes it) |
+| `example/Rac_lm.jl` | Self-contained critical Rayleigh numbers per degree for a non-rotating shell | No |
+| `example/basic_state_onset_example.jl` | Critical Rayleigh numbers about conductive and meridional basic states | Yes |
+| `example/boundary_driven_jet.jl` | Axisymmetric boundary-forced mean flow | No |
+| `example/nonaxisymmetric_basic_state.jl` | Nonaxisymmetric temperature and flow construction | No |
+| `example/flux_bc_mean_flow.jl` | Nonaxisymmetric flux forcing and self-consistent transport | No |
+| `example/flux_bc_axisymmetric_flow.jl` | Axisymmetric flux forcing using the noniterated constructor | No |
+| `example/triglobal_analysis_demo.jl` | Coupled azimuthal stability | Final solve only |
+| `example/mhd_dynamo_example.jl` | Magnetoconvection with an imposed axial field | Yes |
+| `example/figure2_benchmark.jl` | Onset benchmark scan against Barik et al. (2023) at ``Ek_d = 10^{-3}`` | Yes |
 
 The historical `mhd_dynamo_example.jl` filename does not imply a kinematic
 dynamo solver: the MHD implementation linearizes about a motionless
 conductive state and an imposed current-free field.
 
-Some older script comments describe superseded thermal-wind approximations
-or eigensolver choices. The current mean-state model is described in
-[Basic States](basic_states.md), and sparse solves use SLEPc. In particular,
-axisymmetric forcing can generate meridional circulation; its thermal
-advection is not identically zero.
+`Rac_lm.jl` builds its own small dense eigenproblems and uses the same
+Rayleigh-number, gravity and heating conventions as `OnsetParams`; without
+rotation each spherical-harmonic degree is independent, and the script checks
+itself against the plane-layer limit. `boundary_driven_jet.jl` and
+`nonaxisymmetric_basic_state.jl` save a figure when Plots.jl is installed and
+skip it otherwise.
 
-Run an eigenvalue script inside an initialized session:
+The scripts' printed commentary uses thermal-wind language as interpretation;
+the constructors themselves solve the viscous mean-flow equations described in
+[Basic States](basic_states.md). Axisymmetric forcing can generate meridional
+circulation, so its thermal advection is not identically zero.
+
+`linear_stability_demo.jl` calls `slepc_init!` itself and can be run directly
+with `julia --project=. example/linear_stability_demo.jl` once PetscWrap and
+SlepcWrap are installed. Run the other eigenvalue scripts inside an
+initialized session:
 
 ```julia
 using Magrathea

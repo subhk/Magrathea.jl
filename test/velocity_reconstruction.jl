@@ -86,12 +86,9 @@ end
         )
         problem = Magrathea.setup_coupled_mode_problem(params)
 
-        Magrathea._mode_layout(problem, 1)
         Magrathea._mode_reconstruction(problem, 1)
 
-        @test Magrathea._mode_layout_cache isa WeakKeyDict
         @test Magrathea._mode_reconstruction_cache isa WeakKeyDict
-        @test any(key -> key === problem, keys(Magrathea._mode_layout_cache))
         @test any(key -> key === problem, keys(Magrathea._mode_reconstruction_cache))
     end
 end

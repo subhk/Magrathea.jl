@@ -529,4 +529,4 @@ end
 ---
 
 !!! info "Example Scripts"
-    See `example/linear_stability_demo.jl` and `example/Rac_lm.jl` for complete working examples.
+    See `example/linear_stability_demo.jl` for a complete working example. `example/Rac_lm.jl` computes critical Rayleigh numbers per degree for the non-rotating limit.

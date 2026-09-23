@@ -1,25 +1,31 @@
 #!/usr/bin/env julia
 #
-# Demonstration of the linear stability solver derived from Equations (10)–(19)
-# in docs/Onset_convection.pdf.  The script fixes the Rayleigh number and
-# computes the leading complex growth rate (σ + iω) for a rotating spherical
-# shell using the parameters from Figure 2 of the reference.
-
-repo_root = normpath(joinpath(@__DIR__, ".."))
-push!(LOAD_PATH, repo_root)
+# Onset eigenvalues of rotating spherical-shell convection over azimuthal orders.
+#
+# The script fixes the Rayleigh number, solves the linear onset problem for
+# each azimuthal wavenumber m, and prints the leading complex growth rate
+# λ = σ + iω. It then reconstructs the velocity and temperature of the fastest
+# growing mode on a meridional grid. Parameters: E = 1e-5 (outer-radius based),
+# Pr = 1, χ = 0.35, Ra = 2.1e7 (shell-thickness based).
+#
+# Requirements: sparse eigensolves use SLEPc. Install PETSc/SLEPc with complex
+# scalars and add PetscWrap and SlepcWrap to the active environment; see
+# "SLEPc setup" in docs/src/getting_started.md.
+#
+# Usage: julia --project=. example/linear_stability_demo.jl [--theta-points=<int>]
 
 using Magrathea
 using Printf
+import PetscWrap, SlepcWrap
 
 E = 1e-5
 Pr = 1.0
 Ra = 2.1e7
-ri = 0.35
-ro = 1.0
+χ = 0.35
 Nr = 64
 
 # ------------------------------------------------------------------------------
-# Solver configuration: environment variables or CLI flags
+# Command-line options (the MAGRATHEA_THETA_POINTS environment variable also works)
 # ------------------------------------------------------------------------------
 
 function parse_cli_args(args)
@@ -30,22 +36,10 @@ function parse_cli_args(args)
                 Usage: julia example/linear_stability_demo.jl [options]
 
                 Options:
-                  --theta-points=<int>           Number of meridional grid points (default 96)
+                  --theta-points=<int>           Colatitude points for the reconstructed mode (default 96)
                   --help                         Show this message
-
-                Note: Magrathea.jl now uses KrylovKit exclusively for eigenvalue solving.
                 """)
             exit(0)
-        elseif startswith(arg, "--solver=")
-            opts[:solver] = Symbol(lowercase(split(arg, '=' )[2]))
-        elseif startswith(arg, "--arpack-shift=")
-            raw = split(arg, '=' )[2]
-            shift_val = try
-                parse(ComplexF64, raw)
-            catch
-                parse(Float64, raw) + 0im
-            end
-            opts[:arpack_shift] = shift_val
         elseif startswith(arg, "--theta-points=")
             opts[:theta_points] = parse(Int, split(arg, '=' )[2])
         else
@@ -56,52 +50,37 @@ function parse_cli_args(args)
 end
 
 cli_opts = parse_cli_args(ARGS)
-
-parse_shift_string(str) = try
-    parse(ComplexF64, str)
-catch
-    parse(Float64, str) + 0im
-end
-
-function solver_iterations(info)
-    info === nothing && return missing
-    if hasproperty(info, :niter)
-        return getproperty(info, :niter)
-    elseif hasproperty(info, :numiter)
-        return getproperty(info, :numiter)
-    elseif hasproperty(info, :iterations)
-        return getproperty(info, :iterations)
-    else
-        return missing
-    end
-end
-
-# Note: solver and arpack_shift options are deprecated
-# Magrathea.jl now uses KrylovKit exclusively
-solver = :krylov  # For backwards compatibility
-arpack_shift = nothing  # No longer used
-
 meridional_points = get(cli_opts, :theta_points, parse(Int, get(ENV, "MAGRATHEA_THETA_POINTS", "96")))
 
-println("m    Re(λ₁)          Im(λ₁)          iterations")
-println("------------------------------------------------")
+slepc_init!("-eps_gen_non_hermitian -st_type sinvert -st_pc_type lu " *
+            "-st_pc_factor_mat_solver_type mumps")
 
-for m in 1:20
-    lmax = max(48, m + 6)
-    params = ShellParams(m=m, E=E, Pr=Pr, Ra=Ra, ri=ri, ro=ro, lmax=lmax, Nr=Nr)
-    try
-        vals, _, _, info = leading_modes(params;
-                                         nθ=meridional_points,
-                                         nev=2,
-                                         which=:LR,
-                                         tol=1e-6,
-                                         maxiter=120)
-        λ1 = vals[1]
-        iter_val = solver_iterations(info)
-        iter_str = iter_val isa Integer ? @sprintf("%5d", iter_val) : "    --"
-        @printf("%2d  %12.5e  %12.5e  %s\n", m, real(λ1), imag(λ1), iter_str)
-    catch err
-        @printf("%2d  %12s  %12s      --\n", m, "ERROR", "ERROR")
-        @warn "Failed to converge" m err exception=(err, catch_backtrace())
+try
+    println("m    Re(λ₁)          Im(λ₁)")
+    println("--------------------------------")
+
+    ms = 1:20
+    results = map(ms) do m
+        lmax = max(48, m + 6)
+        params = OnsetParams(E=E, Pr=Pr, Ra=Ra, χ=χ, m=m, lmax=lmax, Nr=Nr)
+        result = solve(OnsetProblem(params); nev=2, which=:LR, tol=1e-6, maxiter=120)
+        @printf("%2d  %12.5e  %12.5e\n", m, growth_rate(result), frequency(result))
+        result
     end
+
+    # Reconstruct the fastest-growing mode over all m (rank 0 holds the eigenvectors).
+    i_max = argmax(growth_rate.(results))
+    m_max = ms[i_max]
+    best = results[i_max]
+    ur, uθ, uφ, r, grid = perturbation_velocity(best, best.leading_index; Nθ=meridional_points)
+    θfield, _, _ = perturbation_temperature(best, best.leading_index; Nθ=meridional_points)
+
+    println()
+    @printf("Fastest-growing mode: m = %d, σ = %.5e, ω = %.5e\n",
+            m_max, growth_rate(best), frequency(best))
+    @printf("Meridional grid: %d radial × %d colatitude points\n", length(r), length(grid.θ))
+    @printf("  max |u_r| = %.4e, max |u_θ| = %.4e, max |u_φ| = %.4e, max |Θ| = %.4e\n",
+            maximum(abs, ur), maximum(abs, uθ), maximum(abs, uφ), maximum(abs, θfield))
+finally
+    slepc_finalize!()
 end

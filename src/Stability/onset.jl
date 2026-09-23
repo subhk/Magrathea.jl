@@ -55,10 +55,12 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
     mechanical_bc::Symbol = :no_slip
     thermal_bc::Symbol = :fixed_temperature
     equatorial_symmetry::Symbol = :both
+    heating::Symbol = :differential
 
     function OnsetConvectionParams{T}(E, Pr, Ra, χ, m, lmax, Nr,
                                        mechanical_bc, thermal_bc,
-                                       equatorial_symmetry) where T
+                                       equatorial_symmetry,
+                                       heating=:differential) where T
         0 < χ < 1 || throw(ArgumentError(
             "Radius ratio χ must be in (0,1), got $χ"))
         E > 0 || throw(ArgumentError(
@@ -77,15 +79,19 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
             "thermal_bc must be :fixed_temperature or :fixed_flux, got :$thermal_bc"))
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
+        heating in (:differential, :internal) || throw(ArgumentError(
+            "heating must be :differential or :internal, got :$heating"))
 
-        new{T}(E, Pr, Ra, χ, m, lmax, Nr, mechanical_bc, thermal_bc, equatorial_symmetry)
+        new{T}(E, Pr, Ra, χ, m, lmax, Nr, mechanical_bc, thermal_bc, equatorial_symmetry,
+               heating)
     end
 end
 
 # Conversion constructor: extract onset fields from OnsetParams
 function OnsetConvectionParams(p::OnsetParams{T}) where {T}
     OnsetConvectionParams{T}(p.E, p.Pr, p.Ra, p.χ, p.m, p.lmax, p.Nr,
-                              p.mechanical_bc, p.thermal_bc, p.equatorial_symmetry)
+                              p.mechanical_bc, p.thermal_bc, p.equatorial_symmetry,
+                              p.heating)
 end
 
 
@@ -105,6 +111,8 @@ Computes eigenvalues σ = σ_r + iω where:
 - `nev::Int` - Number of eigenvalues to compute (default: 6)
 - `tol::Float64` - Eigenvalue solver tolerance (default: 1e-10)
 - `which::Symbol` - Target eigenvalues: :LR (largest real), :LM (largest magnitude)
+- `sigma` - Shift target (`nothing` chooses one from `which`)
+- `backend::Symbol` - `:slepc` (default) or `:dense` (small problems, no PETSc)
 
 # Returns
 - `eigenvalues::Vector{ComplexF64}` - Complex growth rates (sorted by real part)
@@ -142,10 +150,12 @@ function solve_onset_problem(params::OnsetConvectionParams{T};
         mechanical_bc = params.mechanical_bc,
         thermal_bc = params.thermal_bc,
         equatorial_symmetry = params.equatorial_symmetry,
+        heating = params.heating,
         basic_state = nothing  # No basic state = conduction profile
     )
 
     # Build operator and solve
+    _check_backend(backend)
     op = LinearStabilityOperator(internal_params)
     if backend === :slepc
         # Distributed constrained-reduction path: the SLEPc extension distributes the
@@ -178,9 +188,12 @@ Uses bisection to find Ra_c where the leading growth rate σ = 0.
 - `lmax::Int` - Maximum spherical harmonic degree
 - `Nr::Int` - Number of radial points
 - `Ra_guess::Real` - Initial guess for Ra_c (default: 1e6)
-- `tol::Real` - Tolerance for convergence (default: 1e-6)
+- `tol::Real` - Relative tolerance on Ra (default: 1e-6)
+- `growth_tol::Real` - Absolute growth-rate tolerance for accepting a root (default: `tol`)
 - `mechanical_bc::Symbol` - Boundary conditions (default: :no_slip)
 - `thermal_bc::Symbol` - Thermal boundary conditions (default: :fixed_temperature)
+- `heating::Symbol` - `:differential` (default) or `:internal`
+- `backend`, `sigma`, `which`, `maxiter`, `nev` - Passed to the eigensolver
 
 # Returns
 - `Ra_c::Real` - Critical Rayleigh number
@@ -201,12 +214,19 @@ See also: [`find_global_critical_onset`](@ref)
 function find_critical_Ra_onset(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int, Nr::Int,
                                  Ra_guess::Real=1e6,
                                  tol::Real=1e-6,
+                                 growth_tol::Real=tol,
                                  Ra_bracket=nothing,
                                  mechanical_bc::Symbol=:no_slip,
                                  thermal_bc::Symbol=:fixed_temperature,
                                  equatorial_symmetry::Symbol=:both,
+                                 heating::Symbol=:differential,
                                  nev::Int=6,
+                                 backend::Symbol=:slepc,
+                                 sigma=nothing,
+                                 which::Symbol=:LR,
+                                 maxiter::Int=1000,
                                  verbose::Bool=false)
+    _check_backend(backend)
 
     # Promote scalar inputs to a common float type (keyword-only `where T`
     # cannot reliably infer T, so we infer it explicitly here).
@@ -220,9 +240,10 @@ function find_critical_Ra_onset(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int
     # but with no basic_state
     Ra_c, ω_c, vec_c = Magrathea.find_critical_rayleigh(
         E_T, Pr_T, χ_T, m, lmax, Nr;
-        Ra_guess=Ra_guess_T, tol=T(tol), Ra_bracket=bracket,
+        Ra_guess=Ra_guess_T, tol=T(tol), growth_tol=T(growth_tol), Ra_bracket=bracket,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
-        equatorial_symmetry=equatorial_symmetry, nev=nev
+        equatorial_symmetry=equatorial_symmetry, heating=heating, nev=nev,
+        backend=backend, sigma=sigma, which=which, maxiter=maxiter
     )
 
     if verbose
@@ -249,9 +270,16 @@ The global critical Rayleigh number is the minimum Ra_c across all m:
 - `Nr::Int` - Number of radial points
 - `m_range` - Range of azimuthal modes to scan (e.g., 5:25)
 - `Ra_guess::Real` - Initial guess for Ra_c (default: 1e6)
-- `tol::Real` - Tolerance for each m (default: 1e-6)
+- `tol::Real` - Relative Ra tolerance for each m (default: 1e-6)
 - `verbose::Bool` - Print progress (default: true)
 - `equatorial_symmetry::Symbol` - :both, :symmetric, or :antisymmetric
+- `kwargs...` - Passed to [`find_critical_Ra_onset`](@ref) (e.g. `backend`, `nev`,
+  `heating`)
+
+For each m the truncation is raised to `lmax = max(lmax, m + 10)` so every mode
+keeps at least 11 degrees; a warning lists the m values where this applies.
+A failure for one m is reported (with its error) and recorded as `NaN`; an
+interrupt stops the sweep.
 
 # Returns
 - `m_c::Int` - Critical azimuthal wavenumber
@@ -281,7 +309,8 @@ function find_global_critical_onset(; E::Real, Pr::Real, χ::Real, lmax::Int, Nr
                                      mechanical_bc::Symbol=:no_slip,
                                      thermal_bc::Symbol=:fixed_temperature,
                                      equatorial_symmetry::Symbol=:both,
-                                     verbose::Bool=true)
+                                     verbose::Bool=true,
+                                     kwargs...)
     T = float(promote_type(typeof(E), typeof(Pr), typeof(χ), typeof(Ra_guess)))
     E, Pr, χ = T(E), T(Pr), T(χ)
     Ra_guess = T(Ra_guess)
@@ -303,6 +332,9 @@ function find_global_critical_onset(; E::Real, Pr::Real, χ::Real, lmax::Int, Nr
     end
 
     results = Dict{Int, NamedTuple{(:Ra_c, :ω_c), Tuple{T, T}}}()
+    raised_lmax = [m for m in m_range if m + 10 > lmax]
+    isempty(raised_lmax) || @warn "find_global_critical_onset: raising lmax to m + 10 for " *
+                                  "m = $(raised_lmax) (requested lmax = $lmax)"
 
     if verbose
         @printf("  %-4s  %-14s  %-14s\n", "m", "Ra_c", "ω_c")
@@ -319,7 +351,8 @@ function find_global_critical_onset(; E::Real, Pr::Real, χ::Real, lmax::Int, Nr
                 tol=tol,
                 mechanical_bc=mechanical_bc,
                 thermal_bc=thermal_bc,
-                equatorial_symmetry=equatorial_symmetry
+                equatorial_symmetry=equatorial_symmetry,
+                kwargs...
             )
             results[m] = (Ra_c=Ra_c, ω_c=ω_c)
 
@@ -331,9 +364,11 @@ function find_global_critical_onset(; E::Real, Pr::Real, χ::Real, lmax::Int, Nr
             Ra_guess = Ra_c
 
         catch err
+            err isa InterruptException && rethrow()
             if verbose
                 @printf("  %-4d  FAILED\n", m)
             end
+            @warn "find_global_critical_onset: critical-Ra search failed" m=m exception=(err, catch_backtrace())
             results[m] = (Ra_c=T(NaN), ω_c=T(NaN))
         end
     end
