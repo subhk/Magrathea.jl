@@ -255,4 +255,37 @@ end
         @test errors[2]<(bg==axial ? 1e-7 : 1e-5)
     end
 end
+
+function energy_eigenmodes(op)
+    A,B,layout=Magrathea.assemble_mhd_energy_galerkin(op)
+    e=eigen(Matrix(A),Matrix(B))
+    ind=sortperm(abs.(e.values.+.1))[1:3]
+    e.values[ind],reduce(hcat,[Magrathea.reconstruct_mhd_galerkin_full(op,layout,e.vectors[:,j]) for j in ind])
+end
+
+@testset "Energy-Galerkin eigenmodes satisfy perfect-conductor walls" begin
+    # b_r = 0 and the velocity conditions are built into the trial basis. The
+    # tangential electric field, including u×B₀ at a stress-free wall, is imposed
+    # weakly by the energy-conserving assembly and must vanish as N grows.
+    for bg in (axial,dipole),inner in (0,2),mechanical in (0,1)
+        errors=Float64[]
+        for N in (12,bg==axial ? 24 : 32)
+            op=op_for(B0_type=bg,N=N,bci=mechanical,bco=mechanical,bci_magnetic=inner,bco_magnetic=2)
+            _,V=energy_eigenmodes(op);emax=0.;bmax=0.;umax=0.
+            for x in eachcol(V),r in (.35,1.)
+                d=boundary_fields(op,x,r)
+                umax=max(umax,norm(d.U[:,1])/norm(x))
+                mechanical==1 && (umax=max(umax,norm(d.U)/norm(x)))
+                r==.35 && inner==0 && continue                     # insulating wall
+                bmax=max(bmax,norm(d.B[:,1])/norm(x))
+                emax=max(emax,project_E(d.E,d,op)/norm(x))
+            end
+            @test bmax<1e-10
+            @test umax<1e-10
+            push!(errors,emax)
+        end
+        @test errors[2]<.01errors[1]
+        @test errors[2]<(bg==axial ? 1e-7 : 1e-5)
+    end
+end
 end # module
