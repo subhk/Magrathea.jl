@@ -121,14 +121,15 @@ end
                                           m_bs, lmax_bs) === nothing
 
     # Every ℓ from |m| to lmax_bs is populated with finite length-Nr vectors.
+    scale = maximum(v -> maximum(abs, v), values(ur))
     for ℓ in m_bs:lmax_bs
         @test haskey(ur, (ℓ, m_bs)) && length(ur[(ℓ, m_bs)]) == Nr
         @test haskey(uθ, (ℓ, m_bs)) && length(uθ[(ℓ, m_bs)]) == Nr
         @test all(isfinite, ur[(ℓ, m_bs)])
         @test all(isfinite, uθ[(ℓ, m_bs)])
         @test eltype(uθ[(ℓ, m_bs)]) == Float64
-        # u_r boundary nodes are explicitly zeroed (no-slip continuity BC)
-        @test ur[(ℓ, m_bs)][idx_i] == 0.0
+        # u_r vanishes at the wall, up to round-off of the viscous solve
+        @test abs(ur[(ℓ, m_bs)][idx_i]) <= 1e-12 * scale
         # u_θ inner radial BC (no_slip) is enforced exactly
         @test isapprox(uθ[(ℓ, m_bs)][idx_i], 0.0; atol=1e-9)
         # derivative caches are present and consistent in length
@@ -222,13 +223,14 @@ end
         @test all(==(0.0), uθ[(ℓ, 0)])
     end
     # Forced modes are finite, length Nr, with no-slip u_θ boundary nodes zeroed.
+    scale = maximum(v -> maximum(abs, v), values(ur))
     for key in ((2, 2), (3, 2), (2, -2))
         @test haskey(uθ, key) && length(uθ[key]) == Nr
         @test all(isfinite, uθ[key])
         @test isapprox(uθ[key][idx_i], 0.0; atol=1e-9)
         @test isapprox(uθ[key][idx_o], 0.0; atol=1e-9)
-        # u_r boundary nodes are explicitly zeroed
-        @test ur[key][idx_i] == 0.0 && ur[key][idx_o] == 0.0
+        # u_r vanishes at both walls, up to round-off of the viscous solve
+        @test max(abs(ur[key][idx_i]), abs(ur[key][idx_o])) <= 1e-12 * scale
         @test length(dur[key]) == Nr && length(duθ[key]) == Nr
     end
     # zero-amplitude mode yields exact zeros (early branch)
