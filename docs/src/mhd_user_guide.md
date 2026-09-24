@@ -75,8 +75,8 @@ params = MHDParams(
     bci_thermal = 0, bco_thermal = 0  # Fixed temperature
 )
 
-# Solve via the high-level API. Le=0 (no field) ⇒ tau-free ultraspherical-Galerkin
-# assembly: with boundary constraints built into its trial basis.
+# Solve via the high-level API. Insulating walls ⇒ energy-conserving Galerkin
+# assembly, with boundary constraints built into its trial basis.
 result = solve(MHDProblem(params); nev=20, tol=1e-6, which=:LR)
 
 growth_rates = real.(result.eigenvalues)
@@ -94,28 +94,36 @@ println("Critical mode frequency: ", frequencies[argmax(growth_rates)])
 
 ## Eigensolver and model scope
 
-`solve(MHDProblem(params))` is the recommended entry point. Hydro and axial-field
-problems with insulating magnetic walls use ultraspherical-Galerkin assembly.
-Dipole fields and conducting walls use tau assembly with fluid residuals in
-`C⁽⁴⁾` (poloidal velocity) or `C⁽²⁾` (other fields). Only the highest residual
-coefficients are replaced by boundary constraints; unknowns remain Chebyshev
-coefficients. This projection avoids the artificial growing poloidal modes of
-the former `C⁽⁰⁾` residual formulation. Tau pencils
-have infinite algebraic boundary eigenvalues; shift-invert targeting with
-`sigma=0.0` can select finite modes near onset. Check radial and angular convergence
-for the physical parameters being studied.
+`solve(MHDProblem(params))` is the recommended entry point. With insulating or
+perfectly conducting magnetic walls (axial, dipole, or no field) it uses the
+energy-conserving Galerkin assembly `Magrathea.assemble_mhd_energy_galerkin`. Each momentum
+and induction equation is tested against its own trial basis in the energy inner
+product, so the discrete Lorentz force is the exact negative adjoint of the
+induction term, Coriolis exchanges no energy, and viscous and ohmic terms only
+dissipate. Without buoyancy, no eigenvalue can grow at any resolution. Perfectly
+conducting walls with slip need no special treatment, since their motional electric
+field enters the weak form directly.
+
+A finite-conductivity inner core (`bci_magnetic = 1`) uses tau assembly, with fluid
+residuals in `C⁽⁴⁾` (poloidal velocity) or `C⁽²⁾` (other fields). Only the highest
+residual coefficients are replaced by boundary constraints; unknowns remain
+Chebyshev coefficients. Tau pencils have infinite algebraic boundary eigenvalues;
+shift-invert targeting with `sigma=0.0` can select finite modes near onset. Check
+radial and angular convergence for the physical parameters being studied.
 
 Strong fields need enough radial modes to resolve the magnetic (Hartmann) boundary
-layers, of thickness ``\sqrt{E\,E_m}/(Le\,B_0)`` at a wall with field ``B_0``. When
-`N` is too low, Alfvén waves at the truncation scale are under-damped and show up
-as large spurious growth rates, even without buoyancy. The imposed dipole is
-``r_i^{-3}`` times stronger at the inner wall than at the outer wall (about 23 times
-for `ricb = 0.35`), so it reaches this limit at a much smaller `Le` than an axial
-field. For example, at `E = 1e-3`, `Pm = 1`, and `Le = 0.1`, the dipole needs about
-`N = 64`, while the axial field is resolved at `N = 24`. `estimate_size(MHDProblem(params))`
-prints a rough `N` for the boundary layers, and `solve` warns when the leading mode's
-radial spectrum has not decayed (`result.extra.spectral_tail`). Increase `N` until the
-leading eigenvalue converges.
+layers, of thickness ``\sqrt{E\,E_m}/(Le\,B_0)`` at a wall with field ``B_0``. Below
+that resolution, the tau pencil shows large spurious growth rates, even without
+buoyancy, because Alfvén waves at the truncation scale are under-damped. The
+energy-conserving assembly cannot grow spuriously, but its eigenvalues are equally
+inaccurate until the layers are resolved. The imposed dipole is ``r_i^{-3}`` times
+stronger at the inner wall than at the outer wall (about 23 times for
+`ricb = 0.35`), so it needs more radial modes than an axial field of the same `Le`.
+For example, at `E = 1e-3`, `Pm = 1`, and `Le = 0.1`, the dipole needs about
+`N = 64` with tau assembly, while the axial field is resolved at `N = 24`.
+`estimate_size(MHDProblem(params))` prints a rough `N` for the boundary layers, and
+`solve` warns when the leading mode's radial spectrum has not decayed
+(`result.extra.spectral_tail`). Increase `N` until the leading eigenvalue converges.
 
 The tests compare shell magnetic free decay against independent collocation,
 and an equal-diffusivity conducting core against analytical full-sphere decay.

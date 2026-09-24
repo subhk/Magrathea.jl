@@ -223,16 +223,18 @@ end
 Solve the MHD eigenvalue problem.
 
 Constructs an `MHDStabilityOperator` from the MHD parameters, assembles the
-matrices (boundary-recombined Galerkin for insulating walls, tau otherwise),
-solves with the selected backend (`:slepc` or `:dense`), and wraps the result in
-a `StabilityResult`.
+matrices, solves with the selected backend (`:slepc` or `:dense`), and wraps the
+result in a `StabilityResult`. Insulating or perfectly conducting magnetic walls
+use the energy-conserving Galerkin assembly (`Magrathea.assemble_mhd_energy_galerkin`):
+without buoyancy no eigenvalue can grow, at any resolution. A finite-conductivity
+inner core uses the tau pencil (`assemble_mhd_matrices`), which can show spurious
+growth at strong field and low `N`.
 
 Each returned eigenvector is checked for radial resolution:
 `result.extra.spectral_tail[j]` holds the share of mode `j`'s norm in the top
 quarter of its Chebyshev coefficients (`radial`) and of its retained degrees
 (`angular`). A warning is issued when the leading mode's radial tail exceeds
-1e-2: such modes sit at the truncation scale (typically
-spurious growth at strong field and low `N`), so increase `N` until the leading
+1e-2: such modes sit at the truncation scale, so increase `N` until the leading
 eigenvalue converges. The warning includes a rough `N` for resolving the magnetic
 (Hartmann) boundary layers, whose thickness is `√(E·Em)/(Le·B₀)`; `estimate_size`
 reports it before solving. A dipole is `ricb⁻³` times stronger at the inner wall
@@ -253,16 +255,12 @@ function solve(problem::MHDProblem{T, BS};
     mhd_params = problem.params
     op = MHDStabilityOperator(mhd_params)
 
-    if !is_dipole_case(mhd_params.B0_type, mhd_params.ricb) &&
-       mhd_params.bci_magnetic == 0 && mhd_params.bco_magnetic == 0
-        # Hydro AND axial-field MHD with insulating magnetic BCs: tau-free
-        # ultraspherical-Galerkin assembly. (Dipole and conducting/perfect-conductor
-        # magnetic BCs are not yet supported by the Galerkin path → tau below.)
-        # The recombined basis removes the tau method's spurious eigenvalues, but an
-        # under-resolved pencil can still have unphysical growing modes (strong
-        # field, low N); the spectral-tail check below flags those. The dipole case
-        # still routes through the tau path (see galerkin_assembly.jl).
-        A_gal, B_gal, layout = assemble_mhd_galerkin(op)
+    if _mhd_energy_galerkin_supported(mhd_params)
+        # Insulating or perfectly conducting walls: energy-conserving Galerkin
+        # assembly. Without buoyancy it cannot grow spuriously at any resolution;
+        # under-resolved modes are still inaccurate, which the spectral-tail check
+        # below reports. A finite-conductivity core uses the tau path.
+        A_gal, B_gal, layout = assemble_mhd_energy_galerkin(op)
         if backend === :slepc
             vals_s, vecs_s, _ = Magrathea._solve_generalized_eigen_slepc(
                 sparse(A_gal), sparse(B_gal); nev=nev,
@@ -276,7 +274,7 @@ function solve(problem::MHDProblem{T, BS};
         evecs_full = [reconstruct_mhd_galerkin_full(op, layout, vecs_s[:, j])
                       for j in 1:size(vecs_s, 2)]
         evec_matrix = _eigvecs_to_matrix(eigenvalues, evecs_full, T)
-        info = (method = "MHD ultraspherical-Galerkin", n_reduced = layout.nred)
+        info = (method = "MHD energy-conserving Galerkin", n_reduced = layout.nred)
         return StabilityResult(
             convert(Vector{Complex{T}}, eigenvalues),
             evec_matrix,

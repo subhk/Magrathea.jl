@@ -125,8 +125,8 @@ params = MHDParams(
 )
 
 # Solve via the high-level API.
-# Hydro and axial fields with insulating walls use Galerkin assembly.
-# Dipole fields and conducting walls use coefficient-space tau assembly.
+# Insulating or perfectly conducting walls use energy-conserving Galerkin assembly.
+# A finite-conductivity inner core uses coefficient-space tau assembly.
 result = solve(MHDProblem(params); nev=10, which=:LR)
 
 eigenvalues = result.eigenvalues
@@ -292,7 +292,7 @@ params = MHDParams(
     bci_magnetic = 0, bco_magnetic = 0,
 )
 
-result = solve(MHDProblem(params); nev = 10, which = :LR)  # no_field ⇒ Galerkin
+result = solve(MHDProblem(params); nev = 10, which = :LR)  # insulating ⇒ energy Galerkin
 eigenvalues = result.eigenvalues
 
 println("Growth rate: ", real(eigenvalues[1]), " (expect ≈ 0)")
@@ -318,7 +318,7 @@ for Le in Le_values
         bci_magnetic = 0, bco_magnetic = 0,
     )
 
-    # axial + insulating ⇒ Galerkin; :LR picks the physical mode
+    # insulating ⇒ energy Galerkin; :LR picks the physical mode
     eigenvalues = solve(MHDProblem(params); nev = 5, which = :LR).eigenvalues
 
     push!(growth_rates, real(eigenvalues[1]))
@@ -424,7 +424,7 @@ params = MHDParams(
     heating = :differential,
 )
 
-# Solve (no_field/axial + insulating ⇒ tau-free Galerkin)
+# Solve (insulating walls ⇒ energy-conserving Galerkin)
 result = solve(MHDProblem(params); nev = 10, which = :LR)
 eigenvalues  = result.eigenvalues
 eigenvectors = result.eigenvectors

@@ -235,31 +235,39 @@ end
     mhd(; Le, N, B0=axial, lmax=6) = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3,
         ricb=0.35, m=1, lmax=lmax, N=N, B0_type=B0, B0_amplitude=1.0, Le=Le)
 
-    # Strong field at low N: the leading "growing" mode is a truncation artefact.
+    # Strong field at low N: the tau pencil grows spuriously at the truncation
+    # scale, which the spectral-tail check flags.
+    op = MHDStabilityOperator(mhd(Le=1.0, N=16))
+    A, B, _, _ = quiet(() -> assemble_mhd_matrices(op))
+    vals, vecs, _ = quiet(() -> solve_eigenvalue_problem(A, B; nev=2, backend=:dense))
+    @test real(vals[1]) > 1
     @test_logs (:warn, r"under-resolved") match_mode=:any min_level=Logging.Warn begin
-        r = solve(MHDProblem(mhd(Le=1.0, N=16)); nev=2, backend=:dense)
-        @test real(r.eigenvalues[1]) > 1          # spurious growth…
-        @test r.extra.spectral_tail[1].radial > 0.1   # …flagged by its spectrum
+        tails = Magrathea._check_mhd_resolution(op, vals, Magrathea._eigvecs_to_matrix(vals, vecs, Float64))
+        @test tails[1].radial > 0.1
     end
+    # The energy-conserving Galerkin solve cannot grow spuriously.
+    strong = quiet(() -> solve(MHDProblem(mhd(Le=1.0, N=16)); nev=2, backend=:dense))
+    @test real(strong.eigenvalues[1]) < 0
     resolved = quiet(() -> solve(MHDProblem(mhd(Le=0.1, N=24)); nev=2, backend=:dense))
     @test real(resolved.eigenvalues[1]) < 0
     @test resolved.extra.spectral_tail[1].radial < 1e-2
 
-    # The dense tau pencil (singular B) drops its infinite eigenvalues and agrees
-    # with the boundary-recombined Galerkin solve.
+    # The dense tau pencil (singular B) drops its infinite eigenvalues. Once
+    # resolved (N=48) it agrees with the Galerkin solve, which converges sooner.
     op = MHDStabilityOperator(mhd(Le=0.1, N=24))
     A, B, _, _ = quiet(() -> assemble_mhd_matrices(op))
     vals, _, _ = quiet(() -> solve_eigenvalue_problem(A, B; nev=3, backend=:dense))
     @test all(z -> abs(z) < 1e6, vals)
-    @test vals[1] ≈ resolved.eigenvalues[1] rtol=1e-6
+    A, B, _, _ = quiet(() -> assemble_mhd_matrices(MHDStabilityOperator(mhd(Le=0.1, N=48))))
+    vals, _, _ = quiet(() -> solve_eigenvalue_problem(A, B; nev=3, backend=:dense))
+    @test vals[1] ≈ resolved.eigenvalues[1] rtol=1e-8
 end
 
-@testset "Strong dipole growth is radial under-resolution" begin
+@testset "Strong dipole: tau grows spuriously, energy Galerkin converges" begin
     # The dipole is ricb⁻³ ≈ 23 times stronger at the inner wall, so its magnetic
     # boundary layers need more radial modes than an axial field of equal Le.
-    # Too few modes give large spurious growth even without buoyancy.
-    dip(N) = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1, lmax=6, N=N,
-                       symm=1, B0_type=dipole, Le=0.03)
+    dip(N; Le=0.03) = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1,
+                                lmax=6, N=N, symm=1, B0_type=dipole, Le=Le)
     axi = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1, lmax=6, N=24,
                     symm=1, B0_type=axial, Le=0.03)
     @test Magrathea._mhd_boundary_layer_N(dip(24)) > 24 >
@@ -267,15 +275,17 @@ end
     @test Magrathea._mhd_boundary_layer_N(
         MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1, lmax=6, N=24,
                   symm=1, B0_type=no_field, Le=0.0)) == 0
-    @test_logs (:warn, r"N ≳ \d+") match_mode=:any min_level=Logging.Warn begin
-        coarse = solve(MHDProblem(dip(24)); nev=2, backend=:dense)
-        @test real(coarse.eigenvalues[1]) > 1
+    A, B, _, _ = quiet(() -> assemble_mhd_matrices(MHDStabilityOperator(dip(24))))
+    vals, _, _ = quiet(() -> solve_eigenvalue_problem(A, B; nev=2, backend=:dense))
+    @test real(vals[1]) > 1
+    for N in (12, 24), Le in (0.03, 1.0)
+        r = quiet(() -> solve(MHDProblem(dip(N; Le=Le)); nev=2, backend=:dense))
+        @test real(r.eigenvalues[1]) < 0
     end
     resolved = quiet(() -> solve(MHDProblem(dip(48)); nev=2, backend=:dense))
     finer = quiet(() -> solve(MHDProblem(dip(64)); nev=2, backend=:dense))
-    @test real(resolved.eigenvalues[1]) < 0
     @test resolved.extra.spectral_tail[1].radial < 1e-2
-    @test finer.eigenvalues[1] ≈ resolved.eigenvalues[1] rtol=1e-5
+    @test finer.eigenvalues[1] ≈ resolved.eigenvalues[1] rtol=1e-6
     report = mktemp() do _, io
         redirect_stdout(io) do
             estimate_size(MHDProblem(dip(24)))
