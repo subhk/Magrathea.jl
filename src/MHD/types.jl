@@ -268,8 +268,8 @@ struct MHDParams{T<:Real}
         all(isfinite, (E, Pr, Pm, Ra, Le, B0_amplitude, Etherm, Em)) ||
             throw(ArgumentError("MHD physical parameters must be finite"))
         Le >= 0 || throw(ArgumentError("Le must be nonnegative"))
-        bci in (0, 1, 2) && bco in (0, 1, 2) ||
-            throw(ArgumentError("Mechanical BCs must be 0 (stress-free), 1 (no-slip), or legacy 2 (stress-free)"))
+        bci in (0, 1) && bco in (0, 1) ||
+            throw(ArgumentError("Mechanical BCs must be 0 (stress-free) or 1 (no-slip), got bci=$bci, bco=$bco"))
         bci_thermal in (0, 1) && bco_thermal in (0, 1) ||
             throw(ArgumentError("Thermal BCs must be 0 (temperature) or 1 (flux)"))
         bci_magnetic in (0, 1, 2) && bco_magnetic in (0, 2) ||

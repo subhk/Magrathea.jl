@@ -223,17 +223,23 @@ end
 Solve the MHD eigenvalue problem.
 
 Constructs an `MHDStabilityOperator` from the MHD parameters, assembles the
-matrices (boundary-recombined Galerkin for insulating walls, tau otherwise),
-solves with the selected backend (`:slepc` or `:dense`), and wraps the result in
-a `StabilityResult`.
+matrices, solves with the selected backend (`:slepc` or `:dense`), and wraps the
+result in a `StabilityResult`. Insulating or perfectly conducting magnetic walls
+use the energy-conserving Galerkin assembly (`Magrathea.assemble_mhd_energy_galerkin`):
+without buoyancy no eigenvalue can grow, at any resolution. A finite-conductivity
+inner core uses the tau pencil (`assemble_mhd_matrices`), which can show spurious
+growth at strong field and low `N`.
 
 Each returned eigenvector is checked for radial resolution:
 `result.extra.spectral_tail[j]` holds the share of mode `j`'s norm in the top
 quarter of its Chebyshev coefficients (`radial`) and of its retained degrees
 (`angular`). A warning is issued when the leading mode's radial tail exceeds
-1e-2: such modes sit at the truncation scale (typically
-spurious growth at strong field and low `N`), so increase `N` until the leading
-eigenvalue converges.
+1e-2: such modes sit at the truncation scale, so increase `N` until the leading
+eigenvalue converges. The warning includes a rough `N` for resolving the magnetic
+(Hartmann) boundary layers, whose thickness is `√(E·Em)/(Le·B₀)`; `estimate_size`
+reports it before solving. A dipole is `ricb⁻³` times stronger at the inner wall
+than at the outer wall, so it needs more radial modes than an axial field of equal
+`Le`.
 """
 function solve(problem::MHDProblem{T, BS};
                nev::Int=6,
@@ -249,16 +255,12 @@ function solve(problem::MHDProblem{T, BS};
     mhd_params = problem.params
     op = MHDStabilityOperator(mhd_params)
 
-    if !is_dipole_case(mhd_params.B0_type, mhd_params.ricb) &&
-       mhd_params.bci_magnetic == 0 && mhd_params.bco_magnetic == 0
-        # Hydro AND axial-field MHD with insulating magnetic BCs: tau-free
-        # ultraspherical-Galerkin assembly. (Dipole and conducting/perfect-conductor
-        # magnetic BCs are not yet supported by the Galerkin path → tau below.)
-        # The recombined basis removes the tau method's spurious eigenvalues, but an
-        # under-resolved pencil can still have unphysical growing modes (strong
-        # field, low N); the spectral-tail check below flags those. The dipole case
-        # still routes through the tau path (see galerkin_assembly.jl).
-        A_gal, B_gal, layout = assemble_mhd_galerkin(op)
+    if _mhd_energy_galerkin_supported(mhd_params)
+        # Insulating or perfectly conducting walls: energy-conserving Galerkin
+        # assembly. Without buoyancy it cannot grow spuriously at any resolution;
+        # under-resolved modes are still inaccurate, which the spectral-tail check
+        # below reports. A finite-conductivity core uses the tau path.
+        A_gal, B_gal, layout = assemble_mhd_energy_galerkin(op)
         if backend === :slepc
             vals_s, vecs_s, _ = Magrathea._solve_generalized_eigen_slepc(
                 sparse(A_gal), sparse(B_gal); nev=nev,
@@ -272,7 +274,7 @@ function solve(problem::MHDProblem{T, BS};
         evecs_full = [reconstruct_mhd_galerkin_full(op, layout, vecs_s[:, j])
                       for j in 1:size(vecs_s, 2)]
         evec_matrix = _eigvecs_to_matrix(eigenvalues, evecs_full, T)
-        info = (method = "MHD ultraspherical-Galerkin", n_reduced = layout.nred)
+        info = (method = "MHD energy-conserving Galerkin", n_reduced = layout.nred)
         return StabilityResult(
             convert(Vector{Complex{T}}, eigenvalues),
             evec_matrix,
@@ -315,6 +317,23 @@ under-resolved. Converged modes measure ≲1e-3; spurious truncation-scale growt
 measures ~0.4–0.6."""
 const _MHD_RADIAL_TAIL_WARN = 1e-2
 
+"""
+    _mhd_boundary_layer_N(params) -> Int
+
+Rough radial resolution `N` that resolves the magnetic (Hartmann) boundary layers,
+of thickness `√(E·Em)/(Le·B₀)`, where `B₀` is the largest background field at a
+wall: 1 for the axial field, and `ricb⁻³` at the inner wall for the dipole. Below it,
+Alfvén waves at the truncation scale are under-damped and appear as spurious growing
+eigenvalues. The constant was fitted to E = 1e-4 to 1e-3 and Pm = 0.1 to 10, where the
+estimate is within about a factor of 2 and errs high for Pm < 1. Returns 0 when no
+field is imposed.
+"""
+function _mhd_boundary_layer_N(p::MHDParams)
+    (p.B0_type == no_field || iszero(p.Le)) && return 0
+    B0 = is_dipole_case(p.B0_type, p.ricb) ? inv(p.ricb)^3 : one(p.ricb)
+    return ceil(Int, 1.8 * sqrt((1 - p.ricb) * p.Le * B0 / sqrt(p.E * p.Em)))
+end
+
 """Compute `_mhd_spectral_tails` for every returned eigenvector (full tau layout)
 and warn when the leading mode is radially under-resolved. Workers of a
 distributed solve hold no eigenvectors and skip the check."""
@@ -323,10 +342,14 @@ function _check_mhd_resolution(op, eigenvalues, evecs::AbstractMatrix)
         return NamedTuple{(:radial, :angular), Tuple{Float64, Float64}}[]
     tails = [_mhd_spectral_tails(op, view(evecs, :, j)) for j in axes(evecs, 2)]
     if !isempty(tails) && tails[1].radial > _MHD_RADIAL_TAIL_WARN
+        N = op.params.N; N_layers = _mhd_boundary_layer_N(op.params)
+        hint = N_layers > N ?
+            " The magnetic boundary layers need roughly N ≳ $N_layers (a rough " *
+            "estimate; see `estimate_size`)." : ""
         @warn "MHD leading eigenmode is under-resolved: $(round(100 * tails[1].radial; sigdigits=2))% " *
               "of its norm lies in the top quarter of the Chebyshev coefficients, so its " *
               "eigenvalue $(eigenvalues[1]) is likely a truncation artefact. Increase N " *
-              "(currently $(op.params.N)) until the leading eigenvalue converges."
+              "(currently $N) until the leading eigenvalue converges." * hint
     end
     return tails
 end

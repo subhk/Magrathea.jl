@@ -39,6 +39,56 @@ end
     return first(idx), last(idx)
 end
 
+"""Thermal boundary conditions accepted by the hydrodynamic operators: one symbol
+for both walls, or an `(inner, outer)` pair."""
+const ThermalBC = Union{Symbol, Tuple{Symbol, Symbol}}
+
+"""Return the `(inner, outer)` thermal boundary conditions of `thermal_bc`."""
+_thermal_walls(bc::Symbol) = (bc, bc)
+_thermal_walls(bc::Tuple{Symbol, Symbol}) = bc
+
+"""Throw unless every wall of `thermal_bc` is `:fixed_temperature` or `:fixed_flux`."""
+function _check_thermal_bc(bc)
+    bc isa ThermalBC && all(in((:fixed_temperature, :fixed_flux)), _thermal_walls(bc)) ||
+        throw(ArgumentError("thermal_bc must be :fixed_temperature, :fixed_flux, or an " *
+            "(inner, outer) pair of them, got $(repr(bc))"))
+    return nothing
+end
+
+"""Throw if a basic state is combined with a fixed-flux inner wall. Every basic
+state holds the inner wall at a fixed temperature, so its perturbations must
+vanish there."""
+function _check_basic_state_thermal_bc(bc, basic_state)
+    basic_state === nothing && return nothing
+    first(_thermal_walls(bc)) === :fixed_temperature || throw(ArgumentError(
+        "Basic states fix the inner-wall temperature, so perturbations need a fixed " *
+        "inner temperature; use thermal_bc=(:fixed_temperature, :fixed_flux) for a " *
+        "fixed-flux outer wall, got thermal_bc=$(repr(bc))"))
+    return nothing
+end
+
+"""
+    _angular_momentum_gauge(mechanical_bc, m, toroidal_ls) -> Bool
+
+Stress-free walls exert no torque, so the net angular momentum of a perturbation is
+conserved. For `m = 0` and `m = 1` this leaves an exactly neutral rigid rotation
+(λ = 0 and λ = i) carried by the ℓ = 1 toroidal field. Convective modes with any other
+eigenvalue already have zero angular momentum, so constraining it to zero removes only
+the rigid rotation.
+"""
+_angular_momentum_gauge(mechanical_bc::Symbol, m::Integer, toroidal_ls) =
+    mechanical_bc === :stress_free && abs(m) <= 1 && 1 in toroidal_ls
+
+_angular_momentum_gauge(op) =
+    _angular_momentum_gauge(op.params.mechanical_bc, op.params.m, op.l_sets[:T])
+
+"""Tau row of the ℓ = 1 toroidal block replaced by the zero-angular-momentum condition."""
+@inline angular_momentum_gauge_index(idx::UnitRange{Int}) = first(idx) + 1
+
+"""Weights of `∫ r³ T₁(r) dr`, proportional to the angular momentum of the rigid
+rotation carried by the ℓ = 1 toroidal potential `T₁` (rigid rotation is `T₁ ∝ r`)."""
+_angular_momentum_weights(r::AbstractVector) = _mean_radial_weights(collect(r)) .* r .^ 3
+
 # -----------------------------------------------------------------------------
 #  Parameter Structure
 # -----------------------------------------------------------------------------
@@ -57,7 +107,9 @@ Parameters for rotating spherical shell convection.
 - `lmax::Int` — maximum spherical harmonic degree
 - `Nr::Int` — radial collocation points
 - `mechanical_bc::Symbol` — `:no_slip` (default) or `:stress_free`
-- `thermal_bc::Symbol` — `:fixed_temperature` (default) or `:fixed_flux`
+- `thermal_bc` — `:fixed_temperature` (default) or `:fixed_flux` at both walls, or an
+  `(inner, outer)` pair such as `(:fixed_temperature, :fixed_flux)`. A basic state
+  fixes the inner-wall temperature, so it requires a `:fixed_temperature` inner wall.
 - `equatorial_symmetry::Symbol` — `:both` (default), `:symmetric`, or `:antisymmetric`.
   A truncated symmetry class requires an equatorially symmetric `basic_state`,
   since an asymmetric basic state couples the two classes.
@@ -91,7 +143,7 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
     ro::T = one(E)
     L::T = ro - ri
     mechanical_bc::Symbol = :no_slip
-    thermal_bc::Symbol = :fixed_temperature
+    thermal_bc::ThermalBC = :fixed_temperature
     use_sparse_weighting::Bool = true
     equatorial_symmetry::Symbol = :both
     basic_state::BS = nothing
@@ -121,8 +173,8 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
             "Nr must be >= 8 for meaningful resolution, got $Nr"))
         mechanical_bc in (:no_slip, :stress_free) || throw(ArgumentError(
             "mechanical_bc must be :no_slip or :stress_free, got :$mechanical_bc"))
-        thermal_bc in (:fixed_temperature, :fixed_flux) || throw(ArgumentError(
-            "thermal_bc must be :fixed_temperature or :fixed_flux, got :$thermal_bc"))
+        _check_thermal_bc(thermal_bc)
+        _check_basic_state_thermal_bc(thermal_bc, basic_state)
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         heating = _resolve_onset_heating(heating, use_sparse_weighting, basic_state)
@@ -205,22 +257,24 @@ end
 Return the retained spherical-harmonic degrees for poloidal, toroidal, and
 temperature fields after applying equatorial-symmetry truncation.
 """
-function compute_l_sets(p::OnsetParams{T}) where {T<:Real}
-    if p.equatorial_symmetry === :both
-        if p.m == 0
-            ls = collect(1:(p.lmax + 1))
+compute_l_sets(p::OnsetParams) = _l_sets(p.m, p.lmax, p.equatorial_symmetry)
+
+function _l_sets(m::Int, lmax::Int, equatorial_symmetry::Symbol)
+    if equatorial_symmetry === :both
+        if m == 0
+            ls = collect(1:(lmax + 1))
         else
-            ls = collect(p.m:p.lmax)
+            ls = collect(m:lmax)
         end
         return Dict(:P => ls, :T => ls, :Θ => ls)
     end
 
-    vsymm = _symmetry_flag(p.equatorial_symmetry)
+    vsymm = _symmetry_flag(equatorial_symmetry)
     @assert vsymm !== nothing
 
-    signm = p.m == 0 ? 0 : 1
-    lm1 = p.lmax - p.m + 1
-    ll_start = p.m + 1 - signm
+    signm = m == 0 ? 0 : 1
+    lm1 = lmax - m + 1
+    ll_start = m + 1 - signm
     ll = collect(ll_start:(ll_start + lm1 - 1))
 
     s = Int((vsymm + 1) ÷ 2)
@@ -365,33 +419,30 @@ function impose_boundary_conditions!(A::Matrix{Complex{T}}, B::Matrix{Complex{T}
         end
     end
 
+    # Toroidal and temperature rows are shared with `_constraint_subblock`.
     for ℓ in op.l_sets[:T]
         T_idx = op.index_map[(ℓ, :T)]
-        riT, roT = toroidal_boundary_indices(T_idx)
-        if p.mechanical_bc == :no_slip
-            A[riT, :] .= 0; B[riT, :] .= 0; A[riT, riT] = 1
-            A[roT, :] .= 0; B[roT, :] .= 0; A[roT, roT] = 1
-        else
-            A[riT, :] .= 0; B[riT, :] .= 0
-            A[roT, :] .= 0; B[roT, :] .= 0
-            A[riT, T_idx] .= (-op.r[1]) .* D1[1, :]
-            A[roT, T_idx] .= (-op.r[end]) .* D1[end, :]
-            A[riT, riT] += 1
-            A[roT, roT] += 1
-        end
+        rows = _toroidal_constraint_rows(op, ℓ)
+        A[rows, :] .= 0; B[rows, :] .= 0
+        A[rows, T_idx] .= _constraint_subblock(op, ℓ, :T)
     end
 
     for ℓ in op.l_sets[:Θ]
         Θ_idx = op.index_map[(ℓ, :Θ)]
-        riΘ, roΘ = temperature_boundary_indices(Θ_idx)
-        if p.thermal_bc == :fixed_temperature
-            A[riΘ, :] .= 0; B[riΘ, :] .= 0; A[riΘ, riΘ] = 1
-            A[roΘ, :] .= 0; B[roΘ, :] .= 0; A[roΘ, roΘ] = 1
-        else
-            A[riΘ, :] .= 0; B[riΘ, :] .= 0; A[riΘ, Θ_idx] .= D1[1, :]
-            A[roΘ, :] .= 0; B[roΘ, :] .= 0; A[roΘ, Θ_idx] .= D1[end, :]
-        end
+        rows = collect(temperature_boundary_indices(Θ_idx))
+        A[rows, :] .= 0; B[rows, :] .= 0
+        A[rows, Θ_idx] .= _constraint_subblock(op, ℓ, :Θ)
     end
+end
+
+"""Tau rows of the toroidal `ℓ` block: both walls, plus the zero-angular-momentum
+row for ℓ = 1 when `_angular_momentum_gauge(op)` holds."""
+function _toroidal_constraint_rows(op::LinearStabilityOperator, ℓ::Int)
+    T_idx = op.index_map[(ℓ, :T)]
+    riT, roT = toroidal_boundary_indices(T_idx)
+    ℓ == 1 && _angular_momentum_gauge(op) &&
+        return [riT, angular_momentum_gauge_index(T_idx), roT]
+    return [riT, roT]
 end
 
 # -----------------------------------------------------------------------------
@@ -630,9 +681,7 @@ function _onset_boundary_interior_dofs(op::LinearStabilityOperator{T}) where {T<
         is_boundary[ri] = is_boundary[inner_tau] = is_boundary[outer_tau] = is_boundary[ro] = true
     end
     for ℓ in op.l_sets[:T]
-        T_idx = op.index_map[(ℓ, :T)]
-        riT, roT = toroidal_boundary_indices(T_idx)
-        is_boundary[riT] = is_boundary[roT] = true
+        is_boundary[_toroidal_constraint_rows(op, ℓ)] .= true
     end
     for ℓ in op.l_sets[:Θ]
         Θ_idx = op.index_map[(ℓ, :Θ)]
@@ -705,8 +754,8 @@ function _constraint_reduction(A::Matrix{Complex{T}},
     end
     for ℓ in op.l_sets[:T]
         T_idx = op.index_map[(ℓ, :T)]
-        riT, roT = toroidal_boundary_indices(T_idx)
-        basis = _constraint_basis_block(A, T_idx, [riT, roT], "toroidal ℓ=$ℓ")
+        basis = _constraint_basis_block(A, T_idx, _toroidal_constraint_rows(op, ℓ),
+                                        "toroidal ℓ=$ℓ")
         cols = col:(col + size(basis, 2) - 1)
         push!(blocks, ConstraintBasisBlock{T}(T_idx, cols, basis))
         col += size(basis, 2)
@@ -735,7 +784,8 @@ matrix `A`. This reproduces exactly the rows written by
 used by `_constraint_reduction`:
 
 - `:P`  → `[ri, inner_tau, outer_tau, ro]`
-- `:T`  → `[riT, roT]`
+- `:T`  → `_toroidal_constraint_rows(op, ℓ)` (`[riT, roT]`, with the
+  angular-momentum row between them when it applies)
 - `:Θ`  → `[riΘ, roΘ]`
 """
 function _constraint_subblock(op::LinearStabilityOperator{T}, ℓ::Int,
@@ -762,24 +812,31 @@ function _constraint_subblock(op::LinearStabilityOperator{T}, ℓ::Int,
         end
         return block
     elseif field === :T
-        block = zeros(Complex{T}, 2, Nr)
+        gauge = ℓ == 1 && _angular_momentum_gauge(op)
+        block = zeros(Complex{T}, gauge ? 3 : 2, Nr)
+        inner, outer = 1, size(block, 1)
         if p.mechanical_bc == :no_slip
-            block[1, 1] = one(Complex{T})
-            block[2, Nr] = one(Complex{T})
+            block[inner, 1] = one(Complex{T})
+            block[outer, Nr] = one(Complex{T})
         else
-            block[1, :] .= (-r[1]) .* D1[1, :]
-            block[2, :] .= (-r[end]) .* D1[end, :]
-            block[1, 1] += one(Complex{T})
-            block[2, Nr] += one(Complex{T})
+            block[inner, :] .= (-r[1]) .* D1[1, :]
+            block[outer, :] .= (-r[end]) .* D1[end, :]
+            block[inner, 1] += one(Complex{T})
+            block[outer, Nr] += one(Complex{T})
         end
+        gauge && (block[2, :] .= _angular_momentum_weights(r))
         return block
     elseif field === :Θ
         block = zeros(Complex{T}, 2, Nr)
-        if p.thermal_bc == :fixed_temperature
+        inner, outer = _thermal_walls(p.thermal_bc)
+        if inner === :fixed_temperature
             block[1, 1] = one(Complex{T})
-            block[2, Nr] = one(Complex{T})
         else
             block[1, :] .= D1[1, :]
+        end
+        if outer === :fixed_temperature
+            block[2, Nr] = one(Complex{T})
+        else
             block[2, :] .= D1[end, :]
         end
         return block

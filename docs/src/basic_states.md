@@ -202,6 +202,11 @@ The `mode` keyword selects the construction strategy:
 | `:selfconsistent` | `BasicState` or `BasicState3D` | Nonlinear Navier–Stokes–Coriolis and thermal transport |
 | `:nonaxisymmetric` | `BasicState3D` | Laplace-approximation 3D state |
 
+Each mode imposes its outer-wall forcing as a temperature or a flux, following
+the outer wall of `params.thermal_bc`, and holds the inner wall at a fixed
+temperature. `params.thermal_bc` must therefore be `:fixed_temperature` or
+`(:fixed_temperature, :fixed_flux)`.
+
 !!! note "Low-level API"
     The low-level functions `conduction_basic_state`, `meridional_basic_state`, `nonaxisymmetric_basic_state`, and `basic_state_selfconsistent` remain fully supported. The unified API is a convenience wrapper.
 
@@ -228,7 +233,7 @@ cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
 # Build conduction state (fixed temperature BCs)
 bs = conduction_basic_state(cd, χ, 6)
 
-# Or with fixed flux at outer boundary
+# Or with fixed flux at outer boundary (default: the conduction flux)
 bs = conduction_basic_state(cd, χ, 6;
                             thermal_bc = :fixed_flux,
                             outer_flux = -1.0)
@@ -252,8 +257,12 @@ For prescribed heat flux at the outer boundary:
 - ``\partial\bar{T}/\partial r|_{r_o} = q`` (prescribed gradient; the outward
   heat flux is ``-q``, so ``q < 0`` carries heat outward)
 
-Use `thermal_bc = :fixed_flux` and specify `outer_flux`. For example,
-`outer_flux = -χ/(1 - χ)` reproduces the fixed-temperature profile.
+Use `thermal_bc = :fixed_flux` and specify `outer_flux`. The default,
+`outer_flux = -χ/(1 - χ)`, carries the conduction heat flux and reproduces the
+fixed-temperature profile; `meridional_basic_state` (`outer_flux_mean`) and
+`nonaxisymmetric_basic_state` (the `(0, 0)` flux) use the same default. Pair a
+fixed-flux basic state with perturbations that keep the inner temperature fixed,
+`thermal_bc = (:fixed_temperature, :fixed_flux)` in `OnsetParams`.
 
 ### Meridional Variations
 
@@ -661,7 +670,7 @@ velocity, then solves momentum with frozen nonlinear forcing. It uses
 ``-({\mathbf U}\cdot\nabla){\mathbf U}={\mathbf U}\times(\nabla\times{\mathbf U})
 -\nabla(|{\mathbf U}|^2/2)`` and absorbs the gradient in pressure. Angular
 products use an oversampled grid and the native vector-harmonic flow.
-Backtracking accepts updates that reduce the coupled residual.
+Backtracking accepts updates that reduce the fixed-point residual described below.
 `momentum_model=:stokes` explicitly retains the earlier weak-inertia model
 while still solving thermal transport.
 
@@ -676,8 +685,15 @@ v = mean_flow_velocity(bs, 0.7, pi/3, pi/8)
 ```
 
 `info.converged` requires momentum, heat, and boundary/gauge residuals to meet
-`tolerance`. Residuals are maximum absolute orthonormal spectral coefficients
-in the nondimensional equations, at the retained collocation equations.
+`tolerance`. The momentum and heat residuals are fixed-point residuals: the
+largest change of the orthonormal flow potentials and temperature coefficients
+under one undamped Picard update, relative to their largest coefficient. The
+distance to the steady state is about this residual divided by one minus the
+iteration's contraction rate. The collocation defect of the momentum equations
+is not used, because its round-off floor grows roughly like ``N^9`` through the
+fourth-derivative viscous rows and exceeds `1e-8` near 64 radial nodes. The
+boundary residual is the relative defect of the mechanical, gauge, and thermal
+boundary conditions.
 `info.residual_history` records their maximum, and
 `info.momentum_residual_history`, `info.thermal_residual_history`, and
 `info.step_history` record each accepted update (a zero step indicates a

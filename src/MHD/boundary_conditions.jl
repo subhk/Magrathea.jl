@@ -39,6 +39,35 @@ function _mhd_wall_emf(op::MHDStabilityOperator{T}, lout, lin, section, radius) 
     throw(ArgumentError("Velocity section must be :u or :v"))
 end
 
+"""
+    _mhd_angular_momentum_gauge(op) -> Bool
+
+Whether the ℓ = 1 toroidal velocity block carries a zero-angular-momentum row.
+Stress-free walls exert no viscous torque. A rigid rotation about the axis induces no
+field in an axisymmetric background, so for m = 0 it is an exactly neutral mode at any
+`Le`; with `Le = 0`, the tilted rotation for m = 1 is neutral too (λ = i). Other modes
+have zero angular momentum only while it is conserved: for m = 0 when both magnetic
+walls are insulating (their tangential field has no φ-component, so no axial torque),
+and for m = 1 only without Lorentz coupling.
+"""
+function _mhd_angular_momentum_gauge(op::MHDStabilityOperator)
+    p = op.params
+    p.bci == 0 && p.bco == 0 && 1 in op.ll_v || return false
+    iszero(p.Le) && return p.m <= 1
+    return p.m == 0 && p.bci_magnetic == 0 && p.bco_magnetic == 0
+end
+
+"""Chebyshev-coefficient functional `∫ r³ v(r) dr`, proportional to the angular
+momentum of the ℓ = 1 toroidal velocity `v` (rigid rotation is `v ∝ r`)."""
+function _mhd_angular_momentum_functional(op::MHDStabilityOperator{T}) where T
+    N = op.params.N; ri = op.params.ricb; ro = one(T)
+    # N + 5 Chebyshev nodes integrate r³·T_N exactly.
+    x = T[-cospi(T(k) / (N + 4)) for k in 0:(N + 4)]
+    r = ri .+ (x .+ 1) .* ((ro - ri) / 2)
+    w = _mean_radial_weights(r) .* r .^ 3
+    return T[sum(w .* cos.(n .* acos.(x))) for n in 0:N]
+end
+
 """Shared tau boundary rows and sparse A entries for serial and distributed MHD."""
 function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T
     p = op.params; N = p.N; ri = p.ricb; ro = one(T)
@@ -68,6 +97,10 @@ function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T
         block = imap[(l, :v)]
         add!(last(block) - 1, block, p.bco == 1 ? vo : vo .- ro .* do_)
         add!(last(block), block, p.bci == 1 ? vi : vi .- ri .* di)
+    end
+    if _mhd_angular_momentum_gauge(op)
+        block = imap[(1, :v)]
+        add!(last(block) - 2, block, _mhd_angular_momentum_functional(op))
     end
     for l in op.ll_h
         block = imap[(l, :h)]

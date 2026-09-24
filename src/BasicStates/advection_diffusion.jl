@@ -478,12 +478,13 @@ Solve the steady Navier–Stokes–Coriolis and thermal advection-diffusion equa
 The default `momentum_model=:navier_stokes` includes nonlinear mean-flow inertia.
 Use `momentum_model=:stokes` explicitly for the weak-inertia approximation.
 
-Returns `(bs, info)`. `info.converged` requires both projected momentum and
-thermal residuals, plus boundary/gauge constraints, to satisfy `tolerance`.
+Returns `(bs, info)`. `info.converged` requires the relative change of the flow
+and temperature under one Picard update (`info.momentum_residual`,
+`info.thermal_residual`), plus the boundary/gauge defect, to satisfy `tolerance`.
 Boundary amplitudes follow `nonaxisymmetric_basic_state`, including the
 `ArgumentError` for nonzero modes outside `lmax_bs`/`mmax_bs`;
 `coupled_thermal_wind` is an ignored compatibility keyword.
-The damped Picard iteration backtracks on the actual residual; nonconvergence
+The damped Picard iteration backtracks on this fixed-point residual; nonconvergence
 is returned explicitly through `info.termination_reason`. Increase `lmax_bs`,
 `mmax_bs` and radial resolution to check the spectral truncation independently.
 """

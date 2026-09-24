@@ -9,7 +9,7 @@ Magrathea defines one main Julia module, `Magrathea`. The directories under `src
 | `OnsetProblem` | `OnsetParams`; motionless conductive state | Collocation and boundary-constraint reduction |
 | `BiglobalProblem` | `OnsetParams` and axisymmetric `BasicState` | Single azimuthal order with full mean-flow advection and shear |
 | `TriglobalProblem` | `OnsetParams`, `BasicState3D`, signed `m_range` | Coupled azimuthal orders with the same vector linearization |
-| `MHDProblem` | `MHDParams`; motionless conductive state and imposed field | Ultraspherical Galerkin or coefficient-tau assembly |
+| `MHDProblem` | `MHDParams`; motionless conductive state and imposed field | Energy-conserving Galerkin or coefficient-tau assembly |
 
 All four problem wrappers and `StabilityResult` live in `src/types.jl`. `src/solve.jl` dispatches `solve(problem)` and the supported `find_critical_Ra` searches. MHD does not currently accept a prescribed mean flow or expose `find_critical_Ra(MHDProblem(...))`.
 
@@ -45,7 +45,7 @@ Hydrodynamic `Nr` counts **collocation points**. MHD `N` is **polynomial degree*
 | `src/BasicStates/BasicStates.jl` | Includes the basic-state files |
 | `src/BasicStates/basic_state.jl` | `BasicState`, `BasicState3D`, symbolic boundary harmonics, and conductive/Stokes constructors |
 | `src/BasicStates/steady_flow.jl` | Internal `SolenoidalMeanFlow`, viscous Coriolis balance, thermal transport, and `mean_flow_velocity` |
-| `src/BasicStates/nonlinear_flow.jl` | Nonlinear momentum forcing, coupled residuals, and damped iteration |
+| `src/BasicStates/nonlinear_flow.jl` | Nonlinear momentum forcing, fixed-point residuals, and damped Picard iteration |
 | `src/BasicStates/advection_diffusion.jl` | Self-consistent constructors, scalar transport helpers, and radial Poisson solves |
 | `src/BasicStates/basic_state_operators.jl` | Harmonic coupling utilities and axisymmetric stability-assembly adapters |
 | `src/BasicStates/sh_transform.jl` | Spherical-harmonic evaluation and transforms |
@@ -90,16 +90,16 @@ These coefficient operators coexist with collocation; their presence does not me
 | `src/MHD/operator_functions.jl` | Lorentz, induction, magnetic mass, and diffusion blocks |
 | `src/MHD/assembly.jl` | Full coefficient-tau pencil, indexing, and owned-row assembly; includes the MHD boundary file |
 | `src/MHD/boundary_conditions.jl` | Magnetic wall constraints, motional electric-field terms, and finite conducting-core equations |
-| `src/MHD/galerkin_assembly.jl` | Galerkin assembly and expansion back to full coefficient vectors |
+| `src/MHD/galerkin_assembly.jl` | Petrov–Galerkin assembly and expansion back to full coefficient vectors |
+| `src/MHD/energy_galerkin.jl` | Energy-conserving Galerkin assembly used by the MHD solve for insulating or perfectly conducting walls |
 | `src/MHD/reconstruct.jl` | Shell velocity, temperature, and magnetic perturbation reconstruction |
 
 The high-level MHD solve selects:
 
 | Configuration | Discretization |
 |---------------|----------------|
-| `no_field`, or `axial`, with insulating magnetic boundary flags | Boundary-recombined ultraspherical Galerkin |
-| `dipole`, or conducting magnetic boundaries | Ultraspherical coefficient-tau pencil |
-| Finite conducting inner core (`bci_magnetic=1`) | Tau pencil with additional evolving core coefficients |
+| Insulating or perfectly conducting magnetic walls (`no_field`, `axial`, or `dipole`) | Energy-conserving Galerkin: every equation tested against its trial basis in the energy inner product |
+| Finite conducting inner core (`bci_magnetic=1`) | Ultraspherical coefficient-tau pencil with additional evolving core coefficients |
 
 `no_field` requires `Le=0` and has no magnetic perturbation unknowns. It is a hydrodynamic limit, not a kinematic-dynamo solver. Imposed `axial` and `dipole` fields require `Le>0`. Finite-conductivity outer mantles are not implemented.
 
@@ -114,7 +114,7 @@ For tau assembly, `interior_dofs` identifies differential-equation **rows**; it 
 | `ext/MagratheaRecipesBaseExt/MagratheaRecipesBaseExt.jl` | `RecipesBase`, normally through `Plots` | Plot recipes |
 | `ext/MagratheaMakieExt/MagratheaMakieExt.jl` | `Makie`, normally through a plotting backend | Spectrum and field plots |
 
-SLEPc is the supported sparse eigensolver. Load its weak dependencies and call `slepc_init!` before solving. Core construction, assembly, and many physics tests run without PETSc. The insulating MHD Galerkin path also has a dense fallback for small validation problems; this is not a general replacement for SLEPc across problem types.
+SLEPc is the supported sparse eigensolver. Load its weak dependencies and call `slepc_init!` before solving. Core construction, assembly, and many physics tests run without PETSc. The MHD Galerkin path also has a dense fallback for small validation problems; this is not a general replacement for SLEPc across problem types.
 
 ## Execution paths
 

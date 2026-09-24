@@ -48,8 +48,7 @@ function validate_onset_params(params)
         "Azimuthal wavenumber m must be >= 0, got $(params.m)"))
     params.mechanical_bc in (:no_slip, :stress_free) || throw(ArgumentError(
         "mechanical_bc must be :no_slip or :stress_free, got :$(params.mechanical_bc)"))
-    params.thermal_bc in (:fixed_temperature, :fixed_flux) || throw(ArgumentError(
-        "thermal_bc must be :fixed_temperature or :fixed_flux, got :$(params.thermal_bc)"))
+    _check_thermal_bc(params.thermal_bc)
     params.equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
         "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$(params.equatorial_symmetry)"))
 
@@ -69,6 +68,7 @@ end
 Cross-validate that a BasicState is compatible with the given parameters.
 """
 function validate_basic_state_consistency(bs, params)
+    _check_basic_state_thermal_bc(params.thermal_bc, bs)
     bs.Nr == params.Nr || throw(ArgumentError(
         "BasicState Nr=$(bs.Nr) doesn't match params Nr=$(params.Nr)"))
     length(bs.r) == params.Nr || throw(ArgumentError(
@@ -114,6 +114,7 @@ end
 Cross-validate that a BasicState3D is compatible with the given parameters.
 """
 function validate_basic_state_3d_consistency(bs, params)
+    _check_basic_state_thermal_bc(params.thermal_bc, bs)
     bs.Nr == params.Nr || throw(ArgumentError(
         "BasicState3D Nr=$(bs.Nr) doesn't match params Nr=$(params.Nr)"))
     length(bs.r) == params.Nr || throw(ArgumentError(

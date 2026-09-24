@@ -112,11 +112,27 @@ end
 """
     recomb_from_functionals(funcs) -> Matrix
 
-General trial recombination = nullspace of the boundary-functional row-vectors.
-`funcs` is q×(N+1). Returns (N+1)×(N+1−q) basis satisfying every functional.
+Degree-local trial recombination for the q×(N+1) boundary functionals `funcs`:
+column k is φ_k = T_k + Σ_{j=1}^{q} c_kj T_{k+j}, with coefficients chosen so that
+every functional vanishes (Shen's construction). Returns (N+1)×(N+1−q). Each φ_k
+stays near degree k, so Galerkin forms built from its derivatives keep the low modes
+accurate at large N. An orthonormal nullspace basis instead mixes every degree into
+every column, and those forms lose about N⁴·eps.
 """
 function recomb_from_functionals(funcs::AbstractMatrix{T}) where {T}
-    return nullspace(Matrix(funcs))
+    q, n = size(funcs)
+    q == 0 && return Matrix{T}(I, n, n)
+    R = zeros(T, n, n - q)
+    for k in 1:(n - q)
+        block = funcs[:, (k + 1):(k + q)]
+        scaled = block ./ maximum(abs, block; dims=2)
+        cond(scaled) < inv(sqrt(eps(real(float(T))))) || throw(ArgumentError(
+            "Boundary functionals are nearly dependent on degrees $(k) to $(k + q - 1); " *
+            "cannot build a degree-local recombination"))
+        R[k, k] = one(T)
+        R[(k + 1):(k + q), k] .= block \ (-funcs[:, k])
+    end
+    return R
 end
 
 """
@@ -163,6 +179,13 @@ Matches the tau functionals. Size (N+1)×(N−1).
 function recomb_toroidal_velocity(::Type{T}, N::Int, ri::Real, ro::Real;
                                    bci::Int=1, bco::Int=1) where {T<:Real}
     bci == bco == 1 && return recomb_dirichlet(T, N)
+    return T.(recomb_from_functionals(_toroidal_velocity_functionals(T, N, ri, ro, bci, bco)))
+end
+
+"""Toroidal velocity boundary functionals (outer, inner): `v` for no-slip (1),
+`-r·v' + v` for stress-free (0)."""
+function _toroidal_velocity_functionals(::Type{T}, N::Int, ri::Real, ro::Real,
+                                        bci::Int, bco::Int) where {T<:Real}
     scale = T(_radial_scale(ri, ro))
     funcs = Matrix{T}(undef, 2, N + 1)
     for (i, (b, bc)) in enumerate(((:outer, bco), (:inner, bci)))
@@ -171,7 +194,7 @@ function recomb_toroidal_velocity(::Type{T}, N::Int, ri::Real, ro::Real;
         deriv = _chebyshev_boundary_derivative(N, b, T)
         funcs[i, :] = bc == 1 ? vals : -rb .* scale .* deriv .+ vals
     end
-    return T.(recomb_from_functionals(funcs))
+    return funcs
 end
 
 """Poloidal trial basis with stress-free conditions at both boundaries."""
@@ -207,8 +230,8 @@ end
 Trial recombination for the poloidal magnetic scalar `f` at degree `ℓ` (order q=2).
 Insulating boundaries (`bci=bco=0`) impose the ℓ-dependent Robin conditions used by
 `apply_magnetic_boundary_conditions!`: outer `(ℓ+1)·f + ro·f' = 0`, inner
-`ℓ·f − ri·f' = 0`. Built as the nullspace of those functionals (ℓ-dependent ⇒ rebuilt
-per ℓ). Perfect-conductor boundaries (`2`) impose `f = 0` for this potential.
+`ℓ·f − ri·f' = 0`. Built from those functionals by `recomb_from_functionals`
+(ℓ-dependent ⇒ rebuilt per ℓ). Perfect-conductor boundaries (`2`) impose `f = 0` for this potential.
 A finite-conductivity core requires its own unknowns and interface equations;
 it cannot be represented by this shell-only recombination and is rejected.
 Size (N+1)×(N−1).

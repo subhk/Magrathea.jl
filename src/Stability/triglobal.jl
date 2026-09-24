@@ -35,7 +35,8 @@ Fields:
 - `Nr::Int` - Number of radial points
 - `basic_state_3d::BasicState3D{T}` - The 3D basic state
 - `mechanical_bc::Symbol` - :no_slip or :stress_free
-- `thermal_bc::Symbol` - :fixed_temperature or :fixed_flux
+- `thermal_bc` - :fixed_temperature or :fixed_flux, or an (inner, outer) pair; the
+  inner wall must be :fixed_temperature because basic states fix it
 - `equatorial_symmetry::Symbol` - :both, :symmetric, or :antisymmetric
 
 Note: The size of the eigenvalue problem is ~ length(m_range) × lmax × Nr × 3
@@ -51,7 +52,7 @@ which can become very large. Use sparse methods and Krylov subspace solvers.
     Nr::Int
     basic_state_3d::BasicState3D{T}
     mechanical_bc::Symbol = :no_slip
-    thermal_bc::Symbol = :fixed_temperature
+    thermal_bc::ThermalBC = :fixed_temperature
     equatorial_symmetry::Symbol = :both
 end
 
@@ -94,7 +95,9 @@ end
 """Return the reduced block size after tau constraints for one triglobal m block."""
 function _triglobal_reduced_block_size(params::TriglobalParams, m::Int)
     nP, nT, nΘ = _triglobal_mode_l_counts(m, params.lmax, params.equatorial_symmetry)
-    return nP * (params.Nr - 4) + nT * (params.Nr - 2) + nΘ * (params.Nr - 2)
+    toroidal_ls = _l_sets(abs(m), params.lmax, params.equatorial_symmetry)[:T]
+    gauge = _angular_momentum_gauge(params.mechanical_bc, m, toroidal_ls)
+    return nP * (params.Nr - 4) + nT * (params.Nr - 2) + nΘ * (params.Nr - 2) - gauge
 end
 
 

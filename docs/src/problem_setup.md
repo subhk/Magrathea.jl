@@ -29,13 +29,22 @@ estimate_size(problem)
 | `lmax` | Largest retained harmonic degree | At least `m` |
 | `Nr` | Radial collocation points | At least 8; convergence usually needs more |
 | `mechanical_bc` | Velocity conditions at both walls | `:no_slip` or `:stress_free` |
-| `thermal_bc` | Homogeneous perturbation thermal conditions | `:fixed_temperature` or `:fixed_flux` |
+| `thermal_bc` | Homogeneous perturbation thermal conditions | `:fixed_temperature`, `:fixed_flux`, or an `(inner, outer)` pair |
 | `equatorial_symmetry` | Parity selection | `:both`, `:symmetric`, or `:antisymmetric` |
 
 No-slip fixes all velocity components to zero. Stress-free imposes
-impermeability and zero tangential viscous stress. Fixed flux sets the
-perturbation radial temperature derivative to zero; it does not require the
-basic-state heat flux itself to vanish. See
+impermeability and zero tangential viscous stress. Stress-free walls exert no
+torque, so a rigid rotation (``m=0``, ``\lambda=0``; ``m=1``, ``\lambda=i``) is an
+exactly neutral solution. The solver removes it by requiring zero net angular
+momentum of the ``\ell=1`` toroidal field; every other mode already satisfies
+this. Fixed flux sets the perturbation radial temperature derivative to zero; it
+does not require the basic-state heat flux itself to vanish. A single symbol
+applies to both walls, and a pair such as
+`thermal_bc=(:fixed_temperature, :fixed_flux)` sets the inner and outer walls
+separately. Basic states hold the inner wall at a fixed temperature, so
+`BiglobalProblem` and `TriglobalProblem` require a `:fixed_temperature` inner
+wall; use the pair above for a fixed-flux outer wall. `OnsetProblem` always uses
+the conduction profile and rejects `params.basic_state`. See
 [boundary conventions](theory/mathematical_foundations.md#Boundary-Conditions)
 for the potential-dependent formulas.
 
