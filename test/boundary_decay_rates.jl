@@ -160,6 +160,18 @@ end
             k = block_k(A[rng, rng], B[rng, rng], diffusivity(field, p); count=field === :v ? 5 : 4)
             @test compare(k, mhd_exact(field, ℓ, p), field, ℓ, p, gauge) < 1e-8
         end
+        # The degree-local trial bases keep the low modes accurate at high N; an
+        # orthonormal nullspace basis loses about N⁴·eps (1e-5 here).
+        q = MHDParams(E=1e-2, Pr=0.5, Pm=2.0, Ra=1e-12, Le=1e-6, ricb=ri, m=0, lmax=2,
+                      N=96, symm=0, B0_type=bg, bci=bci, bco=bco, bci_thermal=ti,
+                      bco_thermal=to, bci_magnetic=mi, bco_magnetic=mo)
+        opq = MHDStabilityOperator(q)
+        Aq, Bq, lq = M.assemble_mhd_energy_galerkin(opq)
+        for ((field, ℓ), rng) in lq.index_map
+            k = block_k(Aq[rng, rng], Bq[rng, rng], diffusivity(field, q); count=field === :v ? 5 : 4)
+            @test compare(k, mhd_exact(field, ℓ, q), field, ℓ, q,
+                          M._mhd_angular_momentum_gauge(opq)) < 1e-9
+        end
         # Tau pencil: each block with its own boundary rows.
         At, Bt, _, _ = quiet(() -> assemble_mhd_matrices(op))
         for ((ℓ, field), b) in M._mhd_index_map(op)

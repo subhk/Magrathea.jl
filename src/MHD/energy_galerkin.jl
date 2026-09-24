@@ -113,8 +113,11 @@ function assemble_mhd_energy_galerkin(op::MHDStabilityOperator{T}) where {T}
     for ℓ in op.ll_g; basis[(:g, ℓ)] = Rg; end
     for ℓ in op.ll_h; basis[(:h, ℓ)] = Rh; end
     if _mhd_angular_momentum_gauge(op)
-        # Restricting trial and test functions alike keeps the form symmetric.
-        basis[(:v, 1)] = Rv * nullspace(reshape(_mhd_angular_momentum_functional(op), 1, :) * Rv)
+        # Zero angular momentum joins the wall conditions of the ℓ = 1 toroidal
+        # basis, which restricts trial and test functions alike.
+        funcs = vcat(_toroidal_velocity_functionals(T, N, ri, ro, p.bci, p.bco),
+                     permutedims(_mhd_angular_momentum_functional(op)))
+        basis[(:v, 1)] = recomb_from_functionals(funcs)
     end
 
     idx = Dict{Tuple{Symbol,Int},UnitRange{Int}}()
