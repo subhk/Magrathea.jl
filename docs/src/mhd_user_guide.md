@@ -127,9 +127,11 @@ For example, at `E = 1e-3`, `Pm = 1`, and `Le = 0.1`, the dipole needs about
 
 The tests compare shell magnetic free decay against independent collocation,
 and an equal-diffusivity conducting core against analytical full-sphere decay.
-They also check parity separation, current-free Lorentz force, axial induction,
-and physical field reconstruction. Independent boundary tests evaluate spherical
-strain and the tangential electric field on computed eigenmodes. The slip-wall
+For every mechanical, thermal, and magnetic wall type, both assemblies reproduce
+the exact spherical-Bessel decay rates of each field to better than 1e-8. They also
+check parity separation, current-free Lorentz force, axial induction, and physical
+field reconstruction. Independent boundary tests evaluate spherical strain and the
+tangential electric field on computed eigenmodes of both assemblies. The slip-wall
 EMF uses analytical degree-one harmonic coefficients so forbidden angular
 couplings remain exactly zero, including in `Float32`.
 

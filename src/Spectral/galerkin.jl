@@ -230,8 +230,8 @@ end
 Trial recombination for the poloidal magnetic scalar `f` at degree `ℓ` (order q=2).
 Insulating boundaries (`bci=bco=0`) impose the ℓ-dependent Robin conditions used by
 `apply_magnetic_boundary_conditions!`: outer `(ℓ+1)·f + ro·f' = 0`, inner
-`ℓ·f − ri·f' = 0`. Built as the nullspace of those functionals (ℓ-dependent ⇒ rebuilt
-per ℓ). Perfect-conductor boundaries (`2`) impose `f = 0` for this potential.
+`ℓ·f − ri·f' = 0`. Built from those functionals by `recomb_from_functionals`
+(ℓ-dependent ⇒ rebuilt per ℓ). Perfect-conductor boundaries (`2`) impose `f = 0` for this potential.
 A finite-conductivity core requires its own unknowns and interface equations;
 it cannot be represented by this shell-only recombination and is rejected.
 Size (N+1)×(N−1).
