@@ -105,6 +105,18 @@ have infinite algebraic boundary eigenvalues; shift-invert targeting with
 `sigma=0.0` can select finite modes near onset. Check radial and angular convergence
 for the physical parameters being studied.
 
+Strong fields need enough radial modes to resolve the magnetic (Hartmann) boundary
+layers, of thickness ``\sqrt{E\,E_m}/(Le\,B_0)`` at a wall with field ``B_0``. When
+`N` is too low, Alfvén waves at the truncation scale are under-damped and show up
+as large spurious growth rates, even without buoyancy. The imposed dipole is
+``r_i^{-3}`` times stronger at the inner wall than at the outer wall (about 23 times
+for `ricb = 0.35`), so it reaches this limit at a much smaller `Le` than an axial
+field. For example, at `E = 1e-3`, `Pm = 1`, and `Le = 0.1`, the dipole needs about
+`N = 64`, while the axial field is resolved at `N = 24`. `estimate_size(MHDProblem(params))`
+prints a rough `N` for the boundary layers, and `solve` warns when the leading mode's
+radial spectrum has not decayed (`result.extra.spectral_tail`). Increase `N` until the
+leading eigenvalue converges.
+
 The tests compare shell magnetic free decay against independent collocation,
 and an equal-diffusivity conducting core against analytical full-sphere decay.
 They also check parity separation, current-free Lorentz force, axial induction,

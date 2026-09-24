@@ -432,6 +432,11 @@ function estimate_size(p::MHDProblem)
     _tree_row(stdout, "l-modes", "$n_pol poloidal + $n_tor toroidal ($n_fields fields)")
     _tree_row(stdout, "degrees of freedom per mode", "$n_per_mode (N=$(p.params.N))")
     _tree_row(stdout, "matrix size", "$total_dof × $total_dof")
+    N_layers = _mhd_boundary_layer_N(p.params)
+    if N_layers > 0
+        low = p.params.N < N_layers ? "; N=$(p.params.N) is likely too low" : ""
+        _tree_row(stdout, "magnetic boundary layers", "resolved for roughly N ≳ $N_layers$low")
+    end
     warning = mem_gb > 8.0 ? " (large; reduce lmax or N)" : ""
     _tree_row(stdout, "dense storage estimate", @sprintf("~%.1f GB%s", mem_gb, warning); last=true)
 end

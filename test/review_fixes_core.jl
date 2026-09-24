@@ -253,3 +253,36 @@ end
     @test all(z -> abs(z) < 1e6, vals)
     @test vals[1] ≈ resolved.eigenvalues[1] rtol=1e-6
 end
+
+@testset "Strong dipole growth is radial under-resolution" begin
+    # The dipole is ricb⁻³ ≈ 23 times stronger at the inner wall, so its magnetic
+    # boundary layers need more radial modes than an axial field of equal Le.
+    # Too few modes give large spurious growth even without buoyancy.
+    dip(N) = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1, lmax=6, N=N,
+                       symm=1, B0_type=dipole, Le=0.03)
+    axi = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1, lmax=6, N=24,
+                    symm=1, B0_type=axial, Le=0.03)
+    @test Magrathea._mhd_boundary_layer_N(dip(24)) > 24 >
+          Magrathea._mhd_boundary_layer_N(axi)
+    @test Magrathea._mhd_boundary_layer_N(
+        MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=1e-3, ricb=0.35, m=1, lmax=6, N=24,
+                  symm=1, B0_type=no_field, Le=0.0)) == 0
+    @test_logs (:warn, r"N ≳ \d+") match_mode=:any min_level=Logging.Warn begin
+        coarse = solve(MHDProblem(dip(24)); nev=2, backend=:dense)
+        @test real(coarse.eigenvalues[1]) > 1
+    end
+    resolved = quiet(() -> solve(MHDProblem(dip(48)); nev=2, backend=:dense))
+    finer = quiet(() -> solve(MHDProblem(dip(64)); nev=2, backend=:dense))
+    @test real(resolved.eigenvalues[1]) < 0
+    @test resolved.extra.spectral_tail[1].radial < 1e-2
+    @test finer.eigenvalues[1] ≈ resolved.eigenvalues[1] rtol=1e-5
+    report = mktemp() do _, io
+        redirect_stdout(io) do
+            estimate_size(MHDProblem(dip(24)))
+        end
+        flush(io); seekstart(io)
+        read(io, String)
+    end
+    @test occursin("magnetic boundary layers: resolved for roughly N ≳ " *
+                   "$(Magrathea._mhd_boundary_layer_N(dip(24))); N=24 is likely too low", report)
+end
