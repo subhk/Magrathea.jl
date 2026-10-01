@@ -394,7 +394,7 @@ function _build_mneq0_bs_op(::Type{T}, m::Int) where {T<:Real}
     cd = Magrathea.ChebyshevDiffn(Nr, T[χ, one(T)], 4)
     r = cd.x
     theta = fill(T(0.1), Nr)
-    uphi = fill(T(0.2), Nr)
+    uphi = T(0.2) .* (r .- χ) .* (one(T) .- r)
     z = zeros(T, Nr)
     bs = Magrathea.BasicState{T}(
         lmax_bs = 2,

@@ -264,9 +264,7 @@ function mean_flow_velocity(bs, r::Real, θ::Real, φ::Real=0)
         throw(ArgumentError("This custom state has no vector-harmonic mean flow"))
     end
     T=eltype(flow.r); μ=T[cos(θ)]; L=flow.lmax; M=flow.mmax
-    g=SHGrid{T}(L,M,μ,T[2],T[φ],
-        Dict(a=>_associated_legendre_table(a,L,μ) for a in 0:min(M+1,L)),
-        Dict(a=>_normalization_table(T,a,L) for a in 0:M))
+    g=SHGrid{T}(L,M,μ,T[2],T[φ])
     at(d)=Dict(k=>T[_mean_barycentric(flow.r,v,T(r))] for (k,v) in d)
     f=SolenoidalMeanFlow(L,M,T[r],at(flow.p),at(flow.t),at(flow.dp),at(flow.d2p),at(flow.dt))
     ur,uθ,uφ=_mean_flow_grid(f,1,g)

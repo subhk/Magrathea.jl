@@ -22,6 +22,22 @@ Two data structures handle base states:
 | `BasicState` | Axisymmetric (``m=0``) | Classical onset problems with zonally-symmetric backgrounds |
 | `BasicState3D` | Non-axisymmetric | Tri-global analysis with longitudinal variations |
 
+Choose the physical model separately from its numerical resolution:
+
+| Constructor | Temperature equation | Momentum equation |
+|-------------|----------------------|-------------------|
+| `conduction_basic_state` | Laplace conduction | Zero velocity |
+| `basic_state(cd, ...)`, `meridional_basic_state`, `nonaxisymmetric_basic_state` | Laplace conduction | Viscous Stokes–Coriolis balance |
+| `basic_state_selfconsistent` (default) | Advection–diffusion | Navier–Stokes–Coriolis balance, including inertia |
+| `basic_state_selfconsistent(...; momentum_model=:stokes)` | Advection–diffusion | Viscous Stokes–Coriolis balance |
+
+The noniterated constructors deliberately neglect thermal advection and momentum
+inertia. Increasing their resolution refines that approximation; use the
+self-consistent solver when both effects are needed. Both models require
+[independent radial and angular refinement](#Checking-spatial-resolution).
+The automatic `lmax_bs` is a starting truncation chosen from the boundary
+forcing, not a determination of the resolution needed by the resulting flow.
+
 ## Quick Start: Symbolic Boundary Conditions
 
 Magrathea.jl provides an intuitive interface for specifying temperature boundary conditions using spherical harmonic notation. Instead of constructing dictionaries manually, use symbolic constructors:
@@ -198,9 +214,9 @@ The `mode` keyword selects the construction strategy:
 | `mode` | Returns | Description |
 |--------|---------|-------------|
 | `:conduction` | `BasicState` | Pure conductive profile, no flow |
-| `:meridional` | `BasicState` | Y₂₀ thermal wind (axisymmetric) |
+| `:meridional` | `BasicState` | Conductive temperature and axisymmetric Stokes–Coriolis flow |
 | `:selfconsistent` | `BasicState` or `BasicState3D` | Nonlinear Navier–Stokes–Coriolis and thermal transport |
-| `:nonaxisymmetric` | `BasicState3D` | Laplace-approximation 3D state |
+| `:nonaxisymmetric` | `BasicState3D` | Conductive temperature and 3D Stokes–Coriolis flow |
 
 Each mode imposes its outer-wall forcing as a temperature or a flux, following
 the outer wall of `params.thermal_bc`, and holds the inner wall at a fixed
@@ -543,6 +559,30 @@ uses the same projection for each pair of signed azimuthal modes. The older
 `BasicStateOperators` two-index dictionaries are inspection aliases; use `blocks`
 for the complete field couplings.
 
+### Matching mechanical boundary conditions
+
+Mean states attached to a stability problem must satisfy its stationary-wall
+conditions. Construction checks the physical velocity traces at both walls:
+no-slip requires all three components to vanish; stress-free requires zero
+radial velocity and zero tangential viscous traction. A mismatch raises an
+`ArgumentError` before assembly. The same check applies to the direct biglobal,
+triglobal, and `build_basic_state_operators` entry points, including every
+azimuthal mode of a 3D state.
+
+Construct the state and its perturbation problem with the same `mechanical_bc`.
+The check uses the actual field rather than a stored boundary label, so a
+motionless state is valid with either choice. Prescribed moving walls are not
+part of this stationary-wall interface. Native `bs.flow` potentials determine
+the velocity when present; custom component-only states are checked using their
+radial profiles and derivatives of those profiles. If a state built with matching
+conditions still fails, inspect the reported wall residual and increase numerical
+precision or resolution.
+
+Thermal forcing is chosen separately: for a mean state with fixed inner
+temperature and outer flux, use
+`thermal_bc=(:fixed_temperature, :fixed_flux)` in `OnsetParams`. Use the same
+outer thermal model when constructing the state and its perturbations.
+
 ## Saving and Loading
 
 Since base states can be expensive to compute, save them with JLD2:
@@ -581,6 +621,10 @@ potentials are already orthonormal, so their conversion uses ``s_{\ell m}=1``.
 ## Examples
 
 ### Example 1: Meridional Heating with Symbolic BCs
+
+This example constructs the conductive-temperature/Stokes approximation and
+inspects its modes. Check the resulting fields by refinement before using them
+for quantitative predictions, particularly at small Ekman number.
 
 ```julia
 using Magrathea
@@ -679,13 +723,18 @@ cd = ChebyshevDiffn(32, [0.35, 1.0], 4)
 bs, info = basic_state_selfconsistent(cd, 0.35, 0.01, 30.0, 1.0;
     temperature_bc=Y20(0.01) + Y22(0.01),
     lmax_bs=8, max_iterations=50, tolerance=1e-9)
-@assert info.converged
+@assert info.iteration_converged
+@assert info.spatial_convergence === :unchecked
 println((info.momentum_residual, info.thermal_residual, info.boundary_residual))
 v = mean_flow_velocity(bs, 0.7, pi/3, pi/8)
 ```
 
-`info.converged` requires momentum, heat, and boundary/gauge residuals to meet
-`tolerance`. The momentum and heat residuals are fixed-point residuals: the
+`info.iteration_converged` reports whether the momentum, heat, and boundary/gauge
+residuals meet `tolerance` at the chosen truncation. `info.converged` is its
+backward-compatible alias. Neither establishes spatial convergence:
+`info.spatial_convergence` is always `:unchecked`, even when the iteration
+converges or the velocity vanishes. Compare independently refined states as
+shown below. The momentum and heat residuals are fixed-point residuals: the
 largest change of the orthonormal flow potentials and temperature coefficients
 under one undamped Picard update, relative to their largest coefficient. The
 distance to the steady state is about this residual divided by one minus the
@@ -700,7 +749,7 @@ boundary conditions.
 failed line search). `info.termination_reason` is `:converged`,
 `:max_iterations`, or `:stagnation`.
 
-When `info.converged=false`, the returned state is an incomplete iterate and
+When `info.iteration_converged=false`, the returned state is an incomplete iterate and
 must not be treated as a steady equilibrium. Strong forcing may require
 smaller `relaxation` or more iterations; Picard convergence is not guaranteed.
 Failure to converge does not establish
@@ -710,11 +759,73 @@ mode=:selfconsistent)` throws on nonconvergence unless
 
 Boundary conditions apply to every retained real harmonic, including sine
 modes generated by transport. Fixed-flux problems retain homogeneous flux on
-unforced modes. The purely conductive convenience path returns `nothing` for
-`info`; axisymmetric forced states run the coupled iteration too. For 3D,
+unforced modes. With no boundary forcing specified, the analytical conduction
+shortcut retains its existing `info === nothing` return convention because no
+iteration was performed. Explicit zero-flow boundary conditions return the same
+diagnostic fields as other iterated states; axisymmetric forced states run the
+coupled iteration too. For 3D,
 `basic_state_selfconsistent` defaults to `mmax_bs=lmax_bs`, since nonlinear
 products generate azimuthal orders absent from the boundary forcing. An
 explicit `mmax_bs` may be used to control that truncation.
+
+## Checking spatial resolution
+
+Use `mean_flow_resolution(coarse, fine; rtol=1e-3, atol=0)` to compare two states
+on the same shell. It measures physical volume ``L^2`` differences using the
+native vector harmonics and spectral radial interpolation. Its `converged`
+field requires every channel to satisfy `error ≤ atol + rtol * scale`, where
+`scale` is the norm of that channel in the finer state.
+
+The report contains `velocity.total`, `velocity.radial`, `velocity.poloidal`
+(horizontal poloidal velocity), `velocity.toroidal` (horizontal toroidal
+velocity), `temperature.total`, and `temperature.anomaly` (degrees ``\ell>0``).
+Checking these separately prevents a dominant zonal flow or radial temperature
+profile from concealing errors in the circulation or thermal anomalies. Each
+channel exposes `converged`, `error`, `scale`, `tolerance`, and `relative_error`.
+Zero-flow conduction states are supported; a nonzero custom velocity must have
+native `flow` potentials.
+
+Keep physical parameters, boundary forcing, and the momentum model fixed while
+refining. Increase the radial and angular resolutions separately and also check
+their combination. For a nonlinear 3D state, increase `mmax_bs` with `lmax_bs`
+to retain newly generated azimuthal modes. This modest-forcing example checks
+all four edges of a refinement grid; smaller Ekman numbers can require higher
+radial and angular resolutions:
+
+```julia
+using Magrathea
+
+function refinement_state(Nr, L)
+    cd = ChebyshevDiffn(Nr, [0.35, 1.0], 4)
+    state, info = basic_state_selfconsistent(cd, 0.35, 0.1, 30.0, 1.0;
+        temperature_bc=Y20(0.01) + Y22(0.01),
+        lmax_bs=L, mmax_bs=L, tolerance=1e-10, max_iterations=60)
+    @assert info.iteration_converged
+    return state
+end
+
+coarse = refinement_state(20, 6)
+radial = refinement_state(28, 6)
+angular = refinement_state(20, 8)
+fine = refinement_state(28, 8)
+
+checks = (
+    radial_at_L6=mean_flow_resolution(coarse, radial; rtol=1e-3, atol=1e-12),
+    radial_at_L8=mean_flow_resolution(angular, fine; rtol=1e-3, atol=1e-12),
+    angular_at_N20=mean_flow_resolution(coarse, angular; rtol=1e-3, atol=1e-12),
+    angular_at_N28=mean_flow_resolution(radial, fine; rtol=1e-3, atol=1e-12),
+)
+@assert all(check.converged for check in values(checks))
+bs = fine
+```
+
+If any comparison fails, increase that resolution and repeat both directional
+checks at the new finest state. Choose `rtol` and `atol` for the physical accuracy
+needed; a passing comparison establishes agreement between those resolutions,
+not an error bound against the continuum solution. The comparison does not
+change `info.spatial_convergence` or validate the omitted terms of an approximate
+physical model. In particular, a small iteration residual can coexist with a
+substantial change of the mean flow when `lmax_bs` is increased.
 
 ## Full Geostrophic Balance with Meridional Circulation
 

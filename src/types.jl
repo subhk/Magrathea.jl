@@ -43,7 +43,8 @@ end
 Biglobal instability problem: onset on an axisymmetric basic state.
 
 Combines `OnsetParams` with a `BasicState` (axisymmetric) and validates
-consistency between them on construction.
+consistency between them on construction, including the actual velocity and
+traction at both stationary mechanical boundaries.
 
 # Fields
 - `params::OnsetParams{T}` — problem parameters
@@ -70,6 +71,8 @@ end
 Triglobal instability problem: onset on a fully 3D (non-axisymmetric) basic state.
 
 Couples multiple azimuthal wavenumbers `m` simultaneously via a `BasicState3D`.
+The complete mean velocity must satisfy the stationary mechanical boundary
+conditions in `params`; a mismatch raises `ArgumentError` on construction.
 
 # Fields
 - `params::OnsetParams{T}` — problem parameters
@@ -273,7 +276,8 @@ function _mhd_total_dof(params)
     end
     n_h = n_pol  # temperature shares poloidal-velocity parity
     n_core = params.bci_magnetic == 1 ? n_f + n_g : 0
-    total_dof = (n_pol + n_tor + n_f + n_g + n_h + n_core) * n_per_mode
+    n_mantle = params.bco_magnetic == 1 ? n_f + n_g : 0
+    total_dof = (n_pol + n_tor + n_f + n_g + n_h + n_core + n_mantle) * n_per_mode
     return total_dof, n_pol, n_tor, n_f, n_g, n_per_mode
 end
 
@@ -370,6 +374,12 @@ convenience wrapper the imposed degree-2 boundary modes are `m = 1…min(mmax_bs
 (degree 2 has no higher orders); for `:nonaxisymmetric`, `mmax_bs` also sets the
 retained azimuthal truncation. The nonlinear solve retains azimuthal orders
 through `lmax_bs`.
+
+`:meridional` and `:nonaxisymmetric` use conductive temperature and linear
+Stokes–Coriolis momentum, without thermal advection or momentum inertia.
+The default `lmax_bs=4` is a starting truncation, not an accuracy guarantee.
+Even a converged `:selfconsistent` iteration needs separate radial and angular
+refinement; compare the resulting states with [`mean_flow_resolution`](@ref).
 """
 function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
                      amplitude::Real=0.05, mmax_bs::Int=2, lmax_bs::Int=4,
@@ -430,6 +440,11 @@ function estimate_size(p::MHDProblem)
 
     println("MHDProblem size estimate")
     _tree_row(stdout, "l-modes", "$n_pol poloidal + $n_tor toroidal ($n_fields fields)")
+    if p.params.B0_type != no_field
+        p.params.bci_magnetic == 1 && _tree_row(stdout, "conducting core", "2 additional magnetic fields")
+        p.params.bco_magnetic == 1 && _tree_row(stdout, "conducting mantle",
+            "2 additional magnetic fields, 1 ≤ r ≤ $(p.params.mantle_radius)")
+    end
     _tree_row(stdout, "degrees of freedom per mode", "$n_per_mode (N=$(p.params.N))")
     _tree_row(stdout, "matrix size", "$total_dof × $total_dof")
     N_layers = _mhd_boundary_layer_N(p.params)

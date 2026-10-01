@@ -13,7 +13,7 @@
 using LinearAlgebra
 
 """
-    potentials_to_velocity(P, T; Dr, Dθ, Lθ, r, sintheta, m)
+    potentials_to_velocity(P, T; Dr, Dθ, Lθ, r, sintheta, m, costheta=nothing)
 
 Compute velocity components `(u_r, u_θ, u_φ)` from poloidal and toroidal
 potentials on a meridional (r, θ) grid for a single azimuthal mode m.
@@ -41,6 +41,15 @@ L² Y_ℓm = -ℓ(ℓ+1) Y_ℓm.
 - `r::AbstractVector` - Radial coordinates (length Nr)
 - `sintheta::AbstractVector` - sin(θ) values (length Nθ)
 - `m::Int` - Azimuthal wavenumber
+- `costheta` - Optional cos(θ) vector. At polar points it identifies north and
+  south for the `|m| = 1` limit; otherwise the sign is inferred from `Dθ*sintheta`.
+
+At either pole the input must represent regular potentials, with finite angular
+derivatives. Axisymmetric reconstruction does not divide by sin(θ). For `|m| = 1`
+the tangential components use the analytic limit `f/sin(θ) = ∂θf/cos(θ)`;
+for `|m| > 1` they vanish. Values of `|sin(θ)| ≤ 4eps` are treated as poles to
+include floating-point evaluations of sin(π). Irregular pole data or ambiguous
+north/south orientation for a nonzero `|m| = 1` limit raise `ArgumentError`.
 
 # Returns
 - `(u_r, u_θ, u_φ)` - Velocity components as (Nr, Nθ) complex matrices
@@ -65,7 +74,8 @@ function potentials_to_velocity(P::AbstractMatrix,
                                 Lθ,
                                 r::AbstractVector,
                                 sintheta::AbstractVector,
-                                m::Int)
+                                m::Int,
+                                costheta=nothing)
     Nr, Nθ = size(P)
     size(Tor) == size(P) || throw(DimensionMismatch("P and T must have same size"))
     size(Dr) == (Nr, Nr) || throw(DimensionMismatch(
@@ -78,6 +88,8 @@ function potentials_to_velocity(P::AbstractMatrix,
         "r must have length $Nr, got $(length(r))"))
     length(sintheta) == Nθ || throw(DimensionMismatch(
         "sintheta must have length $Nθ, got $(length(sintheta))"))
+    costheta === nothing || length(costheta) == Nθ || throw(DimensionMismatch(
+        "costheta must have length $Nθ, got $(length(costheta))"))
 
     CT = promote_type(eltype(P), eltype(Tor), Complex{eltype(r)},
                       Complex{eltype(sintheta)})
@@ -94,19 +106,9 @@ function potentials_to_velocity(P::AbstractMatrix,
     mul!(uθ, dP_dr, transpose(Dθ))   # ∂²P/∂r∂θ
     mul!(uφ, Tor, transpose(Dθ))     # ∂T/∂θ
 
-    im_m = CT(im * m)
-    @inbounds for j in 1:Nθ
-        inv_sinθ = inv(sintheta[j])
-        for i in 1:Nr
-            inv_r = inv(r[i])
-            inv_r_sinθ = inv_r * inv_sinθ
-            ur[i, j] = -ur[i, j] * inv_r * inv_r
-            uθ[i, j] = uθ[i, j] * inv_r + im_m * Tor[i, j] * inv_r_sinθ
-            uφ[i, j] = im_m * dP_dr[i, j] * inv_r_sinθ - uφ[i, j] * inv_r
-        end
-    end
-
-    return ur, uθ, uφ
+    return _scale_potential_velocity!(ur, uθ, uφ, dP_dr, P, Tor,
+                                      inv.(r), sintheta, Dθ, CT(im * m);
+                                      costheta=costheta)
 end
 
 
@@ -194,14 +196,43 @@ function _normalization_table(::Type{T}, m::Int, lmax::Int) where {T<:Real}
     n_l = lmax - m + 1
     N = Vector{T}(undef, n_l)
     for l in m:lmax
-        # Compute (l-m)!/(l+m)! iteratively to avoid overflow
-        ratio = one(T)
+        # Take each square root before dividing. The factorial ratio can
+        # underflow even when the normalization itself is representable.
+        normalization = sqrt(T(2 * l + 1) / (T(4) * T(π)))
         for k in (l - m + 1):(l + m)
-            ratio /= k
+            normalization /= sqrt(T(k))
         end
-        N[l - m + 1] = sqrt(T(2 * l + 1) / (T(4) * T(π)) * ratio)
+        N[l - m + 1] = normalization
     end
     return N
+end
+
+"""Fully normalized `N_lm P_l^m(μ)` including the Condon–Shortley phase.
+Recur on normalized values throughout, so neither factorial normalization nor
+unnormalized associated Legendre polynomials need to be representable in `T`."""
+function _normalized_legendre_table(m::Int, lmax::Int, mu::Vector{T}) where {T<:Real}
+    n_l = lmax - m + 1
+    Q = zeros(T, max(0, n_l), length(mu))
+    n_l <= 0 && return Q
+    for j in eachindex(mu)
+        s = sqrt(max(zero(T), one(T) - mu[j]^2))
+        q = inv(sqrt(T(4) * T(π)))
+        for k in 1:m
+            q *= -sqrt(T(2k + 1) / T(2k)) * s
+        end
+        Q[1, j] = q
+    end
+    lmax == m && return Q
+    Q[2, :] .= sqrt(T(2m + 3)) .* mu .* Q[1, :]
+    for l in (m + 2):lmax
+        den = T(l - m) * T(l + m)
+        a = sqrt(T(2l - 1) * T(2l + 1) / den)
+        b = sqrt(T(2l + 1) * T(l - m - 1) * T(l + m - 1) /
+                 (T(2l - 3) * den))
+        i = l - m + 1
+        Q[i, :] .= a .* mu .* Q[i - 1, :] .- b .* Q[i - 2, :]
+    end
+    return Q
 end
 
 
@@ -400,14 +431,13 @@ end
 Precompute Y_ℓm(θ, φ=0) for ℓ ∈ [m, lmax].
 """
 function _precompute_spherical_harmonics(m::Int, lmax::Int, cosθ::Vector{T}) where {T<:Real}
-    Plm = _associated_legendre_table(m, lmax, cosθ)
-    Nlm = _normalization_table(T, m, lmax)
+    Qlm = _normalized_legendre_table(m, lmax, cosθ)
 
     Ylm = Dict{Int, Vector{Complex{T}}}()
     for ℓ in m:lmax
         idx = ℓ - m + 1
         # Y_ℓm(θ, φ=0) = N_ℓm × P_ℓ^m(cosθ) × e^{im×0} = N_ℓm × P_ℓ^m(cosθ)
-        Ylm[ℓ] = Complex{T}.(Nlm[idx] .* Plm[idx, :])
+        Ylm[ℓ] = Complex{T}.(Qlm[idx, :])
     end
 
     return Ylm
@@ -619,18 +649,18 @@ function _eigenvector_to_velocity(eigenvector::AbstractVector{<:Complex},
 end
 
 """Reconstruct onset's rP/rT potentials and Y_lm/√(2l+1) angular convention."""
-function _onset_velocity_from_coefficients(Pcoeff,Tcoeff,r,Dr,grid::MeridionalGrid{T},m) where T
+function _onset_velocity_from_coefficients(Pcoeff,Tcoeff,r,Dr,grid::MeridionalGrid{T},m;
+        poloidal_derivatives=nothing) where T
     CT=promote_type(_coefficient_eltype(Pcoeff,grid),_coefficient_eltype(Tcoeff,grid))
     Nr=length(r); Nθ=length(grid.θ); a=abs(m)
     L=max(maximum(keys(Pcoeff);init=a),maximum(keys(Tcoeff);init=a))
-    g=SHGrid{T}(L,a,grid.cosθ,zeros(T,Nθ),T[0],
-        Dict(k=>_associated_legendre_table(k,L,grid.cosθ) for k in 0:min(a+1,L)),
-        Dict(k=>_normalization_table(T,k,L) for k in 0:a))
+    g=SHGrid{T}(L,a,grid.cosθ,zeros(T,Nθ),T[0])
     ur=zeros(CT,Nr,Nθ); uθ=similar(ur); uφ=similar(ur)
     fill!(uθ,0); fill!(uφ,0)
     for (l,p) in Pcoeff
         y,h,v=_coupling_harmonic(g,l,m); norm=inv(sqrt(T(2l+1)))
-        dp=Dr*p; q=l*(l+1)
+        dp=poloidal_derivatives === nothing ? Dr*p : poloidal_derivatives[l]
+        q=l*(l+1)
         for j in 1:Nθ, i in 1:Nr
             ur[i,j]+=norm*q*p[i]/r[i]*y[j]
             uθ[i,j]+=norm*(dp[i]+p[i]/r[i])*h[j]

@@ -46,6 +46,8 @@ Hydrodynamic `Nr` counts **collocation points**. MHD `N` is **polynomial degree*
 | `src/BasicStates/basic_state.jl` | `BasicState`, `BasicState3D`, symbolic boundary harmonics, and conductive/Stokes constructors |
 | `src/BasicStates/steady_flow.jl` | Internal `SolenoidalMeanFlow`, viscous Coriolis balance, thermal transport, and `mean_flow_velocity` |
 | `src/BasicStates/nonlinear_flow.jl` | Nonlinear momentum forcing, fixed-point residuals, and damped Picard iteration |
+| `src/BasicStates/mean_flow_resolution.jl` | Physical velocity and temperature norms for independent spatial-refinement checks |
+| `src/BasicStates/boundary_compatibility.jl` | Checks native or legacy mean-flow traces against stationary mechanical wall conditions |
 | `src/BasicStates/advection_diffusion.jl` | Self-consistent constructors, scalar transport helpers, and radial Poisson solves |
 | `src/BasicStates/basic_state_operators.jl` | Harmonic coupling utilities and axisymmetric stability-assembly adapters |
 | `src/BasicStates/sh_transform.jl` | Spherical-harmonic evaluation and transforms |
@@ -89,19 +91,20 @@ These coefficient operators coexist with collocation; their presence does not me
 | `src/MHD/dipole.jl` | Radial-power changes for the imposed dipole |
 | `src/MHD/operator_functions.jl` | Lorentz, induction, magnetic mass, and diffusion blocks |
 | `src/MHD/assembly.jl` | Full coefficient-tau pencil, indexing, and owned-row assembly; includes the MHD boundary file |
-| `src/MHD/boundary_conditions.jl` | Magnetic wall constraints, motional electric-field terms, and finite conducting-core equations |
+| `src/MHD/boundary_conditions.jl` | Magnetic wall constraints, motional electric-field terms, and finite conducting-core/mantle equations |
+| `src/MHD/boundary_diagnostics.jl` | Physical magnetic and electric wall residuals, including angular content beyond the retained harmonics |
 | `src/MHD/galerkin_assembly.jl` | Petrov–Galerkin assembly and expansion back to full coefficient vectors |
 | `src/MHD/energy_galerkin.jl` | Energy-conserving Galerkin assembly used by the MHD solve for insulating or perfectly conducting walls |
-| `src/MHD/reconstruct.jl` | Shell velocity, temperature, and magnetic perturbation reconstruction |
+| `src/MHD/reconstruct.jl` | Velocity, temperature, and magnetic perturbation reconstruction in the fluid and magnetic solid regions |
 
 The high-level MHD solve selects:
 
 | Configuration | Discretization |
 |---------------|----------------|
 | Insulating or perfectly conducting magnetic walls (`no_field`, `axial`, or `dipole`) | Energy-conserving Galerkin: every equation tested against its trial basis in the energy inner product |
-| Finite conducting inner core (`bci_magnetic=1`) | Ultraspherical coefficient-tau pencil with additional evolving core coefficients |
+| Finite conducting inner core or outer mantle (`bci_magnetic=1` or `bco_magnetic=1`) | Ultraspherical coefficient-tau pencil with additional evolving solid-region coefficients |
 
-`no_field` requires `Le=0` and has no magnetic perturbation unknowns. It is a hydrodynamic limit, not a kinematic-dynamo solver. Imposed `axial` and `dipole` fields require `Le>0`. Finite-conductivity outer mantles are not implemented.
+`no_field` requires `Le=0` and has no magnetic perturbation unknowns. It is a hydrodynamic limit, not a kinematic-dynamo solver. Imposed `axial` and `dipole` fields require `Le>0`. A finite mantle uses an explicit `mantle_radius>1`, a positive `mantle_diffusivity_ratio`, and an insulating exterior. The mantle is stationary and has the fluid's magnetic permeability.
 
 For tau assembly, `interior_dofs` identifies differential-equation **rows**; it is not a set of removable coefficient columns. Solve the full constrained pencil. Galerkin vectors must be expanded with their recombination layout before reconstruction. The public `solve` handles these paths. See the [MHD User Guide](mhd_user_guide.md) and [boundary conventions](theory/mathematical_foundations.md#Boundary-Conditions).
 

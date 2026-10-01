@@ -1,7 +1,8 @@
 # =============================================================================
 #  Self-consistent basic states with temperature advection
 #
-#  Solve (E/Pr) ∇²T̄ = ū·∇T̄ using the complete Stokes–Coriolis velocity.
+#  Solve (E/Pr) ∇²T̄ = ū·∇T̄ coupled to Navier–Stokes–Coriolis momentum;
+#  momentum_model=:stokes explicitly omits momentum inertia.
 #  Both axisymmetric and nonaxisymmetric states can transport heat meridionally.
 #  Each relaxed thermal update is followed by a new viscous momentum solve.
 # =============================================================================
@@ -478,15 +479,19 @@ Solve the steady Navier–Stokes–Coriolis and thermal advection-diffusion equa
 The default `momentum_model=:navier_stokes` includes nonlinear mean-flow inertia.
 Use `momentum_model=:stokes` explicitly for the weak-inertia approximation.
 
-Returns `(bs, info)`. `info.converged` requires the relative change of the flow
+Returns `(bs, info)`. `info.iteration_converged` (also available as the
+backward-compatible `info.converged`) requires the relative change of the flow
 and temperature under one Picard update (`info.momentum_residual`,
 `info.thermal_residual`), plus the boundary/gauge defect, to satisfy `tolerance`.
+This certifies iteration convergence at the chosen truncation only.
+`info.spatial_convergence` is always `:unchecked`; compare states after separate
+radial and angular refinement with [`mean_flow_resolution`](@ref) before using
+the state for quantitative work.
 Boundary amplitudes follow `nonaxisymmetric_basic_state`, including the
 `ArgumentError` for nonzero modes outside `lmax_bs`/`mmax_bs`;
 `coupled_thermal_wind` is an ignored compatibility keyword.
 The damped Picard iteration backtracks on this fixed-point residual; nonconvergence
-is returned explicitly through `info.termination_reason`. Increase `lmax_bs`,
-`mmax_bs` and radial resolution to check the spectral truncation independently.
+is returned explicitly through `info.termination_reason`.
 """
 function nonaxisymmetric_basic_state_selfconsistent(
     cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
@@ -532,8 +537,14 @@ Construct a nonlinear steady mean flow from symbolic boundary conditions.
 Both axisymmetric and nonaxisymmetric forcing iterate thermal transport and
 Navier–Stokes–Coriolis momentum balance. `momentum_model=:stokes` opts out of
 momentum inertia; 3D defaults to `mmax_bs=lmax_bs` to retain generated harmonics. Returns the
-basic state and convergence information; pure conduction returns `nothing`
-for the information. An explicit `lmax_bs`/`mmax_bs` must retain every nonzero
+basic state and iteration convergence information. `info.iteration_converged`
+and its compatibility alias `info.converged` have the same meaning;
+`info.spatial_convergence=:unchecked` requires a separate refinement comparison
+with [`mean_flow_resolution`](@ref). The no-boundary-forcing shortcut returns
+the analytical conduction state and `nothing` for the information, preserving
+the existing return convention. Explicit zero-flow boundary conditions use the
+iterative path and return the same diagnostic fields as forced states.
+An explicit `lmax_bs`/`mmax_bs` must retain every nonzero
 boundary mode (otherwise an `ArgumentError` is thrown instead of dropping it);
 `coupled_thermal_wind` is ignored (warns once when `false`).
 See `nonaxisymmetric_basic_state_selfconsistent`.

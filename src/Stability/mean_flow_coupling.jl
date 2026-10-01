@@ -11,8 +11,8 @@
 """Complex orthonormal Y, ∂θY and (∂φY)/sinθ at φ=0, including signed m."""
 function _coupling_harmonic(g::SHGrid{T}, l, m) where T
     a=abs(m); phase=m<0 && isodd(a) ? -one(T) : one(T)
-    y=T[phase*g.N[a][l-a+1]*g.P[a][l-a+1,j] for j in eachindex(g.μ)]
-    h=T[phase*g.N[a][l-a+1]*_sh_dPdθ(g,l,a,j) for j in eachindex(g.μ)]
+    y=T[phase*g.Q[a][l-a+1,j] for j in eachindex(g.μ)]
+    h=T[phase*_sh_dQdθ(g,l,a,j) for j in eachindex(g.μ)]
     v=Complex{T}[im*m*y[j]/_sh_sinθ(g,j) for j in eachindex(g.μ)]
     (y,h,v)
 end

@@ -40,7 +40,7 @@ function assemble_mhd_galerkin(op::MHDStabilityOperator{T}) where {T}
     end
     if has_mag && !(p.bci_magnetic == 0 && p.bco_magnetic == 0)
         error("assemble_mhd_galerkin: only insulating magnetic BC (bci/bco_magnetic=0) " *
-              "supported; use the tau path for conducting/perfect conductor.")
+              "supported; use the tau path for a finite conducting core/mantle or perfect conductor.")
     end
 
     Rpol = recomb_poloidal_velocity(T, N, ri, ro; bci=p.bci, bco=p.bco)

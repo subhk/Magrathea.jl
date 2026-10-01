@@ -175,6 +175,7 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
             "mechanical_bc must be :no_slip or :stress_free, got :$mechanical_bc"))
         _check_thermal_bc(thermal_bc)
         _check_basic_state_thermal_bc(thermal_bc, basic_state)
+        _check_basic_state_mechanical_bc(mechanical_bc, basic_state)
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         heating = _resolve_onset_heating(heating, use_sparse_weighting, basic_state)
@@ -713,6 +714,17 @@ struct ConstraintReduction{T<:Real}
     n_reduced::Int
 end
 
+"""Normalize constraint rows before rank detection: boundary values and radial
+derivatives have very different scales, but each imposes one independent condition."""
+function _constraint_nullspace(constraints::AbstractMatrix)
+    scaled = copy(constraints)
+    for row in eachrow(scaled)
+        scale = maximum(abs, row)
+        iszero(scale) || (row ./= scale)
+    end
+    return nullspace(scaled)
+end
+
 """Compute a nullspace basis that satisfies the tau rows for one field block."""
 function _constraint_basis_block(A::Matrix{Complex{T}},
                                  idx::UnitRange{Int},
@@ -722,7 +734,7 @@ function _constraint_basis_block(A::Matrix{Complex{T}},
     # nullspace maps reduced coefficients into full coefficients satisfying the
     # boundary equations exactly.
     constraints = Matrix(A[constraint_rows, idx])
-    basis = nullspace(constraints)
+    basis = _constraint_nullspace(constraints)
     expected_cols = length(idx) - length(constraint_rows)
     if size(basis, 2) != expected_cols
         throw(ArgumentError(
@@ -862,21 +874,21 @@ function _constraint_reduction_from_subblocks(op::LinearStabilityOperator{T}) wh
 
     for ℓ in op.l_sets[:P]
         P_idx = op.index_map[(ℓ, :P)]
-        basis = nullspace(_constraint_subblock(op, ℓ, :P))
+        basis = _constraint_nullspace(_constraint_subblock(op, ℓ, :P))
         cols = col:(col + size(basis, 2) - 1)
         push!(blocks, ConstraintBasisBlock{T}(P_idx, cols, basis))
         col += size(basis, 2)
     end
     for ℓ in op.l_sets[:T]
         T_idx = op.index_map[(ℓ, :T)]
-        basis = nullspace(_constraint_subblock(op, ℓ, :T))
+        basis = _constraint_nullspace(_constraint_subblock(op, ℓ, :T))
         cols = col:(col + size(basis, 2) - 1)
         push!(blocks, ConstraintBasisBlock{T}(T_idx, cols, basis))
         col += size(basis, 2)
     end
     for ℓ in op.l_sets[:Θ]
         Θ_idx = op.index_map[(ℓ, :Θ)]
-        basis = nullspace(_constraint_subblock(op, ℓ, :Θ))
+        basis = _constraint_nullspace(_constraint_subblock(op, ℓ, :Θ))
         cols = col:(col + size(basis, 2) - 1)
         push!(blocks, ConstraintBasisBlock{T}(Θ_idx, cols, basis))
         col += size(basis, 2)

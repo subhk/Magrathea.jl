@@ -106,6 +106,7 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
             "mechanical_bc must be :no_slip or :stress_free, got :$mechanical_bc"))
         _check_thermal_bc(thermal_bc)
         _check_basic_state_thermal_bc(thermal_bc, basic_state)
+        _check_basic_state_mechanical_bc(mechanical_bc, basic_state)
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         basic_state.Nr == Nr || throw(ArgumentError(

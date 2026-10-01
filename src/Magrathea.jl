@@ -56,6 +56,7 @@ module Magrathea
         nonaxisymmetric_basic_state,
         basic_state,
         mean_flow_velocity,
+        mean_flow_resolution,
 
         # Self-consistent basic state (with advection)
         nonaxisymmetric_basic_state_selfconsistent,
@@ -140,6 +141,7 @@ module Magrathea
         BackgroundField,
         no_field, axial, dipole,
         assemble_mhd_matrices,
+        magnetic_boundary_residuals,
 
         # =================================================================
         # v2.0 API types and functions

@@ -122,7 +122,10 @@ end
 One undamped Picard update solves heat transport at fixed velocity, then momentum
 with that temperature and frozen inertia. Its relative change of the orthonormal
 temperature coefficients and flow potentials measures convergence; unlike the
-momentum collocation defect, it reaches round-off at any radial resolution."""
+momentum collocation defect, it reaches round-off at any radial resolution.
+This only measures iteration convergence at the chosen truncation. The returned
+`iteration_converged` aliases `converged`; `spatial_convergence=:unchecked`
+requires the caller to compare independently refined states."""
 function _iterate_mean_state(theta,flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
         momentum_model=:navier_stokes,max_iterations=50,tolerance=1e-8,
         relaxation=.5,verbose=false)
@@ -171,6 +174,7 @@ function _iterate_mean_state(theta,flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
         residual_history=history,thermal_residual=image.thermal,
         momentum_residual=image.momentum,boundary_residual=image.boundary,
         momentum_residual_history=mhistory,thermal_residual_history=thistory,
-        step_history=steps,momentum_model=momentum_model,termination_reason=reason)
+        step_history=steps,momentum_model=momentum_model,termination_reason=reason,
+        iteration_converged=reason===:converged,spatial_convergence=:unchecked)
     theta,flow,info
 end

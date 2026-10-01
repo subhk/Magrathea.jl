@@ -104,12 +104,36 @@ dissipate. Without buoyancy, no eigenvalue can grow at any resolution. Perfectly
 conducting walls with slip need no special treatment, since their motional electric
 field enters the weak form directly.
 
-A finite-conductivity inner core (`bci_magnetic = 1`) uses tau assembly, with fluid
+A finite-conductivity inner core (`bci_magnetic = 1`) or mantle
+(`bco_magnetic = 1`) uses tau assembly, with fluid
 residuals in `C⁽⁴⁾` (poloidal velocity) or `C⁽²⁾` (other fields). Only the highest
 residual coefficients are replaced by boundary constraints; unknowns remain
 Chebyshev coefficients. Tau pencils have infinite algebraic boundary eigenvalues;
 shift-invert targeting with `sigma=0.0` can select finite modes near onset. Check
 radial and angular convergence for the physical parameters being studied.
+
+Every returned eigenmode is also checked against the reconstructed physical
+magnetic boundary conditions. `solve(...; boundary_check=:warn)` is the default;
+`boundary_check=:error` rejects a result that fails, while `:none` disables this
+check. Set `boundary_rtol=1e-6` and `boundary_atol=0` to control the default
+tolerances, and inspect `result.extra.magnetic_boundaries`. You can repeat the
+check independently with `magnetic_boundary_residuals(result; rtol=..., atol=...)`,
+or pass an operator and a coefficient vector or matrix. The diagnostic evaluates
+the full angular magnetic and electric fields, including components above
+`lmax`. This matters at slip walls: satisfying retained tau rows, or the Galerkin
+weak form, does not by itself bound the physical boundary residual at finite
+angular resolution. A passing boundary check complements eigenvalue refinement
+in `N` and `lmax`; it does not establish spatial convergence.
+
+The report's `passed` flag covers all stored modes. `per_mode` contains the
+`inner`, `outer`, and (when present) `mantle_outer` wall reports; `maximum`
+identifies the worst mode for each wall and component. Components are
+`normal_field`, `tangential_field`, and `tangential_electric`, with `nothing` for
+conditions that do not apply. Each metric reports its surface ``L^2`` `residual`,
+`scale`, `relative_residual`, `tolerance`, and `passed`. The scale includes the
+physical wall terms and a bulk RMS field reference; `atol` has absolute
+surface-norm units. On distributed workers without eigenvectors, `checked=false`
+records that the boundary check was unavailable.
 
 Strong fields need enough radial modes to resolve the magnetic (Hartmann) boundary
 layers, of thickness ``\sqrt{E\,E_m}/(Le\,B_0)`` at a wall with field ``B_0``. Below
@@ -126,9 +150,10 @@ For example, at `E = 1e-3`, `Pm = 1`, and `Le = 0.1`, the dipole needs about
 (`result.extra.spectral_tail`). Increase `N` until the leading eigenvalue converges.
 
 The tests compare shell magnetic free decay against independent collocation,
-and an equal-diffusivity conducting core against analytical full-sphere decay.
-For every mechanical, thermal, and magnetic wall type, both assemblies reproduce
-the exact spherical-Bessel decay rates of each field to better than 1e-8. They also
+and equal-material core/fluid/mantle configurations against analytical
+full-sphere decay. Mantle tests also compare unequal-diffusivity layers with an
+independent spherical-Bessel matching problem. At their supported wall types,
+the assemblies reproduce analytical spherical-Bessel decay rates. They also
 check parity separation, current-free Lorentz force, axial induction, and physical
 field reconstruction. Independent boundary tests evaluate spherical strain and the
 tangential electric field on computed eigenmodes of both assemblies. The slip-wall
@@ -347,9 +372,53 @@ eigenvalue; no prescribed skin-depth frequency is used. `forcing_frequency` must
 remain zero. The imposed dipole is prescribed in the shell; only its perturbation
 is continued regularly through the core.
 
-A finite-conductivity mantle (`bco_magnetic=1`) and unequal core/shell diffusivities
-are not implemented. For the physical matching conditions, see the
+Unequal core/fluid diffusivities are not implemented. For the physical matching conditions, see the
 [MagIC inner-core equations](https://magic-sph.github.io/numerics.html#magnetic-boundary-conditions-and-inner-core).
+
+#### [Finite-conductivity mantle](@id conducting-mantle)
+
+Set `bco_magnetic=1` and `mantle_radius > 1` to add a **stationary conducting shell** outside the fluid,
+ending at ``R_m``. Its magnetic permeability equals the fluid's;
+`mantle_diffusivity_ratio=η_m/η_f` is positive and defaults to `1`. The mantle
+has no velocity or thermal unknowns. Its magnetic perturbations diffuse with the
+same eigenvalue as the fluid and any conducting inner core. Beyond ``R_m`` the
+perturbation field is insulating and decays at infinity.
+
+At the fluid–mantle interface ``r=1``, continuity of magnetic field gives
+``f=f_m``, ``f'=f_m'``, and ``g=g_m``. Continuity of tangential electric field
+uses ``\mathbf E_f=E_m\nabla\times\mathbf b_f-\mathbf u\times\mathbf B_0``
+and ``\mathbf E_m=E_m(\eta_m/\eta_f)\nabla\times\mathbf b_m``. Its
+spheroidal component is
+
+```math
+E_m(g'+g/r)-[\mathbf u\times\mathbf B_0]_{\mathrm{sph}}
+=E_m\frac{\eta_m}{\eta_f}(g_m'+g_m/r).
+```
+
+The outer mantle surface satisfies ``(l+1)f_m+R_m f_m'=0`` and ``g_m=0``.
+The coefficient vector appends `:fm` and `:gm` after the fluid sections and any
+`:fi`, `:gi` core sections. Each mantle potential has `N+1` Chebyshev coefficients
+on ``[1,R_m]``. Thus `N` refines the fluid, core, and mantle radial representations
+together. `perturbation_magnetic(vector, op; region=:mantle)` reconstructs the
+mantle field, and `region=:core` reconstructs an included conducting core,
+including its regular centre. The default region remains `:fluid`.
+
+```julia
+params = MHDParams(
+    E=0.01, Pr=1.0, Pm=1.0, Ra=1.0, Le=0.01,
+    ricb=0.35, m=1, lmax=4, N=24, B0_type=axial,
+    bci_magnetic=1, bco_magnetic=1,
+    mantle_radius=1.2, mantle_diffusivity_ratio=3.0,
+)
+result = solve(MHDProblem(params); backend=:dense, nev=2,
+               boundary_check=:error)
+```
+
+Slip at a conducting interface uses the specified continuity of the tangential
+electric field in the stationary frame, including the fluid motional term.
+With a conductivity contrast, this conventional interface model need not reproduce
+a resolved no-slip shear layer; no boundary-layer model is added. See
+[Rekier, Triana & Buffett (2025)](https://doi.org/10.1029/2024GL113585).
 
 ---
 
@@ -682,6 +751,7 @@ end
 | Insulating | bci/bco_magnetic = 0 | Silicate mantle | (l+1)f + r·f' = 0 (CMB) |
 | Perfect conductor | bci/bco_magnetic = 2 | Ideal stationary wall | f=0, tangential E=0 |
 | Conducting core | bci_magnetic = 1 | Equal diffusivity/permeability | Core diffusion and interface matching |
+| Conducting mantle | bco_magnetic = 1 | Finite stationary shell, equal permeability | Mantle diffusion, electric matching, exterior vacuum |
 
 ### Table 3: Matrix Size Estimates
 

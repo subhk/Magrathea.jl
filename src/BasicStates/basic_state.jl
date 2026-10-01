@@ -548,6 +548,9 @@ solenoidal vector-harmonic basis, with both mechanical boundaries enforced.
 `Ra` is shell-gap based. This neglects momentum inertia and temperature
 advection; use `basic_state_selfconsistent` to include both nonlinear effects.
 Use `mean_flow_velocity` to evaluate the full vector field.
+Retaining the boundary forcing alone does not resolve the velocity: Coriolis
+coupling generates higher degrees. Check radial and angular refinement with
+[`mean_flow_resolution`](@ref), especially at small Ekman number.
 
 A nonzero Y₂₀ forcing requires `lmax_bs ≥ 2`; smaller values throw an
 `ArgumentError` rather than dropping the forcing. Without Y₂₀ forcing any
@@ -940,6 +943,8 @@ conduction value `-χ/(1-χ)`.
 
 `Ra` is shell-gap based. Momentum inertia and thermal advection are omitted;
 `nonaxisymmetric_basic_state_selfconsistent` includes both nonlinear effects.
+Check spatial accuracy by independently refining the radial grid and angular
+truncation and comparing states with [`mean_flow_resolution`](@ref).
 `coupled_thermal_wind` and `include_meridional_flow` are ignored compatibility
 keywords: the complete viscous velocity solve always includes the full coupling
 and the meridional circulation. Passing `false` emits a one-time warning.
@@ -1136,7 +1141,8 @@ or `nonaxisymmetric_basic_state`).
 - `mechanical_bc` : `:no_slip` (default) or `:stress_free`
 - `lmax_bs` : Maximum ℓ for basic state (default `max(ℓ_bc + 2, 4)`). An explicit
   value must retain every nonzero boundary mode, otherwise an `ArgumentError` is
-  thrown instead of silently dropping the forcing.
+  thrown instead of silently dropping the forcing. The default is a starting
+  truncation; use [`mean_flow_resolution`](@ref) to check spatial refinement.
 - `coupled_thermal_wind` : ignored compatibility keyword (the viscous solve always
   includes the full coupling); `false` emits a one-time warning
 
@@ -1181,7 +1187,8 @@ bs = basic_state(cd, χ, E, Ra, Pr;
 The function automatically selects the appropriate implementation:
 
 1. If no boundary condition is given, or all its amplitudes are zero:
-   → `conduction_basic_state` (pure conduction profile)
+   → `conduction_basic_state` (pure conduction profile). An explicit zero Y00
+     flux is retained; an absent Y00 flux uses the conduction heat flux.
 
 2. If boundary condition is axisymmetric (only m=0 modes, including Y00 alone):
    → the viscous solver of `nonaxisymmetric_basic_state` with `mmax_bs=0`
@@ -1222,13 +1229,19 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
     # Get lmax and mmax from boundary condition
     bc_lmax, bc_mmax = get_lmax_mmax(bc)
 
-    # Use provided lmax_bs or auto-determine (add 2 for thermal wind coupling)
+    # Starting truncation only: repeated Coriolis coupling can require many
+    # degrees beyond the boundary forcing, especially at small Ekman number.
     _lmax = lmax_bs === nothing ? max(bc_lmax + 2, 4) : lmax_bs
     _check_retained_bc_modes(bc.coeffs, _lmax, is_axisymmetric(bc) ? 0 : bc_mmax,
                              flux_bc === nothing ? "temperature_bc" : "flux_bc")
 
-    # Check if BC is effectively zero (only conduction)
+    # Zero angular forcing still distinguishes an insulating outer wall from
+    # an omitted mean flux, which defaults to the conduction heat flux.
     if iszero(bc)
+        if thermal_bc === :fixed_flux && haskey(bc.coeffs, (0, 0))
+            return conduction_basic_state(cd, T(χ), _lmax;
+                thermal_bc=thermal_bc, outer_flux=T(bc.coeffs[(0, 0)]))
+        end
         return conduction_basic_state(cd, T(χ), _lmax; thermal_bc=thermal_bc)
     end
 

@@ -69,6 +69,7 @@ Cross-validate that a BasicState is compatible with the given parameters.
 """
 function validate_basic_state_consistency(bs, params)
     _check_basic_state_thermal_bc(params.thermal_bc, bs)
+    _check_basic_state_mechanical_bc(params.mechanical_bc, bs)
     bs.Nr == params.Nr || throw(ArgumentError(
         "BasicState Nr=$(bs.Nr) doesn't match params Nr=$(params.Nr)"))
     length(bs.r) == params.Nr || throw(ArgumentError(
@@ -115,6 +116,7 @@ Cross-validate that a BasicState3D is compatible with the given parameters.
 """
 function validate_basic_state_3d_consistency(bs, params)
     _check_basic_state_thermal_bc(params.thermal_bc, bs)
+    _check_basic_state_mechanical_bc(params.mechanical_bc, bs)
     bs.Nr == params.Nr || throw(ArgumentError(
         "BasicState3D Nr=$(bs.Nr) doesn't match params Nr=$(params.Nr)"))
     length(bs.r) == params.Nr || throw(ArgumentError(

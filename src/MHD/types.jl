@@ -143,10 +143,18 @@ MHD linear stability analysis or dynamo onset calculations.
 
 - `bco_magnetic::Int`: Outer boundary (CMB) magnetic BC
   - 0 = **insulating**: Most common (electrically insulating mantle)
-  - 2 = **perfect conductor**; finite-conductivity mantle (`1`) is unsupported
+  - 1 = **conducting mantle**: a stationary finite shell with the fluid's permeability,
+    magnetic diffusivity `Em * mantle_diffusivity_ratio`, and vacuum outside `mantle_radius`
+  - 2 = **perfect conductor**
+
+- `mantle_radius`: Outer mantle radius in fluid outer-radius units; required and > 1
+  when `bco_magnetic=1`, otherwise `nothing`.
+- `mantle_diffusivity_ratio`: Positive mantle/fluid magnetic diffusivity ratio (default 1).
+  Mantle perturbations evolve with the eigenmode; magnetic field and tangential
+  electric field are continuous at the fluid interface, including wall slip.
 
 - `forcing_frequency::T`: Legacy keyword, must be zero. The stability eigenfrequency
-  is unknown and is solved simultaneously in the fluid and conducting core.
+  is unknown and is solved simultaneously in the fluid and any conducting core/mantle.
 
 # Heating Mode
 
@@ -240,12 +248,18 @@ struct MHDParams{T<:Real}
     Etherm::T
     Em::T
 
+    # Optional finite conducting mantle. These fields follow the original
+    # positional arguments so the existing 23-argument constructor stays valid.
+    mantle_radius::Union{Nothing,T}
+    mantle_diffusivity_ratio::T
+
     function MHDParams{T}(E, Pr, Pm, Ra, Le, ricb, m, lmax, symm, N,
                          B0_type, B0_amplitude,
                          bci, bco, bci_thermal, bco_thermal,
                          bci_magnetic, bco_magnetic,
                          forcing_frequency,
-                         heating, L, Etherm, Em) where {T<:Real}
+                         heating, L, Etherm, Em,
+                         mantle_radius=nothing, mantle_diffusivity_ratio=one(T)) where {T<:Real}
         0 < ricb < 1 || throw(ArgumentError(
             "ricb must be in (0,1), got $ricb"))
         E > 0 || throw(ArgumentError(
@@ -272,10 +286,22 @@ struct MHDParams{T<:Real}
             throw(ArgumentError("Mechanical BCs must be 0 (stress-free) or 1 (no-slip), got bci=$bci, bco=$bco"))
         bci_thermal in (0, 1) && bco_thermal in (0, 1) ||
             throw(ArgumentError("Thermal BCs must be 0 (temperature) or 1 (flux)"))
-        bci_magnetic in (0, 1, 2) && bco_magnetic in (0, 2) ||
-            throw(ArgumentError("Magnetic BCs: inner 0/1/2; outer 0 (insulating) or 2 (perfect conductor). A finite-conductivity mantle is not implemented."))
+        bci_magnetic in (0, 1, 2) && bco_magnetic in (0, 1, 2) ||
+            throw(ArgumentError("Magnetic BCs must be 0 (insulating), 1 (finite conductor), or 2 (perfect conductor)."))
+        mantle_radius = mantle_radius === nothing ? nothing : T(mantle_radius)
+        mantle_diffusivity_ratio = T(mantle_diffusivity_ratio)
+        isfinite(mantle_diffusivity_ratio) && mantle_diffusivity_ratio > 0 ||
+            throw(ArgumentError("mantle_diffusivity_ratio must be finite and positive"))
+        if bco_magnetic == 1
+            mantle_radius !== nothing && isfinite(mantle_radius) && mantle_radius > one(T) ||
+                throw(ArgumentError("bco_magnetic=1 requires a finite mantle_radius > 1"))
+            isfinite(Em * mantle_diffusivity_ratio) && Em * mantle_diffusivity_ratio > 0 ||
+                throw(ArgumentError("Mantle magnetic diffusivity Em * mantle_diffusivity_ratio must be finite and positive"))
+        elseif mantle_radius !== nothing || mantle_diffusivity_ratio != one(T)
+            throw(ArgumentError("Mantle parameters require bco_magnetic=1"))
+        end
         iszero(forcing_frequency) || throw(ArgumentError(
-            "MHD stability solves for the unknown eigenfrequency; forcing_frequency must be zero. A conducting core evolves with the eigenmode."))
+            "MHD stability solves for the unknown eigenfrequency; forcing_frequency must be zero. Conducting regions evolve with the eigenmode."))
 
         # Dipole field requires non-zero inner core radius
         if B0_type == dipole && ricb <= 0
@@ -300,7 +326,7 @@ struct MHDParams{T<:Real}
                bci, bco, bci_thermal, bco_thermal,
                bci_magnetic, bco_magnetic,
                forcing_frequency,
-               heating, L, Etherm, Em)
+               heating, L, Etherm, Em, mantle_radius, mantle_diffusivity_ratio)
     end
 end
 
@@ -315,9 +341,12 @@ function MHDParams(; E, Pr=1.0, Pm=1.0, Ra, ricb,
                    bci_thermal::Int=0, bco_thermal::Int=0,
                    bci_magnetic::Int=0, bco_magnetic::Int=0,
                    forcing_frequency=0.0,
-                   heating::Symbol=:differential)
+                   heating::Symbol=:differential,
+                   mantle_radius=nothing, mantle_diffusivity_ratio=1)
     # Promote all numeric parameters to common type
     T = promote_type(typeof(E), typeof(Pr), typeof(Pm), typeof(Ra), typeof(ricb), typeof(Le), typeof(B0_amplitude))
+    T = promote_type(T, typeof(mantle_diffusivity_ratio))
+    mantle_radius === nothing || (T = promote_type(T, typeof(mantle_radius)))
     E_T = T(E)
     Pr_T = T(Pr)
     Pm_T = T(Pm)
@@ -335,7 +364,7 @@ function MHDParams(; E, Pr=1.0, Pm=1.0, Ra, ricb,
                        bci, bco, bci_thermal, bco_thermal,
                        bci_magnetic, bco_magnetic,
                        forcing_frequency_T,
-                       heating, L, Etherm, Em)
+                       heating, L, Etherm, Em, mantle_radius, mantle_diffusivity_ratio)
 end
 
 # -----------------------------------------------------------------------------
@@ -596,7 +625,8 @@ function MHDStabilityOperator(params::MHDParams{T}) where {T}
     n_h = length(ll_h) * n_per_mode
 
     n_core = params.bci_magnetic == 1 ? n_f + n_g : 0
-    matrix_size = n_u + n_v + n_f + n_g + n_h + n_core
+    n_mantle = params.bco_magnetic == 1 ? n_f + n_g : 0
+    matrix_size = n_u + n_v + n_f + n_g + n_h + n_core + n_mantle
 
     @info "MHD operator built" poloidal_modes=length(ll_u) toroidal_modes=length(ll_v) matrix_size="$(matrix_size) × $(matrix_size)" sparsity="~$(estimate_mhd_sparsity(N, ll_u, ll_v, ll_f, ll_g, ll_h))%"
 

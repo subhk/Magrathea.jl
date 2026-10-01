@@ -36,6 +36,16 @@ the constructors themselves solve the viscous mean-flow equations described in
 [Basic States](basic_states.md). Axisymmetric forcing can generate meridional
 circulation, so its thermal advection is not identically zero.
 
+The four mean-flow scripts (`boundary_driven_jet`, `nonaxisymmetric_basic_state`,
+`flux_bc_axisymmetric_flow`, and `flux_bc_mean_flow`) use bounded, independent
+radial and angular refinement. Each reports component-wise physical field
+differences and stops if the requested tolerance or nonlinear iteration fails.
+Their default parameters are chosen so the refinement study runs at tutorial
+scale. Set `MAGRATHEA_MEAN_FLOW_ORIGINAL=1` to restore their original, more
+demanding physical parameters; those cases can exceed the stated resolution
+limits and stop without claiming convergence. Edit the explicit resolution
+ladders when allocating a larger computation.
+
 `linear_stability_demo.jl` calls `slepc_init!` itself and can be run directly
 with `julia --project=. example/linear_stability_demo.jl` once PetscWrap and
 SlepcWrap are installed. Run the other eigenvalue scripts inside an
@@ -97,7 +107,7 @@ for forcing in (Y20(0.01), Y20(0.01) + Y22(0.01))
     bs, info = basic_state_selfconsistent(cd, 0.35, 0.01, 30.0, 1.0;
         temperature_bc=forcing, lmax_bs=4,
         max_iterations=50, tolerance=1e-8)
-    @assert info.converged
+    @assert info.iteration_converged
     println((state=typeof(bs), momentum=info.momentum_residual,
              thermal=info.thermal_residual, boundary=info.boundary_residual))
     println(mean_flow_velocity(bs, 0.7, pi/3, pi/8))
@@ -107,8 +117,10 @@ end
 `momentum_model=:navier_stokes` is the default. Set
 `momentum_model=:stokes` to omit nonlinear momentum inertia while retaining
 thermal transport. A small residual establishes convergence at the selected
-truncation; repeat at higher radial, spherical-degree, and azimuthal
-resolution.
+truncation; `info.spatial_convergence` remains `:unchecked`. Repeat at higher
+radial, spherical-degree, and azimuthal resolution, and compare physical fields
+with `mean_flow_resolution(coarse, fine)`, as shown in
+[Basic States](basic_states.md#Checking-spatial-resolution).
 
 For an outer radial-derivative boundary condition, use
 `flux_bc=Y00(-1.0) + Y20(-0.01)` (axisymmetric), or add `Y22(-0.01)`
@@ -135,12 +147,16 @@ end
 This low-level function assembles the coefficient-tau pencil. Keep the full
 matrices: `interior_dofs` identifies equation rows, not a square subproblem.
 The high-level `solve(MHDProblem(params))` selects Galerkin assembly for
-insulating axial cases and tau for conducting walls or dipole fields.
+insulating or perfectly conducting walls with axial or dipole fields, and tau
+assembly for finite conducting regions.
 
 The finite inner core is stationary and has the same magnetic diffusivity
-and permeability as the shell in the current model. A finite conducting outer
-mantle is unsupported. See [MHD User Guide](mhd_user_guide.md) for boundary
-flags and reconstruction.
+and permeability as the shell in the current model. A stationary finite mantle
+is available with `bco_magnetic=1`, an explicit `mantle_radius>1`, and
+`mantle_diffusivity_ratio`; it has the fluid's permeability and an insulating
+exterior. Inspect `result.extra.magnetic_boundaries` for physical wall residuals,
+or use `boundary_check=:error` to reject modes exceeding the chosen tolerance.
+See [MHD User Guide](mhd_user_guide.md) for boundary flags and reconstruction.
 
 ## Validation examples
 

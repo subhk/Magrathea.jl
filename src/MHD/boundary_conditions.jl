@@ -16,6 +16,22 @@ function _mhd_core_operators(op::MHDStabilityOperator{T}, l::Int) where T
     return diffusion, mass
 end
 
+"""Stationary mantle diffusion on `[1, mantle_radius]`, with C² residuals.
+
+The plain Chebyshev potential satisfies `λ r² f = Em_m (r² f″ + 2r f′ - l(l+1)f)`.
+Two extra polynomial degrees preserve the product before residual truncation.
+"""
+function _mhd_mantle_operators(op::MHDStabilityOperator{T}, l::Int) where T
+    p=op.params; N=p.N
+    p.bco_magnetic == 1 || throw(ArgumentError("No finite conducting mantle is configured"))
+    ro=something(p.mantle_radius)
+    term(power, deriv) = banded_radial_term(T, power, deriv, 2, N+2, one(T), ro)[1:N+1,1:N+1]
+    mass=term(2,0)
+    diffusion=(p.Em*p.mantle_diffusivity_ratio) *
+        (term(2,2) + 2term(1,1) - l*(l+1)*term(0,0))
+    return diffusion, mass
+end
+
 # Coefficient of the spheroidal part of B0r er×u_h. The wall is impermeable;
 # its tangential electric field is Em curl(b)_h + B0r er×u_h. Project with
 # exact degree-one harmonic identities in the native Y_lm/sqrt(2l+1)
@@ -86,6 +102,12 @@ function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T
     second(side) = scale^2 .* _chebyshev_boundary_second_derivative(N, side, T)
     vo, vi = val(:outer), val(:inner)
     do_, di = deriv(:outer), deriv(:inner)
+    if p.bco_magnetic == 1
+        rm = something(p.mantle_radius)
+        mantle_scale = T(2) / (rm - ro)
+        dmo = mantle_scale .* _chebyshev_boundary_derivative(N, :outer, T)
+        dmi = mantle_scale .* _chebyshev_boundary_derivative(N, :inner, T)
+    end
     for l in op.ll_u
         block = imap[(l, :u)]; lastrow = last(block)
         add!(lastrow - 3, block, vo)
@@ -124,7 +146,19 @@ function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T
 
     for l in op.ll_f
         block = imap[(l, :f)]; outerrow = last(block) - 1; innerrow = last(block)
-        add!(outerrow, block, p.bco_magnetic == 0 ? (l + 1) .* vo .+ ro .* do_ : vo)
+        if p.bco_magnetic == 0
+            add!(outerrow, block, (l + 1) .* vo .+ ro .* do_)
+        elseif p.bco_magnetic == 2
+            add!(outerrow, block, vo)
+        else
+            mantle = imap[(l, :fm)]
+            # Equal permeability: continuity of f and f′ matches all of B.
+            add!(outerrow, block, vo)
+            add!(outerrow, mantle, -vi)
+            add!(last(mantle), block, do_)
+            add!(last(mantle), mantle, -dmi)
+            add!(last(mantle)-1, mantle, (l+1) .* vo .+ rm .* dmo)
+        end
         if p.bci_magnetic == 0
             add!(innerrow, block, l .* vi .- ri .* di)
         elseif p.bci_magnetic == 2
@@ -144,9 +178,20 @@ function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T
         block = imap[(l, :g)]; outerrow = last(block) - 1; innerrow = last(block)
         if p.bco_magnetic == 0
             add!(outerrow, block, vo)
-        else
+        elseif p.bco_magnetic == 2
             add!(outerrow, block, p.Em .* (do_ .+ vo ./ ro))
             add_emf!(outerrow, l, :outer)
+        else
+            mantle = imap[(l, :gm)]
+            add!(outerrow, block, vo)
+            add!(outerrow, mantle, -vi)
+            # E_f,t = E_m,t, with E_f = Em curl(b) - u×B0 and a stationary mantle.
+            # Retain g/r on both sides: unequal diffusivities do not cancel it.
+            add!(last(mantle), block, p.Em .* (do_ .+ vo ./ ro))
+            add!(last(mantle), mantle,
+                 -(p.Em*p.mantle_diffusivity_ratio) .* (dmi .+ vi ./ ro))
+            add_emf!(last(mantle), l, :outer)
+            add!(last(mantle)-1, mantle, vo)
         end
         if p.bci_magnetic == 0
             add!(innerrow, block, vi)

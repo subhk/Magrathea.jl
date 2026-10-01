@@ -184,14 +184,26 @@ end
 | Value | Type | Condition | Use Case |
 |-------|------|-----------|----------|
 | 0 | Insulating | ``(l+1)f + r f' = 0`` (CMB), ``l f - r f' = 0`` (ICB) | Earth's mantle |
-| 1 | Conducting core | Evolving regular core field, matched to the shell | Inner boundary only; equal diffusivity/permeability |
+| 1 | Finite conductor | Evolving core or mantle field, matched to the fluid | Stationary solid with equal permeability |
 | 2 | Perfect conductor | ``f=0``, tangential electric field zero | Ideal stationary conducting wall |
 
 For no-slip perfect-conductor walls the toroidal condition is ``g'+g/r=0``.
 For stress-free walls the code includes the tangential ``\mathbf{u}\times\mathbf{B}_0``
-contribution. Conducting-core matching is described in the [user guide](mhd_user_guide.md).
-`forcing_frequency` must be zero; `bco_magnetic=1` is rejected because a conducting
-mantle model is not implemented.
+contribution. `bci_magnetic=1` uses a regular core with the fluid's magnetic
+diffusivity. `bco_magnetic=1` adds a finite mantle on
+``1\le r\le R_m``, with `mantle_radius=R_m > 1` required and
+`mantle_diffusivity_ratio=η_m/η_f > 0` (default `1`). The mantle matches a vacuum
+field at its outer surface. Both conducting regions evolve with the same unknown
+eigenvalue as the fluid, using tau assembly; `forcing_frequency` must be zero.
+See [conducting-region matching](@ref conducting-mantle)
+for the interface equations and an example.
+
+`solve` checks the reconstructed magnetic boundary fields by default. Use
+`boundary_check=:error` to reject eigenmodes whose physical residuals exceed
+`boundary_rtol` and `boundary_atol`; inspect `result.extra.magnetic_boundaries`
+or call `magnetic_boundary_residuals(result)`. These checks include angular
+components above the retained harmonic cutoff. Radial and angular refinement
+are still required to establish convergence.
 
 ## Background Magnetic Fields
 

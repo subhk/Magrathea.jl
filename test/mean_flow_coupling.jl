@@ -200,7 +200,10 @@ end
 
 @testset "2D/3D assembly, signed phases and radial interpolation" begin
     cd=ChebyshevDiffn(24,[.35,1.],4); r=cd.x
-    f=coupling_test_flow(cd,(1,1),-sqrt(4π/3)/2 .*r.^2,zero(r))
+    # A degree-six poloidal potential preserves exact interpolation while its
+    # double zeros make both normal and tangential wall velocities vanish.
+    poloidal(r) = -sqrt(4π/3)/2 .* r.^2 .* (r .- .35).^2 .* (1 .- r).^2
+    f=coupling_test_flow(cd,(1,1),poloidal(r),zero(r))
     bs=coupling_test_3d(cd;flow=f,temp=Dict((2,-1)=>.01 .*r.^2))
     source=coupling_test_op(1); target=coupling_test_op(2)
     C=Magrathea._mean_state_matrix(bs,source,target,1,2)
@@ -208,7 +211,7 @@ end
     @test Cminus ≈ -conj(C) rtol=2e-12 atol=2e-10
     # Different mean-state and perturbation grids must preserve polynomial fields.
     short=source.cd
-    fshort=coupling_test_flow(short,(1,1),-sqrt(4π/3)/2 .*short.x.^2,zero(short.x))
+    fshort=coupling_test_flow(short,(1,1),poloidal(short.x),zero(short.x))
     bshort=coupling_test_3d(short;flow=fshort,temp=Dict((2,-1)=>.01 .*short.x.^2))
     @test C ≈ Magrathea._mean_state_matrix(bshort,source,target,1,2) rtol=2e-10
     params=TriglobalParams(E=.01,Pr=1.,Ra=0.,χ=.35,m_range=-2:2,lmax=4,Nr=16,basic_state_3d=bs)

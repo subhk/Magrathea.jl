@@ -255,6 +255,10 @@ Returns a CoupledModeProblem structure.
 function setup_coupled_mode_problem(params::TriglobalParams{T}) where T
     _validate_triglobal_m_range(params.m_range, params.lmax)
     _validate_triglobal_symmetry(params.equatorial_symmetry)
+    # Check all azimuthal modes before projecting the state onto m=0 for the
+    # diagonal blocks. The native radial grid may differ from the perturbations'.
+    _check_basic_state_thermal_bc(params.thermal_bc, params.basic_state_3d)
+    _check_basic_state_mechanical_bc(params.mechanical_bc, params.basic_state_3d)
     if params.equatorial_symmetry !== :both &&
        !_basic_state_equatorially_symmetric(params.basic_state_3d)
         throw(ArgumentError(

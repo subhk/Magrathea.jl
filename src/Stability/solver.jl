@@ -149,14 +149,18 @@ end
     _dense_generalized_eigen(A, B; nev, sigma, which, selection)
 
 Dense LAPACK solve of `A x = λ B x`, returning `(eigenvalues, eigenvectors, info)`
-like the SLEPc backend. Infinite eigenvalues from singular `B` (tau rows) are
-dropped using the generalized-Schur denominators `β`, which also catches the huge
-finite values that `α/β` produces when `β` is only rounding noise. The `nev`
+like the SLEPc backend. Algebraic constraints (zero rows of `B`, including tau
+boundary rows) are eliminated before the solve, and exact infinite eigenvalues
+are dropped using the generalized-Schur denominators `β`. Small nonzero `β`
+values are retained: their magnitude depends on the scaling of the equations,
+and does not by itself distinguish finite from infinite eigenvalues. The `nev`
 eigenpairs nearest `sigma` are kept when a shift is given; otherwise `which`
 selects them exactly (`:LR` largest real part, `:LI` largest imaginary part,
 `:LM` largest magnitude, `:SR` smallest real part, `:SM` smallest magnitude).
 The kept pairs are then ordered by `selection`. Costs O(n³); meant for small
-problems and tests.
+problems and tests. Factorizations use at least double precision to resolve the
+widely separated scales of the spectral operators; outputs retain the input
+floating-point precision.
 """
 function _dense_generalized_eigen(A::AbstractMatrix, B::AbstractMatrix;
                                   nev::Int, sigma=nothing, which::Symbol=:LR,
@@ -165,10 +169,38 @@ function _dense_generalized_eigen(A::AbstractMatrix, B::AbstractMatrix;
         "A and B must have same dimensions, got $(size(A)) and $(size(B))"))
     n = size(A, 1)
     CT = complex(float(promote_type(eltype(A), eltype(B))))
-    α, β, _, V = LinearAlgebra.LAPACK.ggev!('N', 'V', Matrix{CT}(A), Matrix{CT}(B))
-    βscale = maximum(abs, β; init=zero(real(CT)))
-    βtol = 100 * n * eps(real(CT)) * βscale
-    keep = [i for i in eachindex(α) if abs(β[i]) > βtol && isfinite(α[i] / β[i])]
+    WT = promote_type(CT, ComplexF64)
+    Ad, Bd = Matrix{WT}(A), Matrix{WT}(B)
+    constraint_rows = findall(i -> all(iszero, view(Bd, i, :)), 1:n)
+    projection = nothing
+    if !isempty(constraint_rows)
+        # Tau equations A_bc*x = 0 have no time derivative. Enforce them
+        # exactly in the trial space instead of estimating which QZ denominators
+        # are rounding-noise representations of their infinite eigenvalues.
+        constraints = Ad[constraint_rows, :]
+        scales = maximum(abs, constraints; dims=2)
+        any(iszero, scales) && throw(ArgumentError(
+            "The eigenvalue pencil contains an equation with both A and B zero"))
+        constraints ./= scales
+        projection = nullspace(constraints)
+        interior = setdiff(1:n, constraint_rows)
+        size(projection, 2) == length(interior) || throw(ArgumentError(
+            "Algebraic constraints in the eigenvalue pencil are linearly dependent"))
+        isempty(interior) && error("Dense eigensolve found no finite eigenvalues")
+        Ad, Bd = Ad[interior, :] * projection, Bd[interior, :] * projection
+    end
+    # Equalize equation scales without changing the eigenvectors. In particular,
+    # high radial derivatives must not overwhelm the mass terms in the QZ solve.
+    for i in axes(Ad, 1)
+        arow, brow = view(Ad, i, :), view(Bd, i, :)
+        scale = max(maximum(abs, arow), maximum(abs, brow))
+        if !iszero(scale)
+            arow ./= scale
+            brow ./= scale
+        end
+    end
+    α, β, _, V = LinearAlgebra.LAPACK.ggev!('N', 'V', Ad, Bd)
+    keep = [i for i in eachindex(α) if !iszero(β[i]) && isfinite(CT(α[i] / β[i]))]
     vals = CT[α[i] / β[i] for i in keep]
     isempty(vals) && error("Dense eigensolve found no finite eigenvalues")
 
@@ -191,6 +223,7 @@ function _dense_generalized_eigen(A::AbstractMatrix, B::AbstractMatrix;
     sel = sel[_selection_order(vals[sel], selection)]
 
     vecs = V[:, keep[sel]]
+    projection === nothing || (vecs = projection * vecs)
     for j in axes(vecs, 2)
         nrm = norm(view(vecs, :, j))
         nrm > 0 && (vecs[:, j] ./= nrm)
@@ -198,7 +231,7 @@ function _dense_generalized_eigen(A::AbstractMatrix, B::AbstractMatrix;
     info = Dict{String,Any}("solver" => :dense, "strategy" => :full_spectrum,
         "target" => sigma, "which" => which, "selection" => selection,
         "nconv" => length(vals), "n" => n)
-    return vals[sel], vecs, info
+    return vals[sel], Matrix{CT}(vecs), info
 end
 
 """Dispatch a sparse generalized eigensolve to the selected backend, returning the
@@ -335,7 +368,9 @@ bisection fallback) to mirror the strategy used in Kore.
 - `backend::Symbol`: `:slepc` (default) or `:dense`
 
 The growth rate at each Ra is the largest real part among the computed
-eigenvalues, so the search follows the most unstable mode.
+eigenvalues, so the search follows the most unstable mode. The search converges
+when the growth residual meets `growth_tol` or the bracket meets the relative
+Rayleigh tolerance `tol`.
 
 # Returns
 - `Ra_c::Float64`: Critical Rayleigh number
@@ -470,6 +505,14 @@ function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::I
         end
     end
 
+    # Expansion or the logarithmic scan can land exactly on a neutral mode.
+    # Check again before requiring strictly opposite endpoint signs for Brent.
+    if abs(σ_r_min) < growth_tol || iszero(σ_r_min)
+        return Ra_min, imag(σ_min), σ_min, 0
+    elseif abs(σ_r_max) < growth_tol || iszero(σ_r_max)
+        return Ra_max, imag(σ_max), σ_max, 0
+    end
+
     # Safeguarded Brent search (closely follows implementations in literature)
     @debug "Starting Brent search..."
     Ra_a, Ra_b, Ra_c = Ra_min, Ra_max, Ra_min
@@ -480,7 +523,6 @@ function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::I
         error("Brent search requires opposite signs at the bracket endpoints.")
     end
 
-    abs_tol = tol * max(abs(Ra_a), abs(Ra_b), one(T))
     d = Ra_b - Ra_a
     e = d
 
@@ -499,7 +541,9 @@ function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::I
             σ_a, σ_b, σ_c = σ_b, σ_c, σ_b
         end
 
-        tol_act = T(2) * eps(abs(Ra_b)) + abs_tol
+        # Scale the stopping tolerance and minimum step with the current root
+        # estimate, not the initial (potentially many-decade) bracket.
+        tol_act = T(2) * eps(abs(Ra_b)) + tol * abs(Ra_b) / T(2)
         half_width = T(0.5) * (Ra_c - Ra_b)
 
         @debug "Brent iteration" iter=iter bracket="[$(Ra_a), $(Ra_c)]" Ra=Ra_b σ_r_a=σ_r_a σ_r_b=σ_r_b σ_r_c=σ_r_c
@@ -510,7 +554,8 @@ function find_critical_rayleigh(operator_builder::Function, E::TE, χ::Tχ, m::I
             @info "Critical Ra converged" Ra_c=Ra_c_final ω_c=ω_c σ_r=σ_r_b iterations=iter
             return Ra_c_final, ω_c, σ_b, iter
         elseif abs(half_width) <= tol_act
-            @debug "Bracket tolerance met but growth rate exceeds growth_tol" abs_σ_r=abs(σ_r_b) growth_tol=growth_tol
+            @info "Critical Ra bracket converged" Ra_c=Ra_b ω_c=imag(σ_b) σ_r=σ_r_b iterations=iter
+            return Ra_b, imag(σ_b), σ_b, iter
         end
 
         if abs(e) < tol_act || abs(σ_r_a) <= abs(σ_r_b)
