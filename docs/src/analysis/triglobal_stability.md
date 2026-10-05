@@ -15,8 +15,17 @@ Triglobal stability analysis handles the most general case: fully three-dimensio
     The tests include exact rigid rotation (Doppler shift plus Coriolis change),
     Cartesian polynomial momentum forcing, non-axisymmetric temperature transport,
     both radial heat-equation weightings, signed Fourier phases, and normalization
-    conversion. These are independent operator checks; they do not replace an
-    external benchmark for absolute triglobal growth rates.
+    conversion. End-to-end checks of the coupled eigenproblem
+    (`test/triglobal_physics.jl`) confirm that an axisymmetric state reproduces the
+    union of biglobal spectra, that rotating the state in longitude leaves the
+    spectrum unchanged, that a pure ``m_{bs} = 2`` state shifts non-degenerate
+    eigenvalues at second order in its amplitude, and that stress-free modes keep
+    zero tangential stress in every coupled block without rigid-rotation
+    eigenvalues. They also recompute the kinetic and thermal energy budgets of
+    coupled modes in physical space, for no-slip and stress-free walls; these close
+    to round-off as the radial resolution increases, while a 1% error in the
+    coupling leaves a clear mismatch. These are independent checks; they do not
+    replace an external benchmark for absolute triglobal growth rates.
 
     Noniterated mean-state constructors use the Stokes–Coriolis approximation.
     `basic_state_selfconsistent` includes nonlinear momentum inertia by default;
@@ -32,9 +41,13 @@ Triglobal analysis is necessary when the background state breaks axisymmetry:
 1. **Hemispheric asymmetry** - Different heat flux between hemispheres
 2. **Topographic forcing** - Non-axisymmetric core-mantle boundary
 3. **Large-scale convection** - Pre-existing convective patterns modifying stability
-4. **Magnetic field effects** - Non-axisymmetric imposed fields
-5. **Tidal forcing** - Periodic longitudinal variations
-6. **Laboratory experiments** - Asymmetric heating or boundary conditions
+4. **Tidal forcing** - Periodic longitudinal variations
+5. **Laboratory experiments** - Asymmetric heating or boundary conditions
+
+An imposed axial or dipole field can be included through `B0_type`, `Le`, `Pm`, and
+`magnetic_bc` in `OnsetParams`: the coupled blocks then carry magnetic perturbations
+about a mean state with the induced field of its flow ([MHD guide](../mhd_user_guide.md#Mean-flows:-biglobal-and-triglobal-MHD)).
+Non-axisymmetric imposed fields are not supported.
 
 ### Real-World Applications
 
@@ -69,18 +82,24 @@ The coupling strength is determined by **Gaunt coefficients**:
 G_{\ell_1 \ell_2 \ell_3}^{m_1 m_2 m_3} = \int Y_{\ell_1}^{m_1} Y_{\ell_2}^{m_2} Y_{\ell_3}^{m_3*} \, d\Omega
 ```
 
-These are computed from **Wigner 3j symbols**:
+In terms of **Wigner 3j symbols**:
 
 ```math
-G_{\ell_1 \ell_2 \ell_3}^{m_1 m_2 m_3} = \sqrt{\frac{(2\ell_1+1)(2\ell_2+1)(2\ell_3+1)}{4\pi}}
+G_{\ell_1 \ell_2 \ell_3}^{m_1 m_2 m_3} = (-1)^{m_3}\sqrt{\frac{(2\ell_1+1)(2\ell_2+1)(2\ell_3+1)}{4\pi}}
 \begin{pmatrix} \ell_1 & \ell_2 & \ell_3 \\ 0 & 0 & 0 \end{pmatrix}
-\begin{pmatrix} \ell_1 & \ell_2 & \ell_3 \\ m_1 & m_2 & m_3 \end{pmatrix}
+\begin{pmatrix} \ell_1 & \ell_2 & \ell_3 \\ m_1 & m_2 & -m_3 \end{pmatrix}
 ```
 
-Selection rules:
+Selection rules for scalar products:
 - ``m_1 + m_2 = m_3``
 - ``|\ell_1 - \ell_2| \leq \ell_3 \leq \ell_1 + \ell_2`` (triangle inequality)
 - ``\ell_1 + \ell_2 + \ell_3`` must be even
+
+The stability operator does not tabulate these coefficients. It evaluates the
+full vector and temperature products, including velocity shear and spherical
+metric terms, on an angular quadrature grid and projects them onto each
+retained harmonic; the azimuthal selection rule ``m_1 + m_2 = m_3`` still fixes
+which blocks couple.
 
 ### Block Matrix Structure
 
@@ -102,8 +121,15 @@ m=2 │  0      0      0     C₂,₁    A₂  │
 ```
 
 Where:
-- ``A_m`` = diagonal blocks (single-mode physics: diffusion, Coriolis, buoyancy)
-- ``C_{m,m'}`` = coupling blocks from basic state advection
+- ``A_m`` = diagonal blocks: the biglobal operator for order ``m`` (diffusion, Coriolis, buoyancy, and transport by the axisymmetric part of the basic state)
+- ``C_{m,m'}`` = coupling of block ``m'`` into the equations of block ``m`` through the basic state's azimuthal order ``m - m'``
+
+The diagram shows a basic state with ``m_{bs} = 1``; a state with order ``m_{bs}``
+couples blocks ``m`` and ``m \pm m_{bs}``. Because the basic state is real, the
+``-m`` diagonal block is the complex conjugate of the ``+m`` block. Each block
+is assembled in constraint-reduced coordinates, so the boundary conditions hold
+exactly; for stress-free walls the ``|m| \le 1`` blocks also impose zero angular
+momentum, which removes the neutral rigid-rotation modes.
 
 ## Mathematical Formulation
 
@@ -126,7 +152,7 @@ The basic state contains all spherical harmonic components:
 For perturbations spanning ``m \in [m_{min}, m_{max}]``:
 
 ```math
-\frac{\partial \mathbf{u}'_m}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u}'_m + \sum_{m'} \left[ (\mathbf{u}'_m \cdot \nabla)\bar{\mathbf{u}}_{m-m'} + (\bar{\mathbf{u}}_{m'} \cdot \nabla)\mathbf{u}'_{m-m'} \right] = \ldots
+\frac{\partial \mathbf{u}'_m}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u}'_m + \sum_{m'} \left[ (\mathbf{u}'_{m-m'} \cdot \nabla)\bar{\mathbf{u}}_{m'} + (\bar{\mathbf{u}}_{m'} \cdot \nabla)\mathbf{u}'_{m-m'} \right] = \ldots
 ```
 
 The sum couples modes ``m`` and ``m - m'`` through basic state component ``m'``.
@@ -163,13 +189,12 @@ See [`BasicState3D`](@ref) in the API reference for the current fields. Temperat
 
 ### Reality Conditions
 
-For physical (real-valued) fields, coefficients must satisfy:
-
-```math
-\bar{f}_{\ell,-m} = (-1)^m \bar{f}_{\ell,m}^*
-```
-
-This is automatically enforced when constructing `BasicState3D` from physical data.
+`BasicState3D` stores **real** profiles: ``(\ell, m)`` with ``m > 0`` holds the
+``\cos(m\phi)`` part and ``(\ell, -m)`` the independent ``\sin(m\phi)`` part. Any real
+profiles describe a real field, so no conjugate symmetry needs to be imposed; a
+missing sine entry means zero. The complex coefficients used internally,
+``\bar{f}_{\ell,-m} = (-1)^m \bar{f}_{\ell,m}^*``, are derived from these pairs. See
+[Reality Conditions](../basic_states.md#Reality-Conditions) for the normalization.
 
 ## Creating 3D Basic States
 
@@ -198,6 +223,7 @@ println("Frequency:   ", result.frequency)
 For the self-consistent nonlinear steady solver:
 
 ```julia
+# Throws if the nonlinear iteration does not converge
 bs3d = basic_state(params; mode=:selfconsistent, max_iterations=50)
 result = solve(TriglobalProblem(params, bs3d, -5:5); nev=6)
 ```
@@ -228,6 +254,7 @@ using Magrathea
 Nr = 64
 χ = 0.35
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
+E, Ra, Pr = 1e-5, 1.5e7, 1.0
 
 # Non-axisymmetric heat flux BC
 flux = Y00(-1.0) + Y22(-0.2)
@@ -245,6 +272,11 @@ println("Zonal modes: ", keys(bs3d.uphi_coeffs))
 println("Meridional modes: ", keys(bs3d.utheta_coeffs))
 println("Radial modes: ", keys(bs3d.ur_coeffs))
 ```
+
+Without `lmax_bs`, the truncation defaults to two degrees above the highest forced
+degree (at least 4), which is far from resolved at small Ekman numbers. The
+[Y₂₂ heat-flux worked example](@ref y22-heat-flux-example) shows a resolution check
+and plots the state on a heat-flux map and equatorial sections.
 
 ### Method 2: Standard Solver (Laplace Approximation)
 
@@ -294,12 +326,10 @@ for ℓ in 0:lmax_bs
     end
 end
 
-# Set specific mode amplitudes
+# Set specific mode amplitudes (real profiles)
 theta_coeffs[(2, 0)] .= your_T20_profile
-theta_coeffs[(2, 2)] .= your_T22_profile
-
-# Enforce reality condition
-theta_coeffs[(2, -2)] .= conj.(theta_coeffs[(2, 2)])
+theta_coeffs[(2, 2)] .= your_T22_profile        # cos(2φ) part
+theta_coeffs[(2, -2)] .= your_T22_sine_profile  # sin(2φ) part; leave zero if absent
 
 # Compute derivatives
 for (ℓm, coeffs) in theta_coeffs
@@ -386,7 +416,7 @@ params_triglobal = TriglobalParams(
 ```
 
 !!! warning "Mode Range Selection"
-    Choose `m_range` to be symmetric and wide enough to capture the coupling cascade. If the basic state has ``m_{bs} = 2``, modes separated by 2 will couple.
+    Centre `m_range` on the azimuthal order of interest and make it wide enough to capture the coupling cascade. If the basic state has ``m_{bs} = 2``, modes separated by 2 will couple. `TriglobalProblem` warns when `m_range` includes negative orders; that is expected for ranges such as `-2:2`.
 
 ### Step 3: Estimate Problem Size
 
@@ -406,21 +436,25 @@ println("  DOFs per mode:       ", size_report.dofs_per_mode)
 
 | m_range | lmax | Nr | Approx DOFs |
 |---------|------|----|-------------|
-| -1:1 | 30 | 32 | ~15,000 |
-| -2:2 | 40 | 48 | ~100,000 |
-| -3:3 | 45 | 56 | ~250,000 |
-| -4:4 | 50 | 64 | ~500,000 |
+| -1:1 | 30 | 32 | ~8,000 |
+| -2:2 | 40 | 48 | ~27,000 |
+| -3:3 | 45 | 56 | ~50,000 |
+| -4:4 | 50 | 64 | ~81,000 |
+
+These are the constraint-reduced sizes for `equatorial_symmetry = :both`, as
+reported by `estimate_triglobal_problem_size`; about ``3 N_r`` unknowns per
+retained degree in each block.
 
 ### Step 4: Build and Solve
 
 ```julia
 # Build coupled problem
 println("Building coupled-mode problem...")
-problem = setup_coupled_mode_problem(params_triglobal)
+coupled = setup_coupled_mode_problem(params_triglobal)
 
 # Inspect coupling structure
 println("Coupling graph:")
-for (m, neighbors) in sort(problem.coupling_graph)
+for (m, neighbors) in sort(coupled.coupling_graph)
     println("  m = $m couples to: ", join(neighbors, ", "))
 end
 
@@ -470,29 +504,38 @@ println("  Status: ", result.growth_rate > 0 ? "UNSTABLE" : "STABLE")
 
 ### Extract Mode Components
 
-Each eigenvector spans all coupled ``m`` values:
+Each eigenvector spans all coupled ``m`` values. `coupled` is the
+`CoupledModeProblem` from Step 4; its `block_indices` give each block's slice.
+A block holds constraint-reduced coordinates (the boundary conditions are
+eliminated), not raw collocation values.
 
 ```julia
-function extract_mode_component(problem, eigenvector, target_m)
-    idx = problem.block_indices[target_m]
+function extract_mode_component(coupled, eigenvector, target_m)
+    idx = coupled.block_indices[target_m]
     return eigenvector[idx]
 end
 
 # Get m=0 component of leading mode
-mode0_coeffs = extract_mode_component(problem, eigenvectors[:, 1], 0)
+mode0_coeffs = extract_mode_component(coupled, eigenvectors[:, 1], 0)
 
 # Get m=2 component
-mode2_coeffs = extract_mode_component(problem, eigenvectors[:, 1], 2)
+mode2_coeffs = extract_mode_component(coupled, eigenvectors[:, 1], 2)
 ```
 
 ### Analyze Mode Energy Distribution
 
+The reduction bases are orthonormal, so a block's squared norm equals that of
+its full radial coefficients of ``P``, ``T`` and ``\Theta``. The shares below
+measure how strongly each ``m`` participates; they are not kinetic energies.
+
 ```julia
-function mode_energy_distribution(eigenvector, problem)
+using LinearAlgebra, Printf
+
+function mode_energy_distribution(eigenvector, coupled)
     energies = Dict{Int, Float64}()
 
-    for m in problem.m_range
-        mode_vec = extract_mode_component(problem, eigenvector, m)
+    for m in coupled.m_range
+        mode_vec = extract_mode_component(coupled, eigenvector, m)
         energies[m] = norm(mode_vec)^2
     end
 
@@ -506,7 +549,7 @@ function mode_energy_distribution(eigenvector, problem)
 end
 
 # Compute energy distribution
-energy_dist = mode_energy_distribution(eigenvectors[:, 1], problem)
+energy_dist = mode_energy_distribution(eigenvectors[:, 1], coupled)
 
 println("Energy distribution in leading mode:")
 for m in sort(collect(keys(energy_dist)))
@@ -516,12 +559,18 @@ end
 
 ### Reconstruct Physical Fields
 
+`Magrathea.eigenvector_to_velocity_triglobal` restores each block's boundary
+coefficients, converts the potentials to velocity and sums the blocks with
+their ``e^{im\phi}`` factors:
+
 ```julia
-# Each block contains interior DOFs for a single m.
-for m in problem.m_range
-    mode_vec = extract_mode_component(problem, eigenvectors[:, 1], m)
-    # mode_vec contains interior DOFs for this m block.
-end
+# u_r, u_θ, u_φ on the (r, θ) grid at longitude φ = 0
+ur, uθ, uφ = Magrathea.eigenvector_to_velocity_triglobal(
+    eigenvectors[:, 1], coupled; φ_slice = 0.0)
+
+# Full 3-D field on Nφ longitudes (more expensive)
+ur3, uθ3, uφ3 = Magrathea.eigenvector_to_velocity_triglobal(
+    eigenvectors[:, 1], coupled; Nφ = 64)
 ```
 
 ## Finding Critical Parameters
@@ -529,19 +578,21 @@ end
 ### Critical Rayleigh Number
 
 ```julia
-Ra_c, ω_c, eigvec = find_critical_rayleigh_triglobal(
-    E = params_triglobal.E,
-    Pr = params_triglobal.Pr,
-    χ = params_triglobal.χ,
-    m_range = params_triglobal.m_range,
-    lmax = params_triglobal.lmax,
-    Nr = params_triglobal.Nr,
-    basic_state_3d = bs3d;
-    Ra_guess = 1e7,
-    tol = 1e-3,
-)
+# `problem` is the TriglobalProblem from the unified-API example above.
+Ra_c, ω_c, eigvec = find_critical_Ra(problem; Ra_guess = 1e7, tol = 1e-3)
 
 println("Triglobal critical Rayleigh: Ra_c = $Ra_c")
+```
+
+The lower-level search takes positional parameters and returns the growth rate at
+`Ra_c` instead of the eigenvector:
+
+```julia
+Ra_c, σ_c, ω_c = find_critical_rayleigh_triglobal(
+    params_triglobal.E, params_triglobal.Pr, params_triglobal.χ,
+    params_triglobal.m_range, params_triglobal.lmax, params_triglobal.Nr, bs3d;
+    Ra_min = 1e6, Ra_max = 1e8, tol = 1e-3,
+)
 ```
 
 ### Parameter Sweeps
@@ -626,6 +677,7 @@ boundary_modes = Dict((2, 2) => 0.1)  # Only non-zero modes
 # Triglobal stability analysis with non-axisymmetric basic state
 
 using Magrathea
+using LinearAlgebra
 using Printf
 using JLD2
 
@@ -701,15 +753,13 @@ println("\nSystem is $status at Ra = $Ra")
 
 # === Energy Distribution ===
 println("\nEnergy distribution (leading mode):")
-total_E = 0.0
 mode_E = Dict{Int, Float64}()
 
 for m in params.m_range
     idx = problem.block_indices[m]
-    E_m = norm(eigenvectors[idx, 1])^2
-    mode_E[m] = E_m
-    total_E += E_m
+    mode_E[m] = norm(eigenvectors[idx, 1])^2
 end
+total_E = sum(values(mode_E))
 
 for m in sort(collect(keys(mode_E)))
     pct = 100.0 * mode_E[m] / total_E
@@ -722,8 +772,7 @@ println("COMPARISON: Triglobal vs Biglobal")
 println("="^60)
 
 # Biglobal (axisymmetric basic state only)
-bs_axi = meridional_basic_state(cd, χ, E, Ra, Pr;
-    lmax_bs = 6, amplitude = 0.1)
+bs_axi = meridional_basic_state(cd, χ, E, Ra, Pr, 6, 0.1)  # lmax_bs, amplitude
 
 params_bi = OnsetParams(
     E = E, Pr = Pr, Ra = Ra, χ = χ,
@@ -748,10 +797,10 @@ println("\nResults saved to outputs/triglobal_analysis.jld2")
 
 Before running triglobal analysis:
 
-- [ ] `m_range` is symmetric (e.g., -2:2, not 0:4)
+- [ ] `m_range` is centred on the order of interest (e.g., -2:2 around ``m = 0``, 0:4 around ``m = 2``)
 - [ ] `m_range` covers coupling from basic state ``m_{bs}``
 - [ ] Problem size fits in available memory
-- [ ] Basic state satisfies reality conditions
+- [ ] Basic-state profiles are real cosine (``m > 0``) and sine (``m < 0``) coefficients
 - [ ] Basic state `mmax_bs` matches expected coupling
 - [ ] Solver converges within iteration limit
 - [ ] Energy distribution shows expected mode participation
@@ -762,9 +811,9 @@ Before running triglobal analysis:
 |---------|-----------------|---------------------|----------------|
 | Basic state ``m`` | 0 only | 0 only | All ``m`` |
 | Mode coupling | None | None | Yes |
-| Matrix structure | Block diagonal | Block diagonal | Coupled blocks |
-| DOFs per ``m`` | ``N_r \times N_\ell`` | ``N_r \times N_\ell`` | ``N_r \times N_\ell`` |
-| Total DOFs | Single ``m`` | Single ``m`` | ``\sum_m N_r \times N_\ell`` |
+| Matrix structure | Single ``m`` block | Single ``m`` block | Coupled ``m`` blocks |
+| DOFs per ``m`` | ``\approx 3 N_r N_\ell`` | ``\approx 3 N_r N_\ell`` | ``\approx 3 N_r N_\ell`` |
+| Total DOFs | Single ``m`` | Single ``m`` | ``\approx \sum_m 3 N_r N_\ell(m)`` |
 | Memory | Low | Low | High |
 | Applications | Classical onset | Thermal wind | CMB heterogeneity |
 

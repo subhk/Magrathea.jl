@@ -307,12 +307,8 @@ function build_meridional_grid(Nθ::Int, m::Int, lmax::Int;
     end
     sinθ = sin.(θ)
 
-    # Build differentiation matrix Dθ using finite differences or spectral
-    Dθ = _build_theta_derivative_matrix(θ)
-
-    # Build angular Laplacian L² for mode m
-    # L² = (1/sinθ) d/dθ (sinθ d/dθ) - m²/sin²θ
-    Lθ = _build_angular_laplacian(θ, sinθ, Dθ, m)
+    # θ-derivative and angular Laplacian L² for mode m
+    Dθ, Lθ = _harmonic_theta_operators(cosθ, sinθ, m)
 
     # Precompute spherical harmonics Y_ℓm(θ, φ=0)
     Ylm = _precompute_spherical_harmonics(m, lmax, cosθ)
@@ -366,62 +362,37 @@ end
 
 
 """
-    _build_theta_derivative_matrix(θ)
+    _harmonic_theta_operators(cosθ, sinθ, m) -> (Dθ, Lθ)
 
-Build differentiation matrix for θ using Chebyshev-like spectral differentiation.
+θ-derivative `Dθ` and angular Laplacian `Lθ` (L² Y_ℓm = -ℓ(ℓ+1) Y_ℓm) on the nodes
+`θ`, for fields of azimuthal order `m`. Both act through interpolation in the
+order-`m` harmonics of degrees |m| … |m| + n - 1 on the n informative nodes, so they
+are exact for every such field; polynomial interpolation in θ itself is
+ill-conditioned on these nodes. At high order, nodes where every harmonic is below
+round-off of its peak carry no information (the fields underflow there); their rows
+and columns are zero.
 """
-function _build_theta_derivative_matrix(θ::Vector{T}) where T
-    n = length(θ)
-    D = zeros(T, n, n)
-
-    for i in 1:n
-        for j in 1:n
-            if i != j
-                D[i, j] = _barycentric_weight(θ, j) /
-                          (_barycentric_weight(θ, i) * (θ[i] - θ[j]))
-            end
-        end
-        D[i, i] = -sum(D[i, k] for k in 1:n if k != i)
+function _harmonic_theta_operators(cosθ::Vector{T}, sinθ::Vector{T}, m::Int) where T
+    a = abs(m); nθ = length(cosθ)
+    table = _normalized_legendre_table(a, a + nθ - 1, cosθ)
+    peak = vec(maximum(abs, table; dims=2))
+    nodes = [j for j in 1:nθ if any(abs(table[k, j]) > eps(T) * peak[k] for k in axes(table, 1))]
+    n = length(nodes); L = a + n - 1
+    Q = _normalized_legendre_table(a, L, cosθ[nodes])  # Q[ℓ-a+1, j] = Y_ℓa(θ_j)
+    V = permutedims(Q)
+    # sinθ ∂θY_ℓa = ℓ cosθ Y_ℓa - √((2ℓ+1)(ℓ²-a²)/(2ℓ-1)) Y_(ℓ-1)a
+    dV = similar(V)
+    for k in 1:n, j in 1:n
+        ℓ = a + k - 1
+        lower = k == 1 ? zero(T) :
+            sqrt(T(2ℓ + 1) * T(ℓ - a) * T(ℓ + a) / T(2ℓ - 1)) * Q[k - 1, j]
+        dV[j, k] = (ℓ * cosθ[nodes[j]] * Q[k, j] - lower) / sinθ[nodes[j]]
     end
-
-    return D
-end
-
-
-function _barycentric_weight(θ::Vector{T}, j::Int) where T
-    n = length(θ)
-    w = one(T)
-    for k in 1:n
-        if k != j
-            w *= (θ[j] - θ[k])
-        end
-    end
-    return 1 / w
-end
-
-
-"""
-    _build_angular_laplacian(θ, sinθ, Dθ, m)
-
-Build angular Laplacian operator L² for azimuthal mode m.
-
-L² = (1/sinθ) d/dθ (sinθ d/dθ) - m²/sin²θ
-
-For Y_ℓm, this gives L² Y_ℓm = -ℓ(ℓ+1) Y_ℓm.
-"""
-function _build_angular_laplacian(θ::Vector{T}, sinθ::Vector{T},
-                                   Dθ::Matrix{T}, m::Int) where T
-    n = length(θ)
-    cosθ = cos.(θ)
-
-    # L² = d²/dθ² + (cosθ/sinθ) d/dθ - m²/sin²θ
-    # which is equivalent to (1/sinθ) d/dθ (sinθ d/dθ) - m²/sin²θ
-
-    D2θ = Dθ * Dθ  # Second derivative
-
-    Lθ = D2θ + Diagonal(cosθ ./ sinθ) * Dθ - Diagonal(T(m^2) ./ (sinθ.^2))
-
-    return Lθ
+    F = lu(V)
+    Dθ = zeros(T, nθ, nθ); Lθ = zeros(T, nθ, nθ)
+    Dθ[nodes, nodes] = dV / F
+    Lθ[nodes, nodes] = (V * Diagonal(T[-ℓ * (ℓ + 1) for ℓ in a:L])) / F
+    return Dθ, Lθ
 end
 
 
@@ -608,15 +579,20 @@ function eigenvector_to_velocity(eigenvector::AbstractVector{<:Complex}, op;
     end
 end
 
+# Highest degree of any field (m = 0 fields reach lmax + 1), so a default grid
+# returned with one field can be reused for the others.
+_reconstruction_l_top(op) = maximum((maximum(ls; init=0) for ls in values(op.l_sets));
+                                    init=max(op.params.m, op.params.lmax))
+
 function _eigenvector_to_velocity_default_grid(eigenvector::AbstractVector{<:Complex},
                                                op,
                                                ::Nothing)
     m = op.params.m
-    lmax = op.params.lmax
-    Nθ_use = 2 * lmax
+    l_top = _reconstruction_l_top(op)
+    Nθ_use = 2 * l_top
     GT = typeof(op.params.E)
     # The assertion fixes the grid parameter for inference after construction.
-    grid = build_meridional_grid(Nθ_use, m, lmax; T=GT)::MeridionalGrid{GT}
+    grid = build_meridional_grid(Nθ_use, m, l_top; T=GT)::MeridionalGrid{GT}
     return _eigenvector_to_velocity(eigenvector, op, grid)
 end
 
@@ -624,11 +600,11 @@ function _eigenvector_to_velocity_default_grid(eigenvector::AbstractVector{<:Com
                                                op,
                                                Nθ::Int)
     m = op.params.m
-    lmax = op.params.lmax
+    l_top = _reconstruction_l_top(op)
     Nθ_use = Nθ
     GT = typeof(op.params.E)
     # Mirror the default-grid path so explicit Nθ calls stay type-stable too.
-    grid = build_meridional_grid(Nθ_use, m, lmax; T=GT)::MeridionalGrid{GT}
+    grid = build_meridional_grid(Nθ_use, m, l_top; T=GT)::MeridionalGrid{GT}
     return _eigenvector_to_velocity(eigenvector, op, grid)
 end
 
@@ -886,7 +862,8 @@ function _mode_reconstruction(problem, m_abs::Int)
                 mechanical_bc = params_tri.mechanical_bc,
                 thermal_bc = params_tri.thermal_bc,
                 equatorial_symmetry = params_tri.equatorial_symmetry,
-                basic_state = nothing
+                basic_state = nothing;
+                _magnetic_kwargs(params_tri)...
             )
             op = LinearStabilityOperator(params_m)
             # The tau-row nullspace depends only on the boundary conditions, so it
@@ -985,7 +962,7 @@ function perturbation_temperature(evec::AbstractVector{<:Complex},
     m    = op.params.m
     Nr   = op.params.Nr
     T    = typeof(op.params.E)
-    l_top = maximum(op.l_sets[:Θ]; init=max(m, op.params.lmax))
+    l_top = _reconstruction_l_top(op)
     g = grid === nothing ?
         build_meridional_grid(Nθ === nothing ? 2 * l_top : Nθ, m, l_top; T=T) : grid
 
@@ -1003,11 +980,37 @@ function perturbation_temperature(evec::AbstractVector{<:Complex},
     return θfield, op.r, g
 end
 
-"""`perturbation_magnetic` is not defined for hydrodynamic problems (no magnetic field)."""
-function perturbation_magnetic(::AbstractVector{<:Complex},
-                               ::LinearStabilityOperator; kwargs...)
-    error("perturbation_magnetic: hydrodynamic problems have no magnetic field. " *
-          "Magnetic reconstruction is only available for MHD results (MHDStabilityOperator).")
+"""Magnetic potential profiles `(F, G)` by degree from a full collocation eigenvector."""
+function extract_magnetic_coefficients(eigenvector::AbstractVector{<:Complex}, op)
+    CT = eltype(eigenvector)
+    pick(field) = Dict{Int, Vector{CT}}(ℓ => eigenvector[op.index_map[(ℓ, field)]]
+                                        for ℓ in get(op.l_sets, field, Int[]))
+    return pick(:F), pick(:G)
+end
+
+"""
+    perturbation_magnetic(evec, op::LinearStabilityOperator; Nθ=nothing, grid=nothing)
+
+Reconstruct the physical perturbation field `(b_r, b_θ, b_φ)` of a collocation
+eigenvector with an imposed field (`B0_type` set in `OnsetParams`), with the radial
+and meridional grids, as `perturbation_velocity` does for the flow. The potentials
+follow `b = ∇×∇×(F𝐫) + ∇×(G𝐫)` with angular functions `Y/√(2ℓ+1)`, in the units of
+the imposed field; multiply by `e^{imφ}`. Returns `(Br, Bθ, Bφ, r_grid, grid)`.
+"""
+function perturbation_magnetic(evec::AbstractVector{<:Complex},
+                               op::LinearStabilityOperator;
+                               Nθ::Union{Int,Nothing}=nothing,
+                               grid::Union{MeridionalGrid,Nothing}=nothing)
+    _has_magnetic(op.params) || error("perturbation_magnetic: this problem has no magnetic " *
+        "field; set B0_type and Le in OnsetParams, or use an MHD result.")
+    m = op.params.m
+    if grid === nothing
+        l_top = _reconstruction_l_top(op)
+        grid = build_meridional_grid(something(Nθ, 2 * l_top), m, l_top; T=typeof(op.params.E))
+    end
+    F, G = extract_magnetic_coefficients(evec, op)
+    Br, Bθ, Bφ = _onset_velocity_from_coefficients(F, G, op.r, op.cd.D1, grid, m)
+    return Br, Bθ, Bφ, op.r, grid
 end
 
 """

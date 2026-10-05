@@ -19,7 +19,7 @@
 | `OnsetProblem` | Motionless conductive state | Chebyshev collocation with boundary-constraint reduction |
 | `BiglobalProblem` | Axisymmetric temperature and three-component velocity | Collocation with mean-flow advection and shear |
 | `TriglobalProblem` | Nonaxisymmetric temperature and velocity | Coupled signed azimuthal orders |
-| `MHDProblem` | Motionless conductive state and imposed magnetic field | Ultraspherical Galerkin for insulating axial fields; tau for dipole or conducting walls |
+| `MHDProblem` | Motionless conductive state and imposed magnetic field | Energy-conserving Galerkin for insulating or perfectly conducting walls; coefficient tau for finite-conductivity walls |
 
 The self-consistent hydrodynamic mean-state solver includes nonlinear
 momentum inertia and thermal advection in both 2D and 3D. Its Stokes
@@ -57,6 +57,10 @@ These small truncations demonstrate the API. Increase radial and angular
 resolution, vary the spectral target, and check eigenpair residuals before
 using a growth rate quantitatively. The fastest-growing returned eigenpair
 need not be the fastest-growing eigenpair of the complete spectrum.
+
+Problems this small can also be solved without PETSc:
+`solve(problem; backend=:dense)` uses a dense LAPACK eigensolver for
+validation-sized truncations. Use SLEPc for production resolutions.
 
 Construction and matrix assembly do not require PETSc:
 

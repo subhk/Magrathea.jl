@@ -8,7 +8,6 @@
 # =============================================================================
 
 using SparseArrays: SparseMatrixCSC
-using SpecialFunctions: sphericalbesselj
 
 """
     velocity_from_potentials(op, P, T)
@@ -442,8 +441,8 @@ solver instead evolves core coefficients with the unknown eigenvalue.
 # Numerical Stability
 
 - For |x| < 10⁻¹⁰, uses series expansion: j'ₗ/jₗ ≈ l/x
-- For normal values, uses recurrence relation
-- Handles complex arguments robustly (needed for k = (1-i)√...)
+- Otherwise evaluates j_{l+1}/j_l by its continued fraction (modified Lentz), which
+  stays accurate where jₗ itself underflows or overflows, for real and complex x
 
 # Arguments
 
@@ -481,26 +480,30 @@ logderiv_complex = spherical_bessel_j_logderiv(l, k * ri)
 # See Also
 
 - The MHD eigenproblem evolves the conducting core explicitly instead of prescribing a frequency.
-- `SpecialFunctions.sphericalbesselj`: Underlying Bessel function
 """
 function spherical_bessel_j_logderiv(l::Int, x::Complex{T}) where {T<:Real}
+    T <: AbstractFloat || return spherical_bessel_j_logderiv(l, float(x))
     # For very small |x|, use series expansion: j_l(x) ≈ x^l / (2l+1)!!
     # so d/dx[log(j_l)] ≈ l/x
     if abs(x) < 1e-10
         return complex(T(l)) / x
     end
 
-    # Use recurrence relation: d/dx[log(j_l)] = l/x - j_{l+1}/j_l
-    jl = sphericalbesselj(l, x)
-    jl_plus_1 = sphericalbesselj(l + 1, x)
-
-    # Check for numerical issues
-    if abs(jl) < 1e-30
-        # If j_l is very small, fall back to asymptotic form
-        return complex(T(l)) / x
+    # d/dx[log(j_l)] = l/x - j_{l+1}/j_l, with j_{l+1}/j_l = x/g and the continued
+    # fraction g = 2l+3 - x²/(2l+5 - x²/(2l+7 - …)) evaluated by modified Lentz.
+    # Forming j_l and j_{l+1} separately loses the ratio once j_l underflows
+    # (small x, large l) or overflows (large complex x).
+    tiny = sqrt(floatmin(T))
+    g = complex(T(2l + 3)); C = g; D = zero(g)
+    for k in 2:(10_000 + 4 * ceil(Int, abs(x)))
+        b = T(2l + 2k + 1)
+        D = b - x^2 * D; iszero(D) && (D = complex(tiny)); D = inv(D)
+        C = b - x^2 / C; iszero(C) && (C = complex(tiny))
+        Δ = C * D
+        g *= Δ
+        abs(Δ - 1) <= 4 * eps(T) && return T(l) / x - x / g
     end
-
-    return T(l) / x - jl_plus_1 / jl
+    error("spherical_bessel_j_logderiv: continued fraction did not converge for l=$l, x=$x")
 end
 
 # Overload for real arguments (though we primarily use complex)

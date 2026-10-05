@@ -65,6 +65,16 @@ else
             r = Magrathea.solve(TriglobalProblem(op, bs3d, 0:1); nev=2, sigma=0.0)
             @test finite_vals(r)
         end
+
+        @testset "solve_eigenvalue_problem passes krylovdim to SLEPc" begin
+            sp = SparseOnsetParams(E=1e-3, Pr=1.0, Ra=1.0e3, ricb=0.35, m=2, lmax=6,
+                                   symm=1, N=16)
+            A, B = assemble_sparse_matrices(SparseStabilityOperator(sp))
+            λ, _, _ = solve_eigenvalue_problem(A, B; nev=2, sigma=0.0, backend=:slepc)
+            λ_ncv, _, _ = solve_eigenvalue_problem(A, B; nev=2, sigma=0.0, backend=:slepc,
+                                                   krylovdim=30)
+            @test λ_ncv[1] ≈ λ[1] rtol=1e-6
+        end
     end
 
     include("slepc_assembly_regressions.jl")

@@ -75,14 +75,8 @@ end
 
 """Chebyshev-coefficient functional `∫ r³ v(r) dr`, proportional to the angular
 momentum of the ℓ = 1 toroidal velocity `v` (rigid rotation is `v ∝ r`)."""
-function _mhd_angular_momentum_functional(op::MHDStabilityOperator{T}) where T
-    N = op.params.N; ri = op.params.ricb; ro = one(T)
-    # N + 5 Chebyshev nodes integrate r³·T_N exactly.
-    x = T[-cospi(T(k) / (N + 4)) for k in 0:(N + 4)]
-    r = ri .+ (x .+ 1) .* ((ro - ri) / 2)
-    w = _mean_radial_weights(r) .* r .^ 3
-    return T[sum(w .* cos.(n .* acos.(x))) for n in 0:N]
-end
+_mhd_angular_momentum_functional(op::MHDStabilityOperator{T}) where T =
+    _angular_momentum_functional(T, op.params.N, op.params.ricb, one(T))
 
 """Shared tau boundary rows and sparse A entries for serial and distributed MHD."""
 function _compute_mhd_bc(op::MHDStabilityOperator{T}) where T

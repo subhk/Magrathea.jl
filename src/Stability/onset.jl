@@ -46,7 +46,7 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
 """
 @with_kw struct OnsetConvectionParams{T<:Real}
     E::T
-    Pr::T = one(T)
+    Pr::T = one(E)
     Ra::T
     χ::T
     m::Int
@@ -56,11 +56,16 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
     thermal_bc::ThermalBC = :fixed_temperature
     equatorial_symmetry::Symbol = :both
     heating::Symbol = :differential
+    Pm::T = one(E)
+    Le::T = zero(E)
+    B0_type::BackgroundField = no_field
+    magnetic_bc::MagneticBC = :insulating
 
     function OnsetConvectionParams{T}(E, Pr, Ra, χ, m, lmax, Nr,
                                        mechanical_bc, thermal_bc,
                                        equatorial_symmetry,
-                                       heating=:differential) where T
+                                       heating=:differential, Pm=one(T), Le=zero(T),
+                                       B0_type=no_field, magnetic_bc=:insulating) where T
         0 < χ < 1 || throw(ArgumentError(
             "Radius ratio χ must be in (0,1), got $χ"))
         E > 0 || throw(ArgumentError(
@@ -80,9 +85,10 @@ than `OnsetParams` (no `basic_state`, `ri`, `ro`, `L` fields).
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         heating in (:differential, :internal) || throw(ArgumentError(
             "heating must be :differential or :internal, got :$heating"))
+        _check_magnetic_options(Pm, Le, B0_type, magnetic_bc, mechanical_bc)
 
         new{T}(E, Pr, Ra, χ, m, lmax, Nr, mechanical_bc, thermal_bc, equatorial_symmetry,
-               heating)
+               heating, Pm, Le, B0_type, magnetic_bc)
     end
 end
 
@@ -90,7 +96,7 @@ end
 function OnsetConvectionParams(p::OnsetParams{T}) where {T}
     OnsetConvectionParams{T}(p.E, p.Pr, p.Ra, p.χ, p.m, p.lmax, p.Nr,
                               p.mechanical_bc, p.thermal_bc, p.equatorial_symmetry,
-                              p.heating)
+                              p.heating, p.Pm, p.Le, p.B0_type, p.magnetic_bc)
 end
 
 
@@ -150,7 +156,8 @@ function solve_onset_problem(params::OnsetConvectionParams{T};
         thermal_bc = params.thermal_bc,
         equatorial_symmetry = params.equatorial_symmetry,
         heating = params.heating,
-        basic_state = nothing  # No basic state = conduction profile
+        basic_state = nothing;  # No basic state = conduction profile
+        _magnetic_kwargs(params)...
     )
 
     # Build operator and solve
@@ -224,7 +231,10 @@ function find_critical_Ra_onset(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int
                                  sigma=nothing,
                                  which::Symbol=:LR,
                                  maxiter::Int=1000,
-                                 verbose::Bool=false)
+                                 verbose::Bool=false,
+                                 Pm::Real=1, Le::Real=0,
+                                 B0_type::BackgroundField=no_field,
+                                 magnetic_bc=:insulating)
     _check_backend(backend)
 
     # Promote scalar inputs to a common float type (keyword-only `where T`
@@ -242,7 +252,8 @@ function find_critical_Ra_onset(; E::Real, Pr::Real, χ::Real, m::Int, lmax::Int
         Ra_guess=Ra_guess_T, tol=T(tol), growth_tol=T(growth_tol), Ra_bracket=bracket,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
         equatorial_symmetry=equatorial_symmetry, heating=heating, nev=nev,
-        backend=backend, sigma=sigma, which=which, maxiter=maxiter
+        backend=backend, sigma=sigma, which=which, maxiter=maxiter,
+        Pm=T(Pm), Le=T(Le), B0_type=B0_type, magnetic_bc=magnetic_bc
     )
 
     if verbose
@@ -342,7 +353,7 @@ function find_global_critical_onset(; E::Real, Pr::Real, χ::Real, lmax::Int, Nr
 
     for m in m_range
         try
-            Ra_c, ω_c, _ = find_critical_Ra_onset(
+            Ra_c, ω_c, _ = find_critical_Ra_onset(;
                 E=E, Pr=Pr, χ=χ, m=m,
                 lmax=max(lmax, m + 10),
                 Nr=Nr,
@@ -440,10 +451,11 @@ function estimate_onset_problem_size(params::OnsetConvectionParams)
         mechanical_bc = params.mechanical_bc,
         thermal_bc = params.thermal_bc,
         equatorial_symmetry = params.equatorial_symmetry,
-        basic_state = nothing
+        basic_state = nothing;
+        _magnetic_kwargs(params)...
     )
     l_sets = compute_l_sets(internal_params)
-    total_dofs = (length(l_sets[:P]) + length(l_sets[:T]) + length(l_sets[:Θ])) * Nr
+    total_dofs = sum(length, values(l_sets)) * Nr
     matrix_size = total_dofs
 
     # Memory: A and B matrices (complex, dense for now)

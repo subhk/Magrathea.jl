@@ -12,8 +12,8 @@
 #  every assertion here is construction / structural / error-path only. NO
 #  eigensolver / solve() / SLEPc / PETSc / MPI is touched. Axisymmetric (m=0)
 #  paths are preferred; for m≠0 mean-flow coupling only structural facts
-#  (dims / eltype / no-throw / which matrix is written) are asserted — never
-#  coupling COEFFICIENT VALUES (those carry known bugs).
+#  (dims / eltype / no-throw / which matrix is written) are asserted here;
+#  coefficient values are validated in mean_flow_coupling.jl.
 # =============================================================================
 
 using Test

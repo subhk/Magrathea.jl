@@ -37,7 +37,8 @@ end
 
 """Warn when an onset solve is likely to allocate dense matrices larger than the soft limit."""
 function _check_memory(p::OnsetProblem, label)
-    total_dof = _hd_total_dof(p.params.m, p.params.lmax, p.params.Nr, p.params.equatorial_symmetry)
+    total_dof = _hd_total_dof(p.params.m, p.params.lmax, p.params.Nr, p.params.equatorial_symmetry;
+                              magnetic=_has_magnetic(p.params))
     mem = _mem_gb(total_dof)
     if mem > 8.0
         @warn "$label: estimated memory ~$(round(mem; digits=1)) GB exceeds 8 GB — consider reducing lmax or Nr"
@@ -47,7 +48,8 @@ end
 
 """Warn when a biglobal solve is likely to allocate dense matrices larger than the soft limit."""
 function _check_memory(p::BiglobalProblem, label)
-    total_dof = _hd_total_dof(p.params.m, p.params.lmax, p.params.Nr, p.params.equatorial_symmetry)
+    total_dof = _hd_total_dof(p.params.m, p.params.lmax, p.params.Nr, p.params.equatorial_symmetry;
+                              magnetic=_has_magnetic(p.params))
     mem = _mem_gb(total_dof)
     if mem > 8.0
         @warn "$label: estimated memory ~$(round(mem; digits=1)) GB exceeds 8 GB — consider reducing lmax or Nr"
@@ -58,7 +60,8 @@ end
 """Warn when a triglobal solve is likely to allocate dense matrices larger than the soft limit."""
 function _check_memory(p::TriglobalProblem, label)
     total_dof, _ = _triglobal_total_dof(
-        p.m_range, p.params.lmax, p.params.Nr, p.params.equatorial_symmetry)
+        p.m_range, p.params.lmax, p.params.Nr, p.params.equatorial_symmetry;
+        magnetic=_has_magnetic(p.params))
     mem = _mem_gb(total_dof)
     if mem > 8.0
         @warn "$label: estimated memory ~$(round(mem; digits=1)) GB exceeds 8 GB — consider reducing lmax or m_range"
@@ -74,6 +77,16 @@ function _check_memory(p::MHDProblem, label)
         @warn "$label: estimated memory ~$(round(mem; digits=1)) GB exceeds 8 GB — consider reducing lmax or N"
     end
     return nothing
+end
+
+
+"""`result.extra` of a collocation solve; with an imposed field it also carries the
+radial and angular spectral tails of every eigenvector (see
+`_collocation_spectral_tails`) and warns when the leading mode is under-resolved."""
+function _collocation_extra(op, info, eigenvalues, evecs)
+    _has_magnetic(op.params) || return (operator=op, info=info)
+    return (operator=op, info=info,
+            spectral_tail=_check_magnetic_resolution(op, eigenvalues, evecs))
 end
 
 # ============================================================================
@@ -113,7 +126,7 @@ function solve(problem::OnsetProblem{T};
         convert(Vector{Complex{T}}, eigenvalues),
         evec_matrix,
         problem;
-        extra=(operator=op, info=info)
+        extra=_collocation_extra(op, info, eigenvalues, evec_matrix)
     )
 end
 
@@ -146,7 +159,7 @@ function solve(problem::BiglobalProblem{T};
         m=p.m, lmax=p.lmax, Nr=p.Nr,
         basic_state=problem.basic_state,
         mechanical_bc=p.mechanical_bc, thermal_bc=p.thermal_bc,
-        equatorial_symmetry=p.equatorial_symmetry
+        equatorial_symmetry=p.equatorial_symmetry; _magnetic_kwargs(p)...
     )
 
     eigenvalues, eigenvectors, op, info = solve_biglobal_problem(biglobal_params;
@@ -158,7 +171,7 @@ function solve(problem::BiglobalProblem{T};
         convert(Vector{Complex{T}}, eigenvalues),
         evec_matrix,
         problem;
-        extra=(operator=op, info=info)
+        extra=_collocation_extra(op, info, eigenvalues, evec_matrix)
     )
 end
 
@@ -194,7 +207,7 @@ function solve(problem::TriglobalProblem{T};
         m_range=problem.m_range, lmax=p.lmax, Nr=p.Nr,
         basic_state_3d=problem.basic_state,
         mechanical_bc=p.mechanical_bc, thermal_bc=p.thermal_bc,
-        equatorial_symmetry=p.equatorial_symmetry
+        equatorial_symmetry=p.equatorial_symmetry; _magnetic_kwargs(p)...
     )
 
     eigenvalues, eigenvectors = solve_triglobal_eigenvalue_problem(triglobal_params;
@@ -451,39 +464,49 @@ end
 # ============================================================================
 
 """
-    find_critical_Ra(problem; Ra_guess=1e6, tol=1e-6, kwargs...)
+    find_critical_Ra(problem; Ra_guess, Ra_bracket, tol, verbose=false, kwargs...)
+        -> (Ra_c, ω_c, eigenvector_c)
 
-Find the critical Rayleigh number for the given stability problem.
-Dispatches to the appropriate solver based on problem type.
+Find the critical Rayleigh number of an onset, biglobal or triglobal problem,
+where the leading growth rate changes sign. Every problem type returns the
+critical Rayleigh number, the drift frequency of the critical mode and its
+eigenvector (empty on non-root MPI ranks).
+
+The search brackets `Ra_bracket = (Ra_lo, Ra_hi)`, or `(Ra_guess/10, Ra_guess*10)`
+when only `Ra_guess` is given. Onset and biglobal problems default to
+`Ra_guess=1e6` and `tol=1e-6`. Triglobal problems, where every step is a coupled
+multi-mode eigensolve, default to the bracket `(1e5, 1e8)` and `tol=1e-4`; they
+also accept `Ra_min`/`Ra_max` in place of `Ra_bracket`. Other keywords, such as
+`nev` and `backend`, are passed to the eigensolver. `MHDProblem` is not supported.
 
 # Example
 ```julia
 params = OnsetParams(E=1e-3, Pr=1.0, Ra=1e6, χ=0.35, m=4, lmax=20, Nr=32)
-Ra_c = find_critical_Ra(OnsetProblem(params); Ra_guess=1e5)
+Ra_c, ω_c, eigenvector_c = find_critical_Ra(OnsetProblem(params); Ra_guess=1e5)
 ```
 """
 function find_critical_Ra end
 
 """Find critical Rayleigh number for an onset problem using its wrapped parameters."""
 function find_critical_Ra(problem::OnsetProblem{T};
-                          Ra_guess::T=T(1e6),
-                          tol::T=T(1e-6),
+                          Ra_guess::Real=T(1e6),
+                          tol::Real=T(1e-6),
                           nev::Int=6,
                           verbose::Bool=false,
                           kwargs...) where T
     p = problem.params
     return find_critical_Ra_onset(;
         E=p.E, Pr=p.Pr, χ=p.χ, m=p.m, lmax=p.lmax, Nr=p.Nr,
-        Ra_guess=Ra_guess, tol=tol,
+        Ra_guess=T(Ra_guess), tol=T(tol),
         mechanical_bc=p.mechanical_bc, thermal_bc=p.thermal_bc,
-        equatorial_symmetry=p.equatorial_symmetry,
-        nev=nev, verbose=verbose, kwargs...)
+        equatorial_symmetry=p.equatorial_symmetry, heating=p.heating,
+        nev=nev, verbose=verbose, _magnetic_kwargs(p)..., kwargs...)
 end
 
 """Find critical Rayleigh number for a biglobal problem with an axisymmetric basic state."""
 function find_critical_Ra(problem::BiglobalProblem{T};
-                          Ra_guess::T=T(1e6),
-                          tol::T=T(1e-6),
+                          Ra_guess::Real=T(1e6),
+                          tol::Real=T(1e-6),
                           nev::Int=6,
                           verbose::Bool=false,
                           kwargs...) where T
@@ -491,28 +514,46 @@ function find_critical_Ra(problem::BiglobalProblem{T};
     return find_critical_Ra_biglobal(;
         E=p.E, Pr=p.Pr, χ=p.χ, m=p.m, lmax=p.lmax, Nr=p.Nr,
         basic_state=problem.basic_state,
-        Ra_guess=Ra_guess, tol=tol,
+        Ra_guess=T(Ra_guess), tol=T(tol),
         mechanical_bc=p.mechanical_bc, thermal_bc=p.thermal_bc,
         equatorial_symmetry=p.equatorial_symmetry,
-        nev=nev, verbose=verbose, kwargs...)
+        nev=nev, verbose=verbose, _magnetic_kwargs(p)..., kwargs...)
 end
 
 """Find critical Rayleigh number for a triglobal problem with a 3D basic state."""
 function find_critical_Ra(problem::TriglobalProblem{T};
-                          Ra_min::Real=1e5,
-                          Ra_max::Real=1e8,
+                          Ra_guess::Union{Real,Nothing}=nothing,
+                          Ra_bracket::Union{Tuple{Real,Real},Nothing}=nothing,
+                          Ra_min::Union{Real,Nothing}=nothing,
+                          Ra_max::Union{Real,Nothing}=nothing,
                           tol::Real=1e-4,
                           max_iter::Int=20,
-                          verbose::Bool=true,
+                          verbose::Bool=false,
                           kwargs...) where T
+    Ra_lo, Ra_hi = _triglobal_Ra_bracket(Ra_guess, Ra_bracket, Ra_min, Ra_max)
     p = problem.params
-    return find_critical_rayleigh_triglobal(
+    Ra_c, _, ω_c, eigenvector_c = _find_critical_triglobal(
         p.E, p.Pr, p.χ, problem.m_range, p.lmax, p.Nr,
         problem.basic_state;
-        Ra_min=Ra_min, Ra_max=Ra_max, tol=tol, max_iter=max_iter,
+        Ra_min=Ra_lo, Ra_max=Ra_hi, tol=tol, max_iter=max_iter,
         mechanical_bc=p.mechanical_bc, thermal_bc=p.thermal_bc,
         equatorial_symmetry=p.equatorial_symmetry,
-        verbose=verbose, kwargs...)
+        verbose=verbose, _magnetic_kwargs(p)..., kwargs...)
+    return Ra_c, ω_c, eigenvector_c
+end
+
+# An explicit bracket (`Ra_bracket` or the older `Ra_min`/`Ra_max`) takes precedence
+# over `Ra_guess`, as in the onset and biglobal searches.
+function _triglobal_Ra_bracket(Ra_guess, Ra_bracket, Ra_min, Ra_max)
+    legacy = Ra_min !== nothing || Ra_max !== nothing
+    Ra_bracket !== nothing && legacy && throw(ArgumentError(
+        "pass either Ra_bracket or Ra_min/Ra_max, not both"))
+    lo, hi = Ra_bracket !== nothing ? Ra_bracket :
+             legacy ? (something(Ra_min, 1e5), something(Ra_max, 1e8)) :
+             Ra_guess !== nothing ? (Ra_guess / 10, Ra_guess * 10) : (1e5, 1e8)
+    0 < lo < hi || throw(ArgumentError(
+        "the Rayleigh bracket must satisfy 0 < Ra_lo < Ra_hi, got ($lo, $hi)"))
+    return lo, hi
 end
 
 """Report that MHD critical-parameter searches are not exposed as a one-parameter API."""
@@ -553,4 +594,17 @@ function perturbation_temperature(result::StabilityResult, mode::Int; kwargs...)
         "Pass (evec, op) instead.")
     return perturbation_temperature(result.eigenvectors[:, mode],
                                     result.extra.operator; kwargs...)
+end
+
+"""
+    perturbation_magnetic(result::StabilityResult, mode::Int; kwargs...)
+
+Reconstruct the magnetic field for the `mode`-th eigenvector of an MHD result.
+"""
+function perturbation_magnetic(result::StabilityResult, mode::Int; kwargs...)
+    hasproperty(result.extra, :operator) || error(
+        "perturbation_magnetic(result, mode): result.extra has no :operator. " *
+        "Pass (evec, op) instead.")
+    return perturbation_magnetic(result.eigenvectors[:, mode],
+                                 result.extra.operator; kwargs...)
 end

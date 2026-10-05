@@ -247,10 +247,14 @@ Chebyshev coefficients in every `(ℓ, field)` block; `angular` is the share
 carried by the highest `fraction` of the retained degrees ℓ of every field. A
 resolved eigenmode decays spectrally in both, so both are small; a large tail
 means the mode lives at the truncation scale and its eigenvalue is not
-trustworthy (e.g. spurious growth at strong field and low `N`).
+trustworthy (e.g. spurious growth at strong field and low `N`). The magnetic field
+is measured as `Le·b`, as in the energy, so that magnetic coefficients in their
+native units cannot hide an under-resolved velocity.
 """
 function _mhd_spectral_tails(op::MHDStabilityOperator, vec::AbstractVector; fraction::Real=1/4)
     idx_map = _mhd_index_map(op)
+    Le = Float64(op.params.Le)
+    magnetic_weight = iszero(Le) ? 1.0 : Le^2
     total = 0.0; radial = 0.0; angular = 0.0
     top_l = Dict{Symbol,Int}()
     for ((l, sec), _) in idx_map
@@ -263,8 +267,9 @@ function _mhd_spectral_tails(op::MHDStabilityOperator, vec::AbstractVector; frac
         k_cut = n - max(1, floor(Int, fraction * n)) + 1
         ls = sec_ls[sec]
         l_cut = ls[end - max(1, floor(Int, fraction * length(ls))) + 1]
+        weight = sec in (:f, :g, :fi, :gi, :fm, :gm) ? magnetic_weight : 1.0
         for (k, i) in enumerate(rng)
-            a = Float64(abs2(vec[i]))
+            a = weight * Float64(abs2(vec[i]))
             total += a
             k >= k_cut && (radial += a)
             length(ls) > 1 && l >= l_cut && (angular += a)

@@ -206,8 +206,10 @@ end
 end
 
 @testset "MHD subcritical tau modes decay with all magnetic walls" begin
+    # N=16: the dipole's r⁶ weights leave the tau pencil under-resolved at N ≤ 12,
+    # where truncation-scale modes appear (and are flagged by the resolution check).
     for bg in (axial,dipole), inner in (0,1,2), outer in (0,2)
-        op=_mhd_check_op(B0_type=bg,m=1,symm=1,N=12,bci_magnetic=inner,bco_magnetic=outer)
+        op=_mhd_check_op(B0_type=bg,m=1,symm=1,N=16,bci_magnetic=inner,bco_magnetic=outer)
         A,B,_,_=assemble_mhd_matrices(op)
         λ=_mhd_check_spectrum(A,B)
         @test maximum(real,λ) < 0

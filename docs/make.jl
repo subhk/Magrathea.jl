@@ -41,6 +41,7 @@ makedocs(
         ],
         "Reference" => [
             "API Reference" => "reference.md",
+            "Lower-Level API" => "lowlevel_api.md",
             "Codebase Structure" => "codebase_structure.md",
             "Migration Guide" => "migration-v2.md",
             "FAQ" => "faq.md",

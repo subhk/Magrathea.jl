@@ -196,3 +196,49 @@ end
     end
     @test uphi[2] ≈ uphi[1] rtol=1e-8
 end
+
+# Relative change of a state under the lagged Picard map (heat transport at fixed
+# velocity, momentum with frozen inertia; Pr = 1): zero for a steady state.
+function lagged_map_defect(bs,cd,E,Ra,L,M;mechanical_bc=:no_slip)
+    D=Matrix(cd.D1); D2=Matrix(cd.D2); N=length(cd.x)
+    walls=Dict(k=>(v[1],v[end],:fixed_temperature) for (k,v) in bs.theta_coeffs)
+    θ=Magrathea._mean_temperature_step(bs.flow,D,D2,E,walls)
+    u=Magrathea._steady_mean_flow(θ,bs.r,D,D2,E,Ra,1.,L,M;mechanical_bc=mechanical_bc,
+        inertia=Magrathea._mean_inertia(bs.flow,D))
+    orth=k->Magrathea._sh_nf_to_orth_factor(k...,Float64)
+    max(Magrathea._relative_change(((bs.theta_coeffs,θ,orth),),Float64,N),
+        Magrathea._relative_change(((bs.flow.p,u.p,_->1.),(bs.flow.t,u.t,_->1.)),Float64,N))
+end
+
+@testset "Implicit buoyancy feedback converges near and above onset" begin
+    # Advecting the spherical mean temperature with the previous velocity made the
+    # buoyancy feedback an explicit loop whose gain grows with Ra: that iteration
+    # stalled at both of these points even for weak forcing. The converged state
+    # must still be a fixed point of the lagged map, which checks the implicit
+    # heat step independently.
+    for (E,Ra,N,bc,amp) in ((1e-4,1e6,32,:no_slip,.05),(1e-2,3e3,24,:stress_free,1e-3))
+        cd=ChebyshevDiffn(N,[.35,1.],4)
+        bs,info=nonaxisymmetric_basic_state_selfconsistent(cd,.35,E,Ra,1.,4,2,
+            Dict((2,1)=>amp,(2,2)=>amp);mechanical_bc=bc,max_iterations=100)
+        @test info.converged && info.newton_iterations==0
+        @test lagged_map_defect(bs,cd,E,Ra,4,2;mechanical_bc=bc) < 1e-7
+    end
+end
+
+@testset "Newton–Krylov fallback and forcing continuation" begin
+    # Picard stalls at once here: nonlinear transport drives orders m = 3, 4 that are
+    # above their own onset. Newton–Krylov steps reach the steady state.
+    cd=ChebyshevDiffn(32,[.35,1.],4)
+    bs,info=nonaxisymmetric_basic_state_selfconsistent(cd,.35,1e-4,1e6,1.,4,4,
+        Dict((2,1)=>.05,(2,2)=>.05))
+    @test info.converged && info.newton_iterations>0 && info.forcing_reached==1
+    @test info.iterations==length(info.forcing_history)==length(info.step_history)
+    @test lagged_map_defect(bs,cd,1e-4,1e6,4,4) < 1e-7
+
+    # Continuation in the anomaly amplitude stops at a fold of the steady branch, near
+    # half of this forcing: beyond it no steady state continues the branch.
+    cd=ChebyshevDiffn(24,[.35,1.],4)
+    _,fold=nonaxisymmetric_basic_state_selfconsistent(cd,.35,1e-2,5e3,1.,4,2,
+        Dict((2,1)=>.01,(2,2)=>.01);mechanical_bc=:stress_free,max_iterations=200)
+    @test !fold.converged && .45<fold.forcing_reached<.52
+end

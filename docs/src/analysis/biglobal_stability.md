@@ -12,7 +12,7 @@ Biglobal stability analysis extends the classical onset problem by including an 
 Biglobal analysis is appropriate when:
 
 1. **Thermal wind balance** - Latitudinal temperature variations drive geostrophic zonal flows
-2. **Differential rotation** - Inner and outer boundaries rotate at different rates
+2. **Differential rotation** - Inner and outer boundaries rotate at different rates (not yet implemented; see [Differential Rotation](#Differential-Rotation))
 3. **Imposed zonal jets** - Pre-existing axisymmetric flow structures
 4. **Meridional circulation** - Axisymmetric poloidal flows (though often secondary)
 
@@ -115,8 +115,8 @@ Nr = 64
 χ = 0.35
 cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
 
-# Pure conduction basic state
-bs = conduction_basic_state(cd, χ; lmax_bs = 6)
+# Pure conduction basic state (lmax_bs = 6)
+bs = conduction_basic_state(cd, χ, 6)
 ```
 
 This creates a basic state with:
@@ -140,16 +140,16 @@ bs = meridional_basic_state(
     E,               # Ekman number
     Ra,              # Rayleigh number
     Pr,              # Prandtl number
-    lmax_bs = 6,     # Max ℓ for basic state
-    amplitude = 0.1; # Amplitude of Y₂₀ perturbation
+    6,               # lmax_bs: max ℓ for basic state
+    0.1;             # amplitude of the outer-wall P₂(cos θ) temperature anomaly
     mechanical_bc = :no_slip,
 )
 ```
 
 This generates:
 
-1. **Temperature**: ``\bar{\Theta}_{20}(r) \cdot Y_2^0(\theta)`` perturbation
-2. **Zonal flow**: ``\bar{u}_\phi`` from thermal wind integration
+1. **Temperature**: the conductive response ``\bar{\Theta}_{20}(r) \cdot Y_2^0(\theta)`` to the boundary anomaly
+2. **Velocity**: all three components from the viscous Stokes–Coriolis solve, i.e. the zonal thermal wind and the meridional circulation
 
 ### Custom Boundary Patterns and Imported States
 
@@ -240,50 +240,43 @@ Mean flows can either stabilize or destabilize convection:
 The strength of thermal wind scales with the temperature variation amplitude:
 
 ```math
-\bar{u}_\phi \sim \frac{Ra \cdot E^2}{Pr} \cdot \Delta \bar{\Theta}
+\bar{u}_\phi \sim \frac{Ra \cdot E^2}{Pr(1-\chi)^3} \cdot \Delta \bar{\Theta}
 ```
 
 For weak thermal wind (``\bar{u}_\phi \ll E^{1/3}``), effects are perturbative. For strong thermal wind, significant modifications to onset occur.
 
 ### Critical Layer Interactions
 
-When ``\bar{u}_\phi(r_c) = \omega/m`` (matching pattern speed), critical layers form where perturbation energy can be exchanged with the mean flow.
+Perturbations vary as ``e^{im\phi + \lambda t}`` with ``\lambda = \sigma + i\omega``, so their
+pattern rotates at angular velocity ``-\omega/m``. Where the mean angular velocity
+``\bar{u}_\phi/(r\sin\theta)`` matches it, critical layers form where perturbation energy can be exchanged with the mean flow.
 
 ## Boundary-Driven Flows
 
 ### Differential Rotation
 
-Boundaries rotating at different rates impose zonal flow:
-
-```julia
-# Inner boundary rotating faster
-Ω_inner = 1.0  # Reference
-Ω_outer = 0.9  # 10% slower
-
-# This requires specialized basic state construction
-bs_diff_rot = differential_rotation_basic_state(
-    cd, χ, E,
-    Ω_inner = Ω_inner,
-    Ω_outer = Ω_outer,
-)
-```
+Differentially rotating boundaries are not implemented. Every basic state and
+stability operator assumes walls at rest in the rotating frame, and
+`BiglobalProblem`/`TriglobalProblem` reject a mean velocity that violates the
+stationary no-slip or stress-free conditions.
 
 ### Boundary Heating Patterns
 
-Laterally varying boundary heat flux:
+Laterally varying boundary temperature or heat flux, written with symbolic harmonics:
 
 ```julia
 # CMB-like heating pattern
-boundary_heating = Dict(
-    2 => 0.15,  # Y₂₀ amplitude
-    4 => 0.05,  # Y₄₀ amplitude
-)
+boundary_heating = Y20(0.15) + Y40(0.05)
 
-bs = boundary_forced_basic_state(
-    cd, χ, E, Ra, Pr,
-    boundary_modes = boundary_heating,
-)
+# As an outer-wall temperature anomaly
+bs = basic_state(cd, χ, E, Ra, Pr; temperature_bc = boundary_heating)
+
+# Or as a heat-flux (∂θ̄/∂r) anomaly added to the conduction flux
+bs_flux = basic_state(cd, χ, E, Ra, Pr; flux_bc = boundary_heating)
 ```
+
+`inner_temperature_bc` and `inner_flux_bc` impose patterns on the inner boundary;
+see [Basic States](../basic_states.md).
 
 ## Complete Example: Thermal Wind Stability
 
@@ -323,14 +316,12 @@ results = []
 for amp in amplitudes
     @printf("Amplitude = %.2f: ", amp)
 
-    # Create basic state
+    # Create basic state (lmax_bs = 6)
     if amp == 0.0
-        bs = conduction_basic_state(cd, χ; lmax_bs = 6)
+        bs = conduction_basic_state(cd, χ, 6)
     else
         bs = meridional_basic_state(
-            cd, χ, E, Ra, Pr;
-            lmax_bs = 6,
-            amplitude = amp,
+            cd, χ, E, Ra, Pr, 6, amp;
             mechanical_bc = :no_slip,
         )
     end
@@ -374,12 +365,9 @@ println("="^60)
 
 for amp in [0.0, 0.1, 0.2]
     if amp == 0.0
-        bs = conduction_basic_state(cd, χ; lmax_bs = 6)
+        bs = conduction_basic_state(cd, χ, 6)
     else
-        bs = meridional_basic_state(
-            cd, χ, E, Ra, Pr;
-            lmax_bs = 6, amplitude = amp,
-        )
+        bs = meridional_basic_state(cd, χ, E, Ra, Pr, 6, amp)
     end
 
     Ra_c, ω_c, _ = find_critical_Ra_biglobal(;

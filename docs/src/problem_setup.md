@@ -41,9 +41,10 @@ this. Fixed flux sets the perturbation radial temperature derivative to zero; it
 does not require the basic-state heat flux itself to vanish. A single symbol
 applies to both walls, and a pair such as
 `thermal_bc=(:fixed_temperature, :fixed_flux)` sets the inner and outer walls
-separately. Basic states hold the inner wall at a fixed temperature, so
-`BiglobalProblem` and `TriglobalProblem` require a `:fixed_temperature` inner
-wall; use the pair above for a fixed-flux outer wall. `OnsetProblem` always uses
+separately. In `BiglobalProblem` and `TriglobalProblem` the perturbation's inner
+condition must match the basic state's `inner_thermal_bc`: `:fixed_temperature`
+by default, or `:fixed_flux` for a state forced by an inner heat flux. Use a pair
+such as the one above for a different outer wall. `OnsetProblem` always uses
 the conduction profile and rejects `params.basic_state`. See
 [boundary conventions](theory/mathematical_foundations.md#Boundary-Conditions)
 for the potential-dependent formulas.
@@ -75,6 +76,8 @@ println(result.eigenvalues)
 
 `sigma` controls the spectral target. Results summarize the eigenpairs that
 were found; vary targets and resolution when identifying a leading mode.
+Without PETSc, `backend=:dense` solves problems of this size with a dense
+LAPACK eigensolver.
 
 ## Find a critical Rayleigh number
 
@@ -86,10 +89,10 @@ Ra_c, ω_c, eigenvector_c = find_critical_Ra(
 )
 ```
 
-For onset this returns a tuple: critical Rayleigh number, temporal frequency,
-and eigenvector. It searches for a growth-rate sign change and refines the
-bracket. To find the global onset, repeat over azimuthal orders and compare
-the resolved critical Rayleigh numbers. A single `m` is not a global search.
+Onset, biglobal, and triglobal searches all return a tuple: critical Rayleigh
+number, temporal frequency, and eigenvector. Each searches for a growth-rate
+sign change and refines the bracket. To find the global onset, repeat over
+azimuthal orders and compare the resolved critical Rayleigh numbers. A single `m` is not a global search.
 
 Biglobal and triglobal critical searches hold their supplied mean state
 fixed; rebuild it during a parameter sweep if the intended physical mean
@@ -110,9 +113,12 @@ solves, reconstruct and plot on rank zero, where eigenvectors are gathered.
 The [API reference](reference.md) documents grids and return values.
 
 MHD reconstruction uses full coefficient vectors and its MHD operator.
-Triglobal results carry a coupled problem layout; individual blocks must
-first be expanded using that layout. Avoid treating reduced vectors as
-unreduced spectral arrays.
+Triglobal eigenvectors hold the reduced blocks of every coupled `m`, and the
+result carries no layout. Rebuild it from the same parameters with
+`layout = setup_coupled_mode_problem(TriglobalParams(...))`, then expand a
+column, for example with
+`Magrathea.eigenvector_to_velocity_triglobal(result.eigenvectors[:, 1], layout)`.
+Avoid treating reduced vectors as unreduced spectral arrays.
 
 ## Save the result
 

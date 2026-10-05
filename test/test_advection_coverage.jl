@@ -463,12 +463,10 @@ end
     @test Magrathea._boundary_radius(_RI, _RO, :inner) == _RI
     @test Magrathea._boundary_radius(0.0, _RO, :inner) == -_RO   # ri=0 maps inner to -ro
 
-    # neumann2 inner boundary second-derivative functional + _bc_row_values branch.
+    # Inner and outer second-derivative boundary functionals.
     N2 = 6
     @test length(Magrathea._chebyshev_boundary_second_derivative(N2, :inner)) == N2 + 1
     @test length(Magrathea._chebyshev_boundary_second_derivative(N2, :outer)) == N2 + 1
-    br, vals = Magrathea._bc_row_values(:neumann2, N2 + 3, N2, _RI, _RO, Float64)  # row in a deeper block -> inner boundary
-    @test length(vals) == N2 + 1
 
     # sparse_radial_operator: a r^power d^n/dr^n operator builds as a sparse matrix
     # with the right size (covers the deriv chain + r-power multiply assembly).

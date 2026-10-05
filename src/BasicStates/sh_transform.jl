@@ -54,8 +54,13 @@ end
 function _build_sh_grid(lmax::Int, mmax::Int, ::Type{T}) where {T<:Real}
     Nθ = 3 * lmax + 6                      # oversampled for product dealiasing
     Nφ = max(3 * mmax + 4, 6)              # ≥ product (2mmax) + test (mmax) azimuthal degree
-    μ64, w64 = _gauss_legendre_nodes(Nθ)
-    μ = T.(μ64); w = T.(w64)
+    # Types wider than Float64 need nodes computed in T to keep their precision.
+    μ, w = if eps(T) < eps(Float64)
+        _resolution_gauss(Nθ, T)
+    else
+        μ64, w64 = _gauss_legendre_nodes(Nθ)
+        T.(μ64), T.(w64)
+    end
     φ = T[2 * T(π) * (k - 1) / Nφ for k in 1:Nφ]
     SHGrid{T}(lmax, mmax, μ, w, φ)
 end

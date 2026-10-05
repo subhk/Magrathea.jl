@@ -3,6 +3,12 @@
 # ============================================================================
 
 # --- Abstract base ---
+"""
+    AbstractStabilityResult{T}
+
+Supertype of eigensolve results with real element type `T`. [`StabilityResult`](@ref)
+is the concrete type returned by [`solve`](@ref).
+"""
 abstract type AbstractStabilityResult{T} end
 
 # --- Problem types ---
@@ -190,8 +196,10 @@ frequency(r::StabilityResult) = r.frequency
     leading_mode(r::StabilityResult) -> AbstractVector
 
 Return the eigenvector corresponding to the most unstable (largest real part) eigenvalue.
+It is empty on non-root MPI ranks, which hold no eigenvectors.
 """
-leading_mode(r::StabilityResult) = @view r.eigenvectors[:, r.leading_index]
+leading_mode(r::StabilityResult) = size(r.eigenvectors, 2) == 0 ?
+    eltype(r.eigenvectors)[] : @view r.eigenvectors[:, r.leading_index]
 
 # --- Problem size estimation (shared helpers) ---
 
@@ -226,24 +234,31 @@ end
 
 Estimate dense hydrodynamic problem size for onset and biglobal wrappers.
 """
-function _hd_total_dof(m::Int, lmax::Int, Nr::Int, symmetry::Symbol)
+function _hd_total_dof(m::Int, lmax::Int, Nr::Int, symmetry::Symbol; magnetic::Bool=false)
     # Real dense layout (LinearStabilityOperator index_map): Nr rows per (l,field)
     # block, with field-specific l-counts (P,Θ use poloidal parity; T toroidal).
+    # Magnetic F and G take the toroidal and poloidal counts.
     nP, nT, nΘ = _triglobal_mode_l_counts(m, lmax, symmetry)
-    return (nP + nT + nΘ) * Nr
+    return (nP + nT + nΘ + (magnetic ? nT + nP : 0)) * Nr
 end
+
+"""l-mode counts by field, for the size summaries."""
+_l_mode_summary(nP, nT, nΘ, magnetic) =
+    magnetic ? "$nP/$nT/$nΘ/$nT/$nP P/T/Θ/F/G" : "$nP/$nT/$nΘ P/T/Θ"
 
 """
     _triglobal_total_dof(m_range, lmax, Nr, symmetry=:both)
 
 Estimate reduced triglobal DOFs across all coupled azimuthal blocks.
 """
-function _triglobal_total_dof(m_range, lmax::Int, Nr::Int, symmetry::Symbol=:both)
+function _triglobal_total_dof(m_range, lmax::Int, Nr::Int, symmetry::Symbol=:both;
+                              magnetic::Bool=false)
     _validate_triglobal_m_range(m_range, lmax)
     total_dof = 0
     for m in m_range
         nP, nT, nΘ = _triglobal_mode_l_counts(m, lmax, symmetry)
-        total_dof += nP * (Nr - 4) + nT * (Nr - 2) + nΘ * (Nr - 2)
+        total_dof += nP * (Nr - 4) + nT * (Nr - 2) + nΘ * (Nr - 2) +
+                     (magnetic ? (nT + nP) * (Nr - 2) : 0)
     end
     dof_per_m = total_dof / length(m_range)
     return total_dof, dof_per_m
@@ -292,11 +307,13 @@ Warns when the estimated memory exceeds 8 GB.
 function estimate_size(p::OnsetProblem)
     params = p.params
     nP, nT, nΘ = _triglobal_mode_l_counts(params.m, params.lmax, params.equatorial_symmetry)
-    total_dof = _hd_total_dof(params.m, params.lmax, params.Nr, params.equatorial_symmetry)
+    magnetic = _has_magnetic(params)
+    total_dof = _hd_total_dof(params.m, params.lmax, params.Nr, params.equatorial_symmetry;
+                              magnetic=magnetic)
     mem_gb = _mem_gb(total_dof)
 
     println("OnsetProblem size estimate")
-    _tree_row(stdout, "l-modes", "$nP/$nT/$nΘ P/T/Θ (m=$(params.m), lmax=$(params.lmax), $(params.equatorial_symmetry))")
+    _tree_row(stdout, "l-modes", "$(_l_mode_summary(nP, nT, nΘ, magnetic)) (m=$(params.m), lmax=$(params.lmax), $(params.equatorial_symmetry))")
     _tree_row(stdout, "degrees of freedom per mode", "$(params.Nr) radial points per (l,field) block")
     _tree_row(stdout, "matrix size", "$total_dof × $total_dof")
     warning = mem_gb > 8.0 ? " (large; reduce lmax or Nr)" : ""
@@ -312,11 +329,13 @@ biglobal solve.
 function estimate_size(p::BiglobalProblem)
     params = p.params
     nP, nT, nΘ = _triglobal_mode_l_counts(params.m, params.lmax, params.equatorial_symmetry)
-    total_dof = _hd_total_dof(params.m, params.lmax, params.Nr, params.equatorial_symmetry)
+    magnetic = _has_magnetic(params)
+    total_dof = _hd_total_dof(params.m, params.lmax, params.Nr, params.equatorial_symmetry;
+                              magnetic=magnetic)
     mem_gb = _mem_gb(total_dof)
 
     println("BiglobalProblem size estimate")
-    _tree_row(stdout, "l-modes", "$nP/$nT/$nΘ P/T/Θ (m=$(params.m), lmax=$(params.lmax), $(params.equatorial_symmetry))")
+    _tree_row(stdout, "l-modes", "$(_l_mode_summary(nP, nT, nΘ, magnetic)) (m=$(params.m), lmax=$(params.lmax), $(params.equatorial_symmetry))")
     _tree_row(stdout, "degrees of freedom per mode", "$(params.Nr) radial points per (l,field) block")
     _tree_row(stdout, "matrix size", "$total_dof × $total_dof")
     warning = mem_gb > 8.0 ? " (large; reduce lmax or Nr)" : ""
@@ -330,21 +349,22 @@ Print coupled-mode counts and approximate dense storage for a triglobal solve.
 """
 function estimate_size(p::TriglobalProblem)
     params = p.params
+    magnetic = _has_magnetic(params)
     total_dof, dof_per_m = _triglobal_total_dof(
-        p.m_range, params.lmax, params.Nr, params.equatorial_symmetry)
+        p.m_range, params.lmax, params.Nr, params.equatorial_symmetry; magnetic=magnetic)
     mem_gb = _mem_gb(total_dof)
 
     println("TriglobalProblem size estimate")
     _tree_row(stdout, "coupled modes", "$(p.m_range) ($(length(p.m_range)) modes)")
-    _tree_row(stdout, "degrees of freedom per mode", "~$dof_per_m (lmax=$(params.lmax), Nr=$(params.Nr), 3 fields)")
+    _tree_row(stdout, "degrees of freedom per mode", "~$dof_per_m (lmax=$(params.lmax), Nr=$(params.Nr), $(magnetic ? 5 : 3) fields)")
     _tree_row(stdout, "matrix size", "$total_dof × $total_dof")
     warning = mem_gb > 8.0 ? " (large; reduce lmax or m_range)" : ""
     _tree_row(stdout, "dense storage estimate", @sprintf("~%.1f GB%s", mem_gb, warning); last=true)
 end
 
 """
-    basic_state(params::OnsetParams; mode=:conduction, amplitude=0.05, mmax_bs=2,
-                lmax_bs=4, max_iterations=50, tol=1e-8,
+    basic_state(params::OnsetParams; mode=:conduction, amplitude=0.05,
+                inner_amplitude=0, mmax_bs=2, lmax_bs=4, max_iterations=50, tol=1e-8,
                 momentum_model=:navier_stokes, allow_unconverged=false)
 
 Convenience constructor that builds a basic state directly from an `OnsetParams`,
@@ -362,12 +382,15 @@ derived from `params.Nr` and `params.χ`.
                        `amplitude` at degree 2, `m=1…min(mmax_bs, 2)`
                        (`nonaxisymmetric_basic_state`) → `BasicState3D`
 
-The basic state uses the outer-wall condition of `params.thermal_bc`, and its inner
-wall is held at a fixed temperature, so `params.thermal_bc` must be
-`:fixed_temperature` or `(:fixed_temperature, :fixed_flux)`.
+The basic state uses the wall conditions of `params.thermal_bc`. `amplitude` and
+`inner_amplitude` set the degree-2 pattern on the outer and inner wall, as a
+temperature on a fixed-temperature wall or ∂θ̄/∂r on a fixed-flux wall, added to
+the conduction mean. Fixed flux on both walls leaves the mean temperature
+undetermined, so at least one wall needs `:fixed_temperature`.
 
 `momentum_model` applies to `:selfconsistent`; choose `:stokes` to omit momentum
-inertia. This mode throws if momentum, thermal, or boundary residuals fail `tol`.
+inertia. This mode throws if momentum, thermal, or boundary residuals fail `tol`
+(default 1e-8, raised to 64 eps for lower-precision types such as Float32).
 Use `basic_state_selfconsistent` for detailed convergence information, or
 `allow_unconverged=true` to explicitly inspect an incomplete iterate. In this
 convenience wrapper the imposed degree-2 boundary modes are `m = 1…min(mmax_bs, 2)`
@@ -382,45 +405,64 @@ Even a converged `:selfconsistent` iteration needs separate radial and angular
 refinement; compare the resulting states with [`mean_flow_resolution`](@ref).
 """
 function basic_state(params::OnsetParams{T}; mode::Symbol=:conduction,
-                     amplitude::Real=0.05, mmax_bs::Int=2, lmax_bs::Int=4,
-                     max_iterations::Int=50, tol::Real=1e-8,
+                     amplitude::Real=0.05, inner_amplitude::Real=0,
+                     mmax_bs::Int=2, lmax_bs::Int=4,
+                     max_iterations::Int=50, tol::Union{Nothing,Real}=nothing,
                      momentum_model::Symbol=:navier_stokes,
                      allow_unconverged::Bool=false) where {T}
     inner, outer = _thermal_walls(params.thermal_bc)
-    inner === :fixed_temperature || throw(ArgumentError(
-        "Basic states fix the inner-wall temperature; use thermal_bc=" *
-        "(:fixed_temperature, :fixed_flux) for a fixed-flux outer wall"))
+    inner === outer === :fixed_flux && throw(ArgumentError(
+        "Basic states need a fixed temperature on at least one wall to set the mean " *
+        "temperature; got thermal_bc=$(repr(params.thermal_bc))"))
+    _check_basic_state_heating(params)
     cd = ChebyshevDiffn(params.Nr, [T(params.χ), one(T)], 4)
     χ = T(params.χ); E = T(params.E); Ra = T(params.Ra); Pr = T(params.Pr)
+    # With an imposed field, flowing states carry the induced field of the same field.
+    magnetic = _magnetic_kwargs(params)
     if mode === :conduction
-        return conduction_basic_state(cd, χ, lmax_bs; thermal_bc=outer)
+        return conduction_basic_state(cd, χ, lmax_bs; thermal_bc=outer,
+                                      inner_thermal_bc=inner)
     elseif mode === :meridional
         return meridional_basic_state(cd, χ, E, Ra, Pr, lmax_bs, T(amplitude);
                                       mechanical_bc=params.mechanical_bc,
-                                      thermal_bc=outer)
+                                      thermal_bc=outer, inner_thermal_bc=inner,
+                                      inner_amplitude=T(inner_amplitude), magnetic...)
     elseif mode === :selfconsistent
-        # Outer-wall anomaly (fixed temperature) or ∂θ̄/∂r with the conduction mean
-        # (fixed flux), matching the perturbation's outer-wall condition.
+        # Each wall: anomaly (fixed temperature) or ∂θ̄/∂r with the conduction mean
+        # (fixed flux), matching the perturbation's condition on that wall.
         bc = outer === :fixed_temperature ? Y00(zero(T)) : Y00(-χ / (1 - χ))
+        inner_bc = inner === :fixed_temperature ? Y00(one(T)) : Y00(-1 / (χ * (1 - χ)))
         for mm in 1:min(mmax_bs, 2)
             bc = bc + Ylm(2, mm, T(amplitude))
+            inner_bc = inner_bc + Ylm(2, mm, T(inner_amplitude))
         end
         bc_kw = outer === :fixed_temperature ? (temperature_bc=bc,) : (flux_bc=bc,)
+        if inner === :fixed_flux || !iszero(inner_amplitude)
+            bc_kw = inner === :fixed_temperature ? (; bc_kw..., inner_temperature_bc=inner_bc) :
+                                                   (; bc_kw..., inner_flux_bc=inner_bc)
+        end
         bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; bc_kw...,
                                            mechanical_bc=params.mechanical_bc,
                                            lmax_bs=lmax_bs, max_iterations=max_iterations,
-                                           tolerance=Float64(tol),momentum_model=momentum_model)
+                                           tolerance=tol,momentum_model=momentum_model,
+                                           magnetic...)
         if !allow_unconverged && info!==nothing && !info.converged
+            fold = info.forcing_reached < 1 ?
+                "A steady state was found only up to $(round(100 * info.forcing_reached, sigdigits=3))% " *
+                "of the boundary anomalies; the steady branch likely ends in a fold there. " : ""
             error("Self-consistent mean flow did not converge ($(info.termination_reason)); " *
                   "momentum residual=$(info.momentum_residual), thermal residual=$(info.thermal_residual). " *
-                  "Use basic_state_selfconsistent to inspect the state and convergence information.")
+                  fold * "Use basic_state_selfconsistent to inspect the state and convergence information.")
         end
         return bs
     elseif mode === :nonaxisymmetric
         amps = Dict{Tuple{Int,Int},T}((2, mm) => T(amplitude) for mm in 1:min(mmax_bs, 2))
+        inner_amps = Dict{Tuple{Int,Int},T}((2, mm) => T(inner_amplitude)
+                                            for mm in 1:min(mmax_bs, 2))
         return nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, lmax_bs, mmax_bs, amps;
                                            mechanical_bc=params.mechanical_bc,
-                                           thermal_bc=outer)
+                                           thermal_bc=outer, inner_thermal_bc=inner,
+                                           inner_amplitudes=inner_amps, magnetic...)
     else
         throw(ArgumentError("basic_state: unknown mode :$mode " *
               "(use :conduction, :meridional, :selfconsistent, or :nonaxisymmetric)"))
@@ -473,5 +515,6 @@ function perturbation_velocity end
 """Reconstruct the physical perturbation temperature field on a meridional grid."""
 function perturbation_temperature end
 
-"""Reconstruct physical perturbation magnetic field `(B_r, B_θ, B_φ)` (MHD only)."""
+"""Reconstruct the physical perturbation magnetic field `(B_r, B_θ, B_φ)` of an MHD result
+or of a collocation result with an imposed field."""
 function perturbation_magnetic end

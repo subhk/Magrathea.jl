@@ -267,7 +267,46 @@ Magnetic → Magnetic: Magnetic diffusion
 Velocity → Temperature: Thermal advection
 Temperature → Velocity: Buoyancy
 """
-function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing) where {T}
+function _assemble_mhd_coo(op::MHDStabilityOperator{T};
+                           owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing) where {T}
+    # Radial products, such as the dipole's r⁶ weights, raise the polynomial degree,
+    # and row k of the C⁴/C² projection needs coefficients k … k + 8. Assemble at
+    # N + 8 and keep the first N + 1 rows and columns of every block, so no product is
+    # truncated before its projection. Tau rows replace the top rows afterwards.
+    N = op.params.N
+    padded = _mhd_operator_at_degree(op, N + 8)
+    keep = zeros(Int, padded.matrix_size)        # padded index -> index (0: dropped)
+    position = zeros(Int, op.matrix_size)        # index -> padded index
+    pmap = _mhd_index_map(padded)
+    for (key, range) in _mhd_index_map(op)
+        keep[first(pmap[key]) .+ (0:N)] = range
+        position[range] = first(pmap[key]) .+ (0:N)
+    end
+    # Block order is preserved, so owned rows map into one contiguous padded range.
+    owned_padded = owned_julia_rows === nothing ? nothing :
+        isempty(owned_julia_rows) ? (1:0) :
+        position[first(owned_julia_rows)]:position[last(owned_julia_rows)]
+    c = _assemble_mhd_coo_unpadded(padded; owned_julia_rows=owned_padded)
+    A = _keep_coo_entries(c.A_rows, c.A_cols, c.A_vals, keep)
+    B = _keep_coo_entries(c.B_rows, c.B_cols, c.B_vals, keep)
+    return (A_rows=A[1], A_cols=A[2], A_vals=A[3], B_rows=B[1], B_cols=B[2], B_vals=B[3],
+            n=op.matrix_size, interior_dofs=Int[], info=Dict{String,Any}())
+end
+
+"""Map COO triplets through `keep` (old index → new index), dropping entries mapped to 0."""
+function _keep_coo_entries(rows, cols, vals, keep)
+    R = Int[]; C = Int[]; V = similar(vals, 0)
+    @inbounds for k in eachindex(vals)
+        r = keep[rows[k]]; c = keep[cols[k]]
+        r == 0 || c == 0 || (push!(R, r); push!(C, c); push!(V, vals[k]))
+    end
+    return R, C, V
+end
+
+# Operator triplets at the operator's own degree; `_assemble_mhd_coo` calls this on a
+# padded operator.
+function _assemble_mhd_coo_unpadded(op::MHDStabilityOperator{T};
+                                    owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing) where {T}
     params = op.params
     E = params.E
     Pr = params.Pr
@@ -295,7 +334,7 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
     nb_f > 0 && push!(section_info, "f($nb_f)")
     nb_g > 0 && push!(section_info, "g($nb_g)")
     nb_h > 0 && push!(section_info, "h($nb_h)")
-    @info "Assembling MHD sparse matrices" size="$n × $n" sections=join(section_info, ", ")
+    @debug "Assembling MHD sparse matrices" size="$n × $n" sections=join(section_info, ", ")
 
     # Use COO format for efficient assembly. Keep value storage tied to the
     # parameter precision; Coriolis terms still introduce complex values.
@@ -684,7 +723,7 @@ function assemble_mhd_matrices(op::MHDStabilityOperator{T}) where {T}
 
     # Identify interior DOFs
     interior_dofs = setdiff(1:n, sort!(collect(bc_rows)))
-    @info "MHD assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
+    @debug "MHD assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
 
     section_labels = String[]
     nb_u > 0 && push!(section_labels, "u")

@@ -18,6 +18,10 @@ This choice provides:
 - Natural handling of spherical geometry
 - Sparse operator matrices
 
+The hydrodynamic onset, biglobal and triglobal solvers use Chebyshev collocation
+on `Nr` Gauss–Lobatto points. The MHD solver uses ultraspherical coefficient
+operators, with `N` the maximum Chebyshev degree (`N + 1` coefficients).
+
 ## Chebyshev Spectral Method
 
 ### Chebyshev Polynomials
@@ -47,6 +51,7 @@ x_j = \cos\left(\frac{\pi j}{N-1}\right), \quad j = 0, 1, \ldots, N-1
 ```
 
 These points cluster near the boundaries, providing enhanced resolution where boundary layers form.
+`ChebyshevDiffn` stores them in ascending order, so `cd.x[1]` is the inner wall.
 
 ### Domain Mapping
 
@@ -91,7 +96,8 @@ to values; see `src/Spectral/chebyshev.jl` for the construction.
 
 ## Ultraspherical Spectral Method
 
-The key innovation in Magrathea.jl is using the Olver-Townsend ultraspherical method for sparse operator construction.
+The MHD solver, and the coefficient-space `SparseStabilityOperator`, use the
+Olver–Townsend ultraspherical method for sparse operator construction.
 
 ### Gegenbauer Polynomials
 
@@ -110,7 +116,8 @@ Orthogonality:
 The fundamental insight: differentiation raises the ultraspherical index ``\lambda``:
 
 ```math
-\frac{d}{dx} C_n^{(\lambda)}(x) = 2\lambda C_{n-1}^{(\lambda+1)}(x)
+\frac{d}{dx} C_n^{(\lambda)}(x) = 2\lambda C_{n-1}^{(\lambda+1)}(x), \quad \lambda > 0,
+\qquad \frac{d}{dx} T_n(x) = n\, C_{n-1}^{(1)}(x)
 ```
 
 This means:
@@ -120,10 +127,13 @@ This means:
 
 ### Sparse Differentiation
 
-The differentiation operator in coefficient space is **banded**:
+The differentiation operator in coefficient space is **banded**. It maps
+``C^{(\lambda)}`` coefficients ``a`` to ``C^{(\lambda+1)}`` coefficients
+``b_n = D^{(\lambda)}_{n,n+1} a_{n+1}``:
 
 ```math
-D^{(\lambda)}_{n,n'} = 2\lambda \delta_{n', n-1}
+D^{(\lambda)}_{n,n'} = 2\lambda\, \delta_{n', n+1} \quad (\lambda > 0), \qquad
+D^{(0)}_{n,n'} = (n+1)\, \delta_{n', n+1}
 ```
 
 This is a superdiagonal matrix with just one nonzero diagonal!
@@ -132,55 +142,59 @@ This is a superdiagonal matrix with just one nonzero diagonal!
 
 The conversion operator ``S^{(\lambda)}`` transforms between bases:
 ```math
-C_n^{(\lambda)} = \sum_{k} S^{(\lambda)}_{n,k} C_k^{(\lambda+1)}
+C_n^{(\lambda)} = \frac{\lambda}{n+\lambda}\left(C_n^{(\lambda+1)} - C_{n-2}^{(\lambda+1)}\right),
+\qquad T_n = \tfrac{1}{2}\left(C_n^{(1)} - C_{n-2}^{(1)}\right)\ (n \ge 1)
 ```
 
-This is also banded (tridiagonal).
+Its matrix is banded, with nonzeros on the main diagonal and the second superdiagonal.
 
 ### Sparse Multiplication
 
-Multiplication by ``x`` in coefficient space:
+Multiplication by ``x`` follows the three-term recurrence (``\lambda > 0``):
 ```math
-x C_n^{(\lambda)} = \alpha_{n-1}^{(\lambda)} C_{n-1}^{(\lambda)} + \alpha_n^{(\lambda)} C_{n+1}^{(\lambda)}
+x\, C_n^{(\lambda)} = \frac{n+2\lambda-1}{2(n+\lambda)}\, C_{n-1}^{(\lambda)} + \frac{n+1}{2(n+\lambda)}\, C_{n+1}^{(\lambda)}
 ```
 
-Where:
-```math
-\alpha_n^{(\lambda)} = \frac{n+2\lambda}{2(n+\lambda+1)}
-```
-
-Also tridiagonal!
+with ``x T_n = (T_{n-1} + T_{n+1})/2`` (``n \ge 1``) for Chebyshev polynomials. Multiplication
+by a polynomial of degree ``p``, such as ``r^p``, is therefore banded with
+bandwidth ``p`` (`Magrathea.multiplication_matrix`).
 
 ### Radial Operator Construction
 
-For operators like ``r^p \frac{d^n}{dr^n}``, Magrathea.jl:
+For an operator ``r^p \frac{d^n}{dr^n}`` acting on Chebyshev coefficients,
+Magrathea.jl:
 
-1. Converts Chebyshev coefficients through the ultraspherical chain
-2. Applies multiplication matrices for ``r^p``
-3. Applies differentiation matrices
-4. Results in a **sparse** matrix
+1. Applies ``n`` differentiation matrices, moving from ``C^{(0)}`` to ``C^{(n)}``
+2. Multiplies by ``r^p`` in the ``C^{(n)}`` basis
+3. Converts up to the residual basis of the equation
+4. Results in a **banded** matrix
 
 ```julia
-# Example: r² d²/dr² operator
-op = sparse_radial_operator(2, 2, N, ri, ro)
-# Returns sparse matrix with ~O(p+n) bandwidth
+# Example: r² d²/dr² from Chebyshev coefficients to C^(2) coefficients
+op = Magrathea.banded_radial_term(Float64, 2, 2, 2, N, ri, ro)
 ```
+
+The energy-conserving MHD Galerkin assembly uses these banded terms. The tau
+assembly stores each block as a Chebyshev-to-Chebyshev operator,
+`Magrathea.sparse_radial_operator(p, n, N, ri, ro)`. Its derivative part is upper
+triangular rather than banded, because it converts back from ``C^{(n)}``. The
+assembly then multiplies every fluid row block by the conversion chain to
+``C^{(4)}`` (poloidal velocity) or ``C^{(2)}`` (the other fields).
 
 ### Sparsity Analysis
 
-For an ``N \times N`` operator:
+Nonzeros of `banded_radial_term` for ``N = 64`` (a ``65 \times 65`` matrix, 4,225
+entries), mapping to ``C^{(n)}``:
 
-| Operation | Dense | Sparse | Bandwidth |
-|-----------|-------|--------|-----------|
-| ``d/dr`` | ``N^2`` | ``N`` | 1 |
-| ``d^2/dr^2`` | ``N^2`` | ``2N`` | 2 |
-| ``r \cdot d/dr`` | ``N^2`` | ``3N`` | 3 |
-| ``r^2 d^2/dr^2`` | ``N^2`` | ``6N`` | 6 |
+| Operation | Stored nonzeros | Nonzero diagonals |
+|-----------|-----------------|-------------------|
+| ``d/dr`` | 64 | 1 |
+| ``d^2/dr^2`` | 63 | 1 |
+| ``r \cdot d/dr`` | 191 | 3 |
+| ``r^2 d^2/dr^2`` | 312 | 5 |
+| ``r^4 d^4/dr^4`` | 539 | 9 |
 
-**Sparsity for ``N = 64``:**
-- Dense: 4,096 entries
-- Sparse: ~100-200 entries
-- **Sparsity: 95-98%**
+These are 87–98.5% sparse.
 
 ## Spherical Harmonics
 
@@ -212,12 +226,13 @@ Where ``P_\ell^m`` are associated Legendre functions.
 
 Hydrodynamic collocation replaces boundary equations at the endpoint-related
 rows, then reduces the pencil with a basis satisfying those constraints.
-Insulating axial MHD uses a boundary-recombined Galerkin trial basis.
-Dipole and conducting-wall MHD use coefficient-tau constraints: highest-order
-residual rows are replaced, while all unknown coefficient columns remain.
-The MHD poloidal velocity residual is in a different ultraspherical basis
-from the second-order residuals; these are equation coefficients, not radial
-grid points.
+MHD with insulating or perfectly conducting magnetic walls, for any background
+field, uses an energy-conserving Galerkin assembly: boundary-recombined trial
+bases, with each equation tested against its own trial basis. A finite-conductivity
+core or mantle uses coefficient-tau constraints: the highest residual rows are
+replaced, while all unknown coefficient columns remain.
+The tau poloidal velocity residual is in ``C^{(4)}`` and the other residuals are
+in ``C^{(2)}``; these are equation coefficients, not radial grid points.
 
 No-slip constrains the poloidal potential and its derivative at both walls,
 and the toroidal potential at both walls. Exact row locations and derivative
@@ -227,17 +242,20 @@ scalings depend on the representation. See the
 
 ### BC Matrix Form
 
-Boundary condition evaluation at ``r = r_b``:
+Boundary condition evaluation at ``r = r_b`` for a coefficient expansion of
+maximum degree ``N``:
 
 ```math
-P(r_b) = \sum_{n=0}^{N-1} a_n T_n(x_b) = \sum_{n=0}^{N-1} \mathcal{B}^{(0)}_n a_n
+P(r_b) = \sum_{n=0}^{N} a_n T_n(x_b) = \sum_{n=0}^{N} \mathcal{B}^{(0)}_n a_n
 ```
 
 ```math
-P'(r_b) = \sum_{n=0}^{N-1} a_n \frac{2}{r_o-r_i}T_n'(x_b) = \sum_{n=0}^{N-1} \mathcal{B}^{(1)}_n a_n
+P'(r_b) = \sum_{n=0}^{N} a_n \frac{2}{r_o-r_i}T_n'(x_b) = \sum_{n=0}^{N} \mathcal{B}^{(1)}_n a_n
 ```
 
 Where ``\mathcal{B}^{(k)}`` is the BC evaluation row for the ``k``-th derivative.
+At the walls ``x_b = \pm 1``, ``T_n(\pm1) = (\pm1)^n`` and
+``T_n'(\pm1) = (\pm1)^{n+1} n^2``.
 
 ## Error Analysis
 
@@ -266,62 +284,65 @@ For spherical harmonics:
 
 ## Implementation Details
 
-### sparse_radial_operator Function
+### Radial operator functions
+
+Both functions live in `src/Spectral/` and are internal (not exported):
 
 ```julia
-"""
-Construct r^power * d^deriv_order/dr^deriv_order operator
-using ultraspherical spectral method.
+# src/Spectral/galerkin.jl: Chebyshev coefficients -> C^(q_out) coefficients, banded
+Magrathea.banded_radial_term(T, power, deriv, q_out, N, ri, ro)
 
-Returns sparse matrix in Chebyshev coefficient space.
-"""
-function sparse_radial_operator(power, deriv_order, N, ri, ro)
-    # 1. Build ultraspherical differentiation chain
-    D_chain = build_differentiation_chain(deriv_order, N)
-
-    # 2. Build r^power multiplication operator
-    M = build_multiplication_operator(power, N, ri, ro)
-
-    # 3. Combine: M * D_chain
-    # Result is sparse with bandwidth ~O(power + deriv_order)
-
-    return sparse(M * D_chain)
-end
+# src/Spectral/ultraspherical.jl: Chebyshev -> Chebyshev coefficients, used by MHDStabilityOperator
+Magrathea.sparse_radial_operator(power, deriv, N, ri, ro)
 ```
+
+`banded_radial_term` composes `ultraspherical_derivative`, `multiplication_matrix`
+and `ultraspherical_conversion` without any back-solve. `sparse_radial_operator`
+applies the same derivative chain, solves with the conversion chain to return to the
+Chebyshev basis, and then multiplies by ``r^p``. On resolved inputs, its output
+converted up to ``C^{(n)}`` agrees with `banded_radial_term`
+(`test/galerkin_radial.jl`).
 
 ### Memory Comparison
 
-For a problem with ``\ell_{max} = 60``, ``N_r = 64``, ``m = 10``:
-
-| Method | Matrix Storage | Assembly Time |
-|--------|---------------|---------------|
-| Dense | ~50 MB | ~10 s |
-| Sparse (traditional) | ~5 MB | ~2 s |
-| **Ultraspherical** | **~1 MB** | **~0.5 s** |
+`estimate_size(problem)` prints the matrix size and a dense-storage estimate before
+solving. As a measured example, the MHD tau pencil for `lmax = 15`, `N = 32`,
+`m = 2` with an axial field has ``n = 1155``. Its `A` stores about 87,000 nonzeros
+(6.5% of ``n^2``), roughly 2 MB, compared with 21 MB for one dense complex matrix.
 
 ## Verification
 
 ### Manufactured Solutions
 
-Magrathea.jl includes tests using manufactured solutions:
+Magrathea.jl includes tests using manufactured solutions (for example, the thermal
+boundary values in `test/boundary_physics.jl` and the mean flows in
+`test/nonlinear_mean_flow.jl`):
 
 1. Choose a known solution ``u_{exact}(r)``
 2. Compute ``f = \mathcal{L}[u_{exact}]`` analytically
 3. Solve ``\mathcal{L}[u] = f`` numerically
 4. Compare ``u`` to ``u_{exact}``
 
+`test/galerkin_radial.jl` also compares Galerkin radial operators with analytic
+Laplacian and beam spectra.
+
 ### Convergence Tests
 
 ```julia
-# Test spectral convergence
-errors = Float64[]
-for N in [16, 32, 64, 128]
-    u_num = solve_problem(N)
-    push!(errors, norm(u_num - u_exact))
-end
+using Magrathea
 
-# Should see exponential decrease
+# Spectral convergence of the collocation derivative on r ∈ [0.35, 1]
+f(r) = exp(r) * sin(3r)
+df(r) = exp(r) * (sin(3r) + 3cos(3r))
+for Nr in (8, 12, 16, 24)
+    cd = ChebyshevDiffn(Nr, [0.35, 1.0], 1)
+    err = maximum(abs, cd.D1 * f.(cd.x) .- df.(cd.x))
+    println("Nr = $Nr: max error = $err")
+end
 ```
+
+The error falls from about ``10^{-5}`` at `Nr = 8` to round-off (about
+``10^{-13}``) by `Nr = 16`.
 
 ---
 

@@ -74,7 +74,7 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
 """
 @with_kw_noshow struct BiglobalParams{T<:Real}
     E::T
-    Pr::T = one(T)
+    Pr::T = one(E)
     Ra::T
     χ::T
     m::Int
@@ -84,10 +84,15 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
     mechanical_bc::Symbol = :no_slip
     thermal_bc::ThermalBC = :fixed_temperature
     equatorial_symmetry::Symbol = :both
+    Pm::T = one(E)
+    Le::T = zero(E)
+    B0_type::BackgroundField = no_field
+    magnetic_bc::MagneticBC = :insulating
 
     function BiglobalParams{T}(E, Pr, Ra, χ, m, lmax, Nr, basic_state,
                                mechanical_bc, thermal_bc,
-                               equatorial_symmetry) where T
+                               equatorial_symmetry, Pm=one(T), Le=zero(T),
+                               B0_type=no_field, magnetic_bc=:insulating) where T
         0 < χ < 1 || throw(ArgumentError(
             "Radius ratio χ must be in (0,1), got $χ"))
         E > 0 || throw(ArgumentError(
@@ -107,6 +112,8 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
         _check_thermal_bc(thermal_bc)
         _check_basic_state_thermal_bc(thermal_bc, basic_state)
         _check_basic_state_mechanical_bc(mechanical_bc, basic_state)
+        _check_magnetic_options(Pm, Le, B0_type, magnetic_bc, mechanical_bc)
+        _check_basic_state_magnetic(Pm, Le, B0_type, magnetic_bc, basic_state)
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         basic_state.Nr == Nr || throw(ArgumentError(
@@ -141,8 +148,20 @@ See also: [`solve_biglobal_problem`](@ref), [`create_thermal_wind_basic_state`](
         end
 
         new{T}(E, Pr, Ra, χ, m, lmax, Nr, basic_state,
-               mechanical_bc, thermal_bc, equatorial_symmetry)
+               mechanical_bc, thermal_bc, equatorial_symmetry, Pm, Le, B0_type, magnetic_bc)
     end
+end
+
+# Convert numeric inputs, such as an integer Ra, to the basic state's float type.
+# Every position is at least as broad as the generated constructor's, so that one
+# keeps handling matching types without an ambiguity.
+function BiglobalParams(E::Real, Pr::Real, Ra::Real, χ::Real, m, lmax, Nr,
+                        basic_state::BasicState{T}, mechanical_bc, thermal_bc,
+                        equatorial_symmetry, Pm::Real=1, Le::Real=0, B0_type=no_field,
+                        magnetic_bc=:insulating) where T
+    return BiglobalParams{T}(T(E), T(Pr), T(Ra), T(χ), m, lmax, Nr, basic_state,
+                             mechanical_bc, thermal_bc, equatorial_symmetry,
+                             T(Pm), T(Le), B0_type, magnetic_bc)
 end
 
 
@@ -370,7 +389,8 @@ function solve_biglobal_problem(params::BiglobalParams{T};
         mechanical_bc = params.mechanical_bc,
         thermal_bc = params.thermal_bc,
         equatorial_symmetry = params.equatorial_symmetry,
-        basic_state = params.basic_state  # Include axisymmetric basic state
+        basic_state = params.basic_state;  # Include axisymmetric basic state
+        _magnetic_kwargs(params)...
     )
 
     # Build operator (will include basic state operators automatically)
@@ -476,7 +496,10 @@ function find_critical_Ra_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
                                     sigma=nothing,
                                     which::Symbol=:LR,
                                     maxiter::Int=1000,
-                                    verbose::Bool=false)
+                                    verbose::Bool=false,
+                                    Pm::Real=1, Le::Real=0,
+                                    B0_type::BackgroundField=no_field,
+                                    magnetic_bc=:insulating)
     _check_backend(backend)
 
     if (basic_state === nothing) && (basic_state_builder === nothing)
@@ -484,6 +507,7 @@ function find_critical_Ra_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
     elseif (basic_state !== nothing) && (basic_state_builder !== nothing)
         error("Provide only one of `basic_state` or `basic_state_builder`")
     end
+    basic_state === nothing || _check_shell_domain(basic_state.r, χ)
 
     equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
         "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
@@ -494,7 +518,8 @@ function find_critical_Ra_biglobal(; E::Real, Pr::Real, χ::Real, m::Int, lmax::
     rayleigh_kwargs = _biglobal_rayleigh_kwargs(
         mechanical_bc, thermal_bc, equatorial_symmetry, nev,
         basic_state, basic_state_builder;
-        backend=backend, sigma=sigma, which=which, maxiter=maxiter)
+        backend=backend, sigma=sigma, which=which, maxiter=maxiter,
+        Pm=T(Pm), Le=T(Le), B0_type=B0_type, magnetic_bc=magnetic_bc)
 
     Ra_c, ω_c, vec_c = find_critical_rayleigh(
         T(E), T(Pr), T(χ), m, lmax, Nr;

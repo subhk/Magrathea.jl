@@ -22,19 +22,7 @@
 # Background magnetic field types
 # -----------------------------------------------------------------------------
 
-"""
-Background magnetic field types supported by the code.
-
-Options:
-- `:none` - No background field (hydrodynamic stability)
-- `:axial` - Uniform axial field B₀ = B₀ẑ
-- `:dipole` - Dipolar field B₀ ~ (2cosθ r̂ + sinθ θ̂)/r³
-"""
-@enum BackgroundField begin
-    no_field = 0
-    axial = 1
-    dipole = 2
-end
+# `BackgroundField` (`no_field`, `axial`, `dipole`) is defined in Stability/magnetic.jl.
 
 
 # -----------------------------------------------------------------------------
@@ -51,7 +39,7 @@ MHD linear stability analysis or dynamo onset calculations.
 
 # Physical Parameters (Dimensionless)
 
-- `E::T`: **Ekman number** = ν/(ΩL²)
+- `E::T`: **Ekman number** = ν/(Ω r_o²), based on the outer radius
   - Ratio of viscous to Coriolis forces
   - Typical values: 10⁻³ (lab) to 10⁻¹⁵ (Earth's core)
 
@@ -63,11 +51,11 @@ MHD linear stability analysis or dynamo onset calculations.
   - Ratio of momentum to magnetic diffusivity
   - Earth's core: Pm ~ 10⁻⁶, Lab experiments: Pm ~ 10⁻⁵
 
-- `Ra::T`: **Rayleigh number** = αgΔTL³/(νκ)
+- `Ra::T`: **Rayleigh number** = αgΔT d³/(νκ), based on the shell thickness d = 1 - ricb (as in `OnsetParams`)
   - Measure of buoyancy forcing strength
   - Critical value Raᶜ determines onset of convection
 
-- `Le::T`: **Lehnert number** = B₀/(√(μρ)ΩL)
+- `Le::T`: **Lehnert number** = B₀/(√(μρ)Ω r_o), based on the outer radius like `E`
   - Measure of background magnetic field strength
   - Must be finite and nonnegative; imposed fields require Le > 0.
   - Le = 0: Pure hydrodynamic case
@@ -165,16 +153,16 @@ MHD linear stability analysis or dynamo onset calculations.
 # Derived Quantities (Automatically Computed)
 
 - `L::T`: **Shell thickness** = 1 - ricb
-- `Etherm::T`: **Thermal Ekman number** = E/Pr = κ/(ΩL²)
-- `Em::T`: **Magnetic Ekman number** = E/Pm = η/(ΩL²)
+- `Etherm::T`: **Thermal Ekman number** = E/Pr = κ/(Ω r_o²)
+- `Em::T`: **Magnetic Ekman number** = E/Pm = η/(Ω r_o²)
 
 # Examples
 
 ```julia
-# Basic hydrodynamic onset (Christensen & Wicht 2015, Table 1)
+# Hydrodynamic onset benchmark (Barik et al. 2023, Ek_d = 1e-3): marginal at m = 4
 params_hydro = MHDParams(
-    E=4.734e-5, Pr=1.0, Pm=1.0, Ra=1.6e6, Le=0.0,
-    ricb=0.35, m=9, lmax=20, N=24,
+    E=4.225e-4, Pr=1.0, Pm=1.0, Ra=5.59e4, Le=0.0,
+    ricb=0.35, m=4, lmax=20, N=24,
     bci=1, bco=1,  # no-slip boundaries
     bci_thermal=0, bco_thermal=0,  # fixed temperature
     bci_magnetic=0, bco_magnetic=0  # insulating (irrelevant for Le=0)
@@ -482,7 +470,7 @@ end
 # Constructor
 """Precompute radial operators, mode parities, and matrix dimensions for MHD assembly."""
 function MHDStabilityOperator(params::MHDParams{T}) where {T}
-    @info "Building MHD sparse operators" N=params.N ricb=params.ricb
+    @debug "Building MHD sparse operators" N=params.N ricb=params.ricb
 
     N = params.N
     ri = params.ricb
@@ -628,7 +616,7 @@ function MHDStabilityOperator(params::MHDParams{T}) where {T}
     n_mantle = params.bco_magnetic == 1 ? n_f + n_g : 0
     matrix_size = n_u + n_v + n_f + n_g + n_h + n_core + n_mantle
 
-    @info "MHD operator built" poloidal_modes=length(ll_u) toroidal_modes=length(ll_v) matrix_size="$(matrix_size) × $(matrix_size)" sparsity="~$(estimate_mhd_sparsity(N, ll_u, ll_v, ll_f, ll_g, ll_h))%"
+    @debug "MHD operator built" poloidal_modes=length(ll_u) toroidal_modes=length(ll_v) matrix_size="$(matrix_size) × $(matrix_size)" sparsity="~$(estimate_mhd_sparsity(N, ll_u, ll_v, ll_f, ll_g, ll_h))%"
 
     return MHDStabilityOperator{T}(
         params,

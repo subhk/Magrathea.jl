@@ -247,7 +247,7 @@ function _dispatch_eigen(A::SparseMatrixCSC, B::SparseMatrixCSC;
     if backend === :slepc
         return _solve_generalized_eigen_slepc(A, B; nev=nev, sigma=sigma, which=which,
                                               selection=selection, tol=tol, maxiter=maxiter,
-                                              verbosity=verbosity)
+                                              krylovdim=krylovdim, verbosity=verbosity)
     else
         return _dense_generalized_eigen(A, B; nev=nev, sigma=sigma, which=which,
                                         selection=selection)
@@ -255,7 +255,7 @@ function _dispatch_eigen(A::SparseMatrixCSC, B::SparseMatrixCSC;
 end
 
 """
-    solve_eigenvalue_problem(A, B; nev=20, sigma=nothing, which=:LR,
+    solve_eigenvalue_problem(A, B; nev=1, sigma=nothing, which=:LR,
                              selection=:maxreal, tol=1e-10)
 
 Solve the generalized eigenvalue problem A·x = σ·B·x for sparse matrices using the
@@ -265,7 +265,7 @@ LAPACK solve (`backend=:dense`, for small problems and tests).
 # Arguments
 - `A::SparseMatrixCSC`: Operator matrix (physics terms)
 - `B::SparseMatrixCSC`: Mass matrix (time derivative weights)
-- `nev::Int=20`: Number of eigenvalues to compute
+- `nev::Int=1`: Number of eigenvalues to compute
 - `backend::Symbol=:slepc`: `:slepc` or `:dense`
 - `sigma::Union{Nothing,Number}=nothing`: Shift target for shift-invert modes
 - `which::Symbol=:LR`: Determines automatic shift selection (see below)
@@ -276,8 +276,10 @@ LAPACK solve (`backend=:dense`, for small problems and tests).
     mode: at supercritical Ra it can return a weakly damped mode instead.
 - `tol::Float64=1e-10`: Convergence tolerance
 - `maxiter::Int=1000`: Maximum number of iterations
-- `krylovdim::Union{Nothing,Int}=nothing`: Krylov subspace dimension
-- `verbosity::Int=0`: Verbosity level for the eigensolver
+- `krylovdim::Union{Nothing,Int}=nothing`: Krylov subspace dimension (SLEPc `ncv`);
+  `nothing` lets SLEPc choose. The dense backend ignores it.
+- `verbosity::Int=0`: Accepted for compatibility; SLEPc progress output is selected
+  with options such as `-eps_monitor` in `slepc_init!`
 
 `tol` and `maxiter` configure SLEPc's convergence controls. Explicit `-eps_tol`
 and `-eps_max_it` options passed to `slepc_init!` take precedence. The effective
@@ -324,7 +326,7 @@ function solve_eigenvalue_problem(A::SparseMatrixCSC, B::SparseMatrixCSC;
     size(A, 1) == size(A, 2) || throw(DimensionMismatch(
         "Matrices must be square, got $(size(A))"))
 
-    @info "Solving eigenvalue problem" solver=backend size="$n × $n" A_nnz=nnz(A) B_nnz=nnz(B) nev=nev which=which selection=selection
+    @debug "Solving eigenvalue problem" solver=backend size="$n × $n" A_nnz=nnz(A) B_nnz=nnz(B) nev=nev which=which selection=selection
 
     eigenvalues, eigenvectors, info = _dispatch_eigen(A, B;
                                                       backend = backend,
@@ -337,7 +339,7 @@ function solve_eigenvalue_problem(A::SparseMatrixCSC, B::SparseMatrixCSC;
                                                       krylovdim = krylovdim,
                                                       verbosity = verbosity)
 
-    @info "Eigensolve converged" selected=eigenvalues[1] growth_rate=real(eigenvalues[1]) frequency=imag(eigenvalues[1]) selection=selection
+    @debug "Eigensolve converged" selected=eigenvalues[1] growth_rate=real(eigenvalues[1]) frequency=imag(eigenvalues[1]) selection=selection
     return eigenvalues, eigenvectors, info
 end
 

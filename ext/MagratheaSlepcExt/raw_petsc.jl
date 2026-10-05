@@ -30,13 +30,15 @@ function _mat_mat_mult(A::PetscWrap.PetscMat, B::PetscWrap.PetscMat)
     return C
 end
 
-"""Set the requested eigenpair count on an EPS (SlepcWrap 0.1.3 has no wrapper).
-`EPSSetDimensions(eps, nev, ncv=PETSC_DECIDE, mpd=PETSC_DECIDE)`."""
-function _eps_set_dimensions(eps, nev::Integer)
+"""Set the requested eigenpair count and, optionally, the subspace size `ncv` on an
+EPS (SlepcWrap 0.1.3 has no wrapper): `EPSSetDimensions(eps, nev, ncv, mpd)`, with
+`ncv=nothing` and `mpd` left to `PETSC_DECIDE`."""
+function _eps_set_dimensions(eps, nev::Integer, ncv=nothing)
     PD = PetscWrap.PETSC_DECIDE
+    ncv_p = ncv === nothing ? PD : PetscWrap.PetscInt(ncv)
     err = ccall((:EPSSetDimensions, SlepcWrap.libslepc), PetscWrap.PetscErrorCode,
                 (Ptr{Cvoid}, PetscWrap.PetscInt, PetscWrap.PetscInt, PetscWrap.PetscInt),
-                eps.ptr[], PetscWrap.PetscInt(nev), PD, PD)
+                eps.ptr[], PetscWrap.PetscInt(nev), ncv_p, PD)
     _check_petsc(err, "EPSSetDimensions")
     return nothing
 end

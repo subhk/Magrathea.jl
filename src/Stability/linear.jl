@@ -55,15 +55,17 @@ function _check_thermal_bc(bc)
     return nothing
 end
 
-"""Throw if a basic state is combined with a fixed-flux inner wall. Every basic
-state holds the inner wall at a fixed temperature, so its perturbations must
-vanish there."""
+"""Throw unless the perturbations' inner-wall condition matches the basic state's.
+A fixed inner temperature makes the temperature perturbation vanish there; a fixed
+inner heat flux makes its radial derivative vanish."""
 function _check_basic_state_thermal_bc(bc, basic_state)
     basic_state === nothing && return nothing
-    first(_thermal_walls(bc)) === :fixed_temperature || throw(ArgumentError(
-        "Basic states fix the inner-wall temperature, so perturbations need a fixed " *
-        "inner temperature; use thermal_bc=(:fixed_temperature, :fixed_flux) for a " *
-        "fixed-flux outer wall, got thermal_bc=$(repr(bc))"))
+    inner = hasproperty(basic_state, :inner_thermal_bc) ? basic_state.inner_thermal_bc :
+            :fixed_temperature
+    first(_thermal_walls(bc)) === inner || throw(ArgumentError(
+        "The basic state has a $(inner === :fixed_flux ? "fixed heat flux" : "fixed temperature") " *
+        "at the inner wall, so perturbations need thermal_bc=(:$inner, outer), " *
+        "got thermal_bc=$(repr(bc))"))
     return nothing
 end
 
@@ -76,11 +78,23 @@ conserved. For `m = 0` and `m = 1` this leaves an exactly neutral rigid rotation
 eigenvalue already have zero angular momentum, so constraining it to zero removes only
 the rigid rotation.
 """
-_angular_momentum_gauge(mechanical_bc::Symbol, m::Integer, toroidal_ls) =
-    mechanical_bc === :stress_free && abs(m) <= 1 && 1 in toroidal_ls
+function _angular_momentum_gauge(mechanical_bc::Symbol, m::Integer, toroidal_ls;
+                                 magnetic::Bool=false, insulating::Bool=true)
+    mechanical_bc === :stress_free && 1 in toroidal_ls || return false
+    # With an imposed axisymmetric field only the rotation about its axis (m = 0) stays
+    # neutral, and angular momentum is conserved only with insulating walls, as in
+    # `_mhd_angular_momentum_gauge`.
+    magnetic && return m == 0 && insulating
+    return abs(m) <= 1
+end
 
-_angular_momentum_gauge(op) =
-    _angular_momentum_gauge(op.params.mechanical_bc, op.params.m, op.l_sets[:T])
+_angular_momentum_gauge(op) = _angular_momentum_gauge(op.params.mechanical_bc, op.params.m,
+    op.l_sets[:T]; _gauge_magnetic(op.params)...)
+
+"""Magnetic keywords of `_angular_momentum_gauge` for a parameter set."""
+_gauge_magnetic(p) = (magnetic=_has_magnetic(p),
+    insulating=all(==(:insulating), _magnetic_walls(hasproperty(p, :magnetic_bc) ?
+                                                     p.magnetic_bc : :insulating)))
 
 """Tau row of the ℓ = 1 toroidal block replaced by the zero-angular-momentum condition."""
 @inline angular_momentum_gauge_index(idx::UnitRange{Int}) = first(idx) + 1
@@ -108,8 +122,8 @@ Parameters for rotating spherical shell convection.
 - `Nr::Int` — radial collocation points
 - `mechanical_bc::Symbol` — `:no_slip` (default) or `:stress_free`
 - `thermal_bc` — `:fixed_temperature` (default) or `:fixed_flux` at both walls, or an
-  `(inner, outer)` pair such as `(:fixed_temperature, :fixed_flux)`. A basic state
-  fixes the inner-wall temperature, so it requires a `:fixed_temperature` inner wall.
+  `(inner, outer)` pair such as `(:fixed_temperature, :fixed_flux)`. With a basic
+  state the inner wall must match the state's `inner_thermal_bc`.
 - `equatorial_symmetry::Symbol` — `:both` (default), `:symmetric`, or `:antisymmetric`.
   A truncated symmetry class requires an equatorially symmetric `basic_state`,
   since an asymmetric basic state couples the two classes.
@@ -121,6 +135,16 @@ Parameters for rotating spherical shell convection.
   r². This only rescales rows of the collocation system and leaves the spectrum
   unchanged. For backward compatibility, `use_sparse_weighting=false` without an
   explicit `heating` still selects `heating=:internal` (with a deprecation warning).
+- `B0_type::BackgroundField` — imposed magnetic field: `no_field` (default,
+  hydrodynamic), `axial`, or `dipole`, normalized as in `MHDParams`. An imposed field
+  adds poloidal and toroidal magnetic perturbations, the Lorentz force `Le²(∇×b)×B₀`,
+  and induction `∇×(u×B₀) + (E/Pm)∇²b`; with a basic state, its mean flow and induced
+  mean field enter too.
+- `Le::T` — Lehnert number, based on the outer radius; `0` without a field, `> 0`
+  with one.
+- `Pm::T` — magnetic Prandtl number, default 1.0; the magnetic Ekman number is `E/Pm`.
+- `magnetic_bc` — `:insulating` (default) or `:perfect_conductor` at both walls, or an
+  `(inner, outer)` pair. Perfectly conducting walls require `mechanical_bc=:no_slip`.
 
 Lengths are scaled by the outer radius, so `ro` must be 1 and `ri == χ`.
 
@@ -148,11 +172,16 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
     equatorial_symmetry::Symbol = :both
     basic_state::BS = nothing
     heating::Symbol = :auto
+    Pm::T = one(E)
+    Le::T = zero(E)
+    B0_type::BackgroundField = no_field
+    magnetic_bc::MagneticBC = :insulating
 
     function OnsetParams{T,BS}(E, Pr, Ra, χ, m, lmax, Nr, ri, ro, L,
                            mechanical_bc, thermal_bc, use_sparse_weighting,
                            equatorial_symmetry,
-                           basic_state::BS, heating=:auto) where {T,BS}
+                           basic_state::BS, heating=:auto, Pm=one(T), Le=zero(T),
+                           B0_type=no_field, magnetic_bc=:insulating) where {T,BS}
         0 < χ < 1 || throw(ArgumentError(
             "Radius ratio χ must be in (0,1), got $χ"))
         isapprox(ro, one(ro)) || throw(ArgumentError(
@@ -179,6 +208,8 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
         equatorial_symmetry in (:both, :symmetric, :antisymmetric) || throw(ArgumentError(
             "equatorial_symmetry must be :both, :symmetric, or :antisymmetric, got :$equatorial_symmetry"))
         heating = _resolve_onset_heating(heating, use_sparse_weighting, basic_state)
+        _check_magnetic_options(Pm, Le, B0_type, magnetic_bc, mechanical_bc)
+        _check_basic_state_magnetic(Pm, Le, B0_type, magnetic_bc, basic_state)
         if equatorial_symmetry !== :both && basic_state !== nothing &&
            !_basic_state_equatorially_symmetric(basic_state)
             throw(ArgumentError(
@@ -190,9 +221,48 @@ See also [`OnsetProblem`](@ref) for the v2.0 problem wrapper that accepts this t
 
         new{T,BS}(E, Pr, Ra, χ, m, lmax, Nr, ri, ro, L,
                mechanical_bc, thermal_bc, use_sparse_weighting, equatorial_symmetry,
-               basic_state, heating)
+               basic_state, heating, Pm, Le, B0_type, magnetic_bc)
     end
 end
+
+# Promote mixed numeric inputs, such as an integer Ra, to one float type.
+# Every position is at least as broad as the generated constructor's, so that one
+# keeps handling matching types without an ambiguity.
+function OnsetParams(E::Real, Pr::Real, Ra::Real, χ::Real, m, lmax, Nr,
+                     ri::Real, ro::Real, L::Real, mechanical_bc, thermal_bc,
+                     use_sparse_weighting, equatorial_symmetry, basic_state, heating,
+                     Pm::Real=1, Le::Real=0, B0_type=no_field, magnetic_bc=:insulating)
+    T = float(promote_type(typeof(E), typeof(Pr), typeof(Ra), typeof(χ),
+                           typeof(ri), typeof(ro), typeof(L), typeof(Pm), typeof(Le)))
+    return OnsetParams{T,typeof(basic_state)}(T(E), T(Pr), T(Ra), T(χ), m, lmax, Nr,
+        T(ri), T(ro), T(L), mechanical_bc, thermal_bc, use_sparse_weighting,
+        equatorial_symmetry, basic_state, heating, T(Pm), T(Le), B0_type, magnetic_bc)
+end
+
+"""Throw unless the magnetic options are consistent: `Pm > 0`, `Le = 0` exactly when
+there is no imposed field, valid wall conditions, and no-slip walls next to a perfect
+conductor (a slipping wall would add a motional EMF to the electric wall condition)."""
+function _check_magnetic_options(Pm, Le, B0_type, magnetic_bc, mechanical_bc)
+    Pm > 0 || throw(ArgumentError("Magnetic Prandtl number Pm must be positive, got $Pm"))
+    isfinite(Le) && Le >= 0 || throw(ArgumentError(
+        "Lehnert number Le must be finite and nonnegative, got $Le"))
+    B0_type isa BackgroundField || throw(ArgumentError(
+        "B0_type must be no_field, axial, or dipole, got $(repr(B0_type))"))
+    _check_magnetic_bc(magnetic_bc)
+    if B0_type == no_field
+        iszero(Le) || throw(ArgumentError(
+            "Le = $Le requires an imposed field: set B0_type=axial or B0_type=dipole"))
+    else
+        Le > 0 || throw(ArgumentError("An imposed field (B0_type=$B0_type) requires Le > 0"))
+        :perfect_conductor in _magnetic_walls(magnetic_bc) && mechanical_bc !== :no_slip &&
+            throw(ArgumentError("Perfectly conducting walls require mechanical_bc=:no_slip: " *
+                "a slipping wall adds a motional EMF to the electric wall condition"))
+    end
+    return nothing
+end
+
+"""True when `p` carries magnetic perturbations (an imposed background field)."""
+_has_magnetic(p) = hasproperty(p, :B0_type) && p.B0_type != no_field
 
 """Resolve the `heating` keyword of `OnsetParams`. `:auto` keeps the historical
 meaning of `use_sparse_weighting=false` (internal heating) with a deprecation
@@ -240,6 +310,10 @@ function _basic_state_equatorially_symmetric(bs; rtol=1e-10)
         return true
     end
     field_ok(bs.theta_coeffs, true) || return false
+    # An induced field of a symmetric state has the parity of the imposed axial or
+    # dipole field: poloidal potential with odd ℓ+m, toroidal with even ℓ+m.
+    b̄ = hasproperty(bs, :field) ? bs.field : nothing
+    b̄ === nothing || (field_ok(b̄.p, false) && field_ok(b̄.t, true)) || return false
     flow = hasproperty(bs, :flow) ? bs.flow : nothing
     if flow !== nothing
         return field_ok(flow.p, true) && field_ok(flow.t, false)
@@ -256,9 +330,19 @@ end
     compute_l_sets(p::OnsetParams)
 
 Return the retained spherical-harmonic degrees for poloidal, toroidal, and
-temperature fields after applying equatorial-symmetry truncation.
+temperature fields after applying equatorial-symmetry truncation. With an imposed
+field, the magnetic potentials `:F` (poloidal) and `:G` (toroidal) are added. The
+axial and dipole fields are equatorially antisymmetric, so `:F` takes the toroidal
+velocity's degrees and `:G` the poloidal velocity's, as in the MHD solver.
 """
-compute_l_sets(p::OnsetParams) = _l_sets(p.m, p.lmax, p.equatorial_symmetry)
+function compute_l_sets(p::OnsetParams)
+    sets = _l_sets(p.m, p.lmax, p.equatorial_symmetry)
+    if _has_magnetic(p)
+        sets[:F] = copy(sets[:T])
+        sets[:G] = copy(sets[:P])
+    end
+    return sets
+end
 
 function _l_sets(m::Int, lmax::Int, equatorial_symmetry::Symbol)
     if equatorial_symmetry === :both
@@ -319,6 +403,9 @@ function LinearStabilityOperator(params::OnsetParams{T, BS}) where {T, BS}
     end
     for ℓ in l_sets[:Θ]
         index_map[(ℓ, :Θ)] = idx:(idx + params.Nr - 1);   idx += params.Nr
+    end
+    for field in (:F, :G), ℓ in get(l_sets, field, Int[])
+        index_map[(ℓ, field)] = idx:(idx + params.Nr - 1);   idx += params.Nr
     end
 
     total_dof = idx - 1
@@ -428,11 +515,11 @@ function impose_boundary_conditions!(A::Matrix{Complex{T}}, B::Matrix{Complex{T}
         A[rows, T_idx] .= _constraint_subblock(op, ℓ, :T)
     end
 
-    for ℓ in op.l_sets[:Θ]
-        Θ_idx = op.index_map[(ℓ, :Θ)]
-        rows = collect(temperature_boundary_indices(Θ_idx))
+    for field in (:Θ, :F, :G), ℓ in get(op.l_sets, field, Int[])
+        idx = op.index_map[(ℓ, field)]
+        rows = collect(temperature_boundary_indices(idx))
         A[rows, :] .= 0; B[rows, :] .= 0
-        A[rows, Θ_idx] .= _constraint_subblock(op, ℓ, :Θ)
+        A[rows, idx] .= _constraint_subblock(op, ℓ, field)
     end
 end
 
@@ -613,6 +700,28 @@ function _assemble_onset_radial_coo(op::LinearStabilityOperator{T};
         end
     end
 
+    # Magnetic diffusion, with b = ∇×∇×(F𝐫) + ∇×(G𝐫). F rows are -r² × (λLF =
+    # E_m L D_ℓ F + 𝐫·∇×V) like the toroidal rows, and G rows r⁴ × (λLG = E_m L D_ℓ G
+    # + 𝐫·∇×∇×V) like the poloidal rows, so the EMF V = u×B̄ + U×b projects with
+    # the same formulas as momentum forcing (`_mean_state_blocks`).
+    Em = p.E / p.Pm
+    for ℓ in get(op.l_sets, :F, Int[])
+        F_idx = op.index_map[(ℓ, :F)]
+        owned_julia_rows === nothing || !isempty(intersect(F_idx, owned_julia_rows)) || continue
+        L = TT(ℓ * (ℓ + 1))
+        _emit_block!(B_rows, B_cols, B_vals, F_idx, F_idx, -Complex.(L * R2D0); owned=owned_julia_rows)
+        _emit_block!(A_rows, A_cols, A_vals, F_idx, F_idx,
+                     -Complex.(Em * L * (-L * R0 + 2 * R1D1 + R2D2)); owned=owned_julia_rows)
+    end
+    for ℓ in get(op.l_sets, :G, Int[])
+        G_idx = op.index_map[(ℓ, :G)]
+        owned_julia_rows === nothing || !isempty(intersect(G_idx, owned_julia_rows)) || continue
+        L = TT(ℓ * (ℓ + 1))
+        _emit_block!(B_rows, B_cols, B_vals, G_idx, G_idx, Complex.(L * R4D0); owned=owned_julia_rows)
+        _emit_block!(A_rows, A_cols, A_vals, G_idx, G_idx,
+                     Complex.(Em * L * (-L * R2D0 + 2 * R3D1 + R4D2)); owned=owned_julia_rows)
+    end
+
     return (A_rows=A_rows, A_cols=A_cols, A_vals=A_vals,
             B_rows=B_rows, B_cols=B_cols, B_vals=B_vals, n=n)
 end
@@ -639,6 +748,13 @@ function _assemble_onset_coo(op::LinearStabilityOperator{T};
         bs_ops = build_basic_state_operators(op.params.basic_state, op, op.params.m)
         add_basic_state_operators_coo!(A_rows, A_cols, A_vals, B_rows, B_cols, B_vals,
                                        bs_ops, op, op.params.m; owned_julia_rows=owned_julia_rows)
+    elseif _has_magnetic(op.params)
+        # Lorentz force and induction about the imposed field of the conductive state.
+        m = op.params.m
+        for ((lo, fo, li, fi), block) in _mean_state_blocks(nothing, op, op, m, m)
+            _emit_block!(A_rows, A_cols, A_vals, op.index_map[(lo, fo)],
+                         op.index_map[(li, fi)], block; owned=owned_julia_rows)
+        end
     end
 
     return (A_rows=A_rows, A_cols=A_cols, A_vals=A_vals,
@@ -684,10 +800,9 @@ function _onset_boundary_interior_dofs(op::LinearStabilityOperator{T}) where {T<
     for ℓ in op.l_sets[:T]
         is_boundary[_toroidal_constraint_rows(op, ℓ)] .= true
     end
-    for ℓ in op.l_sets[:Θ]
-        Θ_idx = op.index_map[(ℓ, :Θ)]
-        riΘ, roΘ = temperature_boundary_indices(Θ_idx)
-        is_boundary[riΘ] = is_boundary[roΘ] = true
+    for field in (:Θ, :F, :G), ℓ in get(op.l_sets, field, Int[])
+        ri_, ro_ = temperature_boundary_indices(op.index_map[(ℓ, field)])
+        is_boundary[ri_] = is_boundary[ro_] = true
     end
     boundary_dofs = findall(is_boundary)
     interior_dofs = findall(!, is_boundary)
@@ -772,12 +887,13 @@ function _constraint_reduction(A::Matrix{Complex{T}},
         push!(blocks, ConstraintBasisBlock{T}(T_idx, cols, basis))
         col += size(basis, 2)
     end
-    for ℓ in op.l_sets[:Θ]
-        Θ_idx = op.index_map[(ℓ, :Θ)]
-        riΘ, roΘ = temperature_boundary_indices(Θ_idx)
-        basis = _constraint_basis_block(A, Θ_idx, [riΘ, roΘ], "temperature ℓ=$ℓ")
+    labels = Dict(:Θ => "temperature", :F => "poloidal field", :G => "toroidal field")
+    for field in (:Θ, :F, :G), ℓ in get(op.l_sets, field, Int[])
+        idx = op.index_map[(ℓ, field)]
+        ri_, ro_ = temperature_boundary_indices(idx)
+        basis = _constraint_basis_block(A, idx, [ri_, ro_], "$(labels[field]) ℓ=$ℓ")
         cols = col:(col + size(basis, 2) - 1)
-        push!(blocks, ConstraintBasisBlock{T}(Θ_idx, cols, basis))
+        push!(blocks, ConstraintBasisBlock{T}(idx, cols, basis))
         col += size(basis, 2)
     end
 
@@ -798,7 +914,7 @@ used by `_constraint_reduction`:
 - `:P`  → `[ri, inner_tau, outer_tau, ro]`
 - `:T`  → `_toroidal_constraint_rows(op, ℓ)` (`[riT, roT]`, with the
   angular-momentum row between them when it applies)
-- `:Θ`  → `[riΘ, roΘ]`
+- `:Θ`, `:F`, `:G`  → `[inner, outer]`
 """
 function _constraint_subblock(op::LinearStabilityOperator{T}, ℓ::Int,
                               field::Symbol) where {T<:Real}
@@ -852,6 +968,28 @@ function _constraint_subblock(op::LinearStabilityOperator{T}, ℓ::Int,
             block[2, :] .= D1[end, :]
         end
         return block
+    elseif field === :F || field === :G
+        # Insulating walls match a potential field: ℓF - r F' = 0 inside the inner
+        # wall and (ℓ+1)F + r F' = 0 outside the outer one, with G = 0. A perfect
+        # conductor (next to a no-slip wall) has F = 0 and G' + G/r = 0.
+        block = zeros(Complex{T}, 2, Nr)
+        for (row, node, wall, sign) in ((1, 1, first(_magnetic_walls(p.magnetic_bc)), -1),
+                                        (2, Nr, last(_magnetic_walls(p.magnetic_bc)), 1))
+            if wall === :insulating
+                if field === :F
+                    block[row, :] .= sign .* r[node] .* D1[node, :]
+                    block[row, node] += sign < 0 ? ℓ : ℓ + 1
+                else
+                    block[row, node] = one(Complex{T})
+                end
+            elseif field === :F
+                block[row, node] = one(Complex{T})
+            else
+                block[row, :] .= D1[node, :]
+                block[row, node] += inv(r[node])
+            end
+        end
+        return block
     else
         throw(ArgumentError("Unknown field $field for constraint sub-block"))
     end
@@ -886,11 +1024,11 @@ function _constraint_reduction_from_subblocks(op::LinearStabilityOperator{T}) wh
         push!(blocks, ConstraintBasisBlock{T}(T_idx, cols, basis))
         col += size(basis, 2)
     end
-    for ℓ in op.l_sets[:Θ]
-        Θ_idx = op.index_map[(ℓ, :Θ)]
-        basis = _constraint_nullspace(_constraint_subblock(op, ℓ, :Θ))
+    for field in (:Θ, :F, :G), ℓ in get(op.l_sets, field, Int[])
+        idx = op.index_map[(ℓ, field)]
+        basis = _constraint_nullspace(_constraint_subblock(op, ℓ, field))
         cols = col:(col + size(basis, 2) - 1)
-        push!(blocks, ConstraintBasisBlock{T}(Θ_idx, cols, basis))
+        push!(blocks, ConstraintBasisBlock{T}(idx, cols, basis))
         col += size(basis, 2)
     end
 
@@ -1034,8 +1172,8 @@ Keywords that are `OnsetParams` fields configure the operator; the rest
 (`nev`, `backend`, `sigma`, `which`, `maxiter`) go to the eigensolver.
 """
 function find_critical_rayleigh(E::T, Pr::T, χ::T, m::Int, lmax::Int, Nr::Int;
-                                Ra_guess::T=one(T)*1e6,
-                                tol::T=1e-6,
+                                Ra_guess::T=T(1e6),
+                                tol::T=T(1e-6),
                                 growth_tol::T=tol,
                                 Ra_bracket::Tuple{T,T}=(Ra_guess/10, Ra_guess*10),
                                 basic_state_builder=nothing,

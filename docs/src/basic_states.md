@@ -61,6 +61,10 @@ bs = basic_state(cd, χ, E, Ra, Pr; temperature_bc=bc)
 # Fixed heat flux at outer boundary
 flux = Y00(-1.0) + Y20(0.1)
 bs = basic_state(cd, χ, E, Ra, Pr; flux_bc=flux)
+
+# Heterogeneous temperature or heat flux at the inner boundary
+bs = basic_state(cd, χ, E, Ra, Pr; inner_temperature_bc=Y20(0.1))
+bs = basic_state(cd, χ, E, Ra, Pr; inner_flux_bc=Y11(0.2))
 ```
 
 The `basic_state()` function automatically selects the appropriate implementation based on the boundary condition structure.
@@ -130,6 +134,8 @@ Common patterns for convection studies:
 basic_state(cd, χ, E, Ra, Pr;
             temperature_bc = nothing,
             flux_bc = nothing,
+            inner_temperature_bc = nothing,
+            inner_flux_bc = nothing,
             mechanical_bc = :no_slip,
             lmax_bs = nothing)
 ```
@@ -144,8 +150,11 @@ basic_state(cd, χ, E, Ra, Pr;
 **Keyword Arguments:**
 - `temperature_bc` : `SphericalHarmonicBC` for fixed temperature at outer boundary
 - `flux_bc` : `SphericalHarmonicBC` for fixed heat flux at outer boundary
+- `inner_temperature_bc`, `inner_flux_bc` : the same for the inner boundary (see
+  [Inner-Boundary Forcing](@ref))
 - `mechanical_bc` : `:no_slip` (default) or `:stress_free`
-- `lmax_bs` : Maximum ``\ell`` for expansion (auto-determined if not specified).
+- `lmax_bs` : Maximum ``\ell`` for expansion (default `max(ℓ_bc + 2, 4)`, where
+  `ℓ_bc` is the highest forced degree on either wall).
   An explicit value must retain every nonzero boundary mode; otherwise an
   `ArgumentError` is thrown rather than silently dropping the forcing.
 
@@ -156,6 +165,39 @@ basic_state(cd, χ, E, Ra, Pr;
 | None specified | `conduction_basic_state` | `BasicState` |
 | Axisymmetric (``m=0`` only) | shared viscous solver | `BasicState` |
 | Non-axisymmetric (``m \neq 0``) | `nonaxisymmetric_basic_state` | `BasicState3D` |
+
+With an inner-boundary condition the harmonics of both walls decide the dispatch.
+
+### Inner-Boundary Forcing
+
+The inner boundary takes the same patterns as the outer one, as a temperature
+(`inner_temperature_bc`) or a radial temperature gradient ``\partial\bar T/\partial r``
+(`inner_flux_bc`), for example a laterally varying heat flux out of the inner core:
+
+```julia
+# Fixed inner temperature with an equator-pole contrast:
+# T̄(r_i) = 1 + 0.1 P₂(cosθ)
+bs = basic_state(cd, χ, E, Ra, Pr; inner_temperature_bc=Y20(0.1))
+
+# Hemispherical heat flux at the inner boundary, with a warm outer equator
+bs3d = basic_state(cd, χ, E, Ra, Pr; inner_flux_bc=Y11(0.2), temperature_bc=Y20(-0.05))
+```
+
+Without a `Y00` term the inner wall keeps its mean temperature ``\bar T = 1``, or
+for a flux condition the conduction value
+``\partial\bar T/\partial r|_{r_i} = -1/(\chi(1-\chi))``; a `Y00` term replaces it.
+Fixed flux on both walls leaves the mean temperature undetermined and throws an
+`ArgumentError`. The lower-level constructors take `inner_thermal_bc` together
+with `inner_amplitudes` (`nonaxisymmetric_basic_state`,
+`nonaxisymmetric_basic_state_selfconsistent`), `inner_amplitude` and
+`inner_flux_mean` (`meridional_basic_state`), or `inner_flux`
+(`conduction_basic_state`); `basic_state_selfconsistent` takes the same symbolic
+keywords as `basic_state`.
+
+Each basic state records its inner-wall condition in `inner_thermal_bc`.
+Perturbations must satisfy the same physical condition: a fixed inner heat flux
+requires `thermal_bc = (:fixed_flux, outer)` in `OnsetParams`, so that the
+temperature perturbation has zero flux there; other combinations throw.
 
 ### Examples with Symbolic BCs
 
@@ -205,7 +247,7 @@ params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35, m=4, lmax=30, Nr=64)
 # All modes via a single function:
 bs = basic_state(params; mode=:conduction)
 bs = basic_state(params; mode=:meridional, amplitude=0.05)
-bs = basic_state(params; mode=:selfconsistent, max_iterations=50)
+bs = basic_state(params; mode=:selfconsistent, max_iterations=50)  # throws unless the iteration converges
 bs3d = basic_state(params; mode=:nonaxisymmetric, mmax_bs=2)
 ```
 
@@ -215,13 +257,22 @@ The `mode` keyword selects the construction strategy:
 |--------|---------|-------------|
 | `:conduction` | `BasicState` | Pure conductive profile, no flow |
 | `:meridional` | `BasicState` | Conductive temperature and axisymmetric Stokes–Coriolis flow |
-| `:selfconsistent` | `BasicState` or `BasicState3D` | Nonlinear Navier–Stokes–Coriolis and thermal transport |
+| `:selfconsistent` | `BasicState3D` (`BasicState` if `mmax_bs=0`) | Nonlinear Navier–Stokes–Coriolis and thermal transport |
 | `:nonaxisymmetric` | `BasicState3D` | Conductive temperature and 3D Stokes–Coriolis flow |
 
-Each mode imposes its outer-wall forcing as a temperature or a flux, following
-the outer wall of `params.thermal_bc`, and holds the inner wall at a fixed
-temperature. `params.thermal_bc` must therefore be `:fixed_temperature` or
-`(:fixed_temperature, :fixed_flux)`.
+Each mode imposes its forcing as a temperature or a flux, following each wall of
+`params.thermal_bc`: `amplitude` (default 0.05) sets the degree-2 pattern on the
+outer wall and `inner_amplitude` (default 0) on the inner wall, added to the
+conduction mean. `:meridional` uses the axisymmetric ``P_2`` pattern;
+`:nonaxisymmetric` and `:selfconsistent` force the orders `m = 1…min(mmax_bs, 2)`
+of degree 2 (defaults `mmax_bs=2`, `lmax_bs=4`), and the nonlinear solve retains
+azimuthal orders through `lmax_bs`. At least one wall must have a fixed temperature.
+
+```julia
+params = OnsetParams(E=1e-4, Pr=1.0, Ra=1e6, χ=0.35, m=4, lmax=30, Nr=64,
+                     thermal_bc=(:fixed_flux, :fixed_temperature))
+bs = basic_state(params; mode=:meridional, inner_amplitude=0.1)  # P₂ heat-flux pattern at r_i
+```
 
 !!! note "Low-level API"
     The low-level functions `conduction_basic_state`, `meridional_basic_state`, `nonaxisymmetric_basic_state`, and `basic_state_selfconsistent` remain fully supported. The unified API is a convenience wrapper.
@@ -277,8 +328,10 @@ Use `thermal_bc = :fixed_flux` and specify `outer_flux`. The default,
 `outer_flux = -χ/(1 - χ)`, carries the conduction heat flux and reproduces the
 fixed-temperature profile; `meridional_basic_state` (`outer_flux_mean`) and
 `nonaxisymmetric_basic_state` (the `(0, 0)` flux) use the same default. Pair a
-fixed-flux basic state with perturbations that keep the inner temperature fixed,
-`thermal_bc = (:fixed_temperature, :fixed_flux)` in `OnsetParams`.
+basic state with perturbations whose conditions match on each wall, e.g.
+`thermal_bc = (:fixed_temperature, :fixed_flux)` in `OnsetParams` for a fixed-flux
+outer wall. The inner wall can also have a fixed flux; see
+[Inner-Boundary Forcing](@ref).
 
 ### Meridional Variations
 
@@ -360,7 +413,9 @@ complete nonaxisymmetric flow; prefer the basic-state constructors.
 
 ### Using Basic States in Problems
 
-Pass the basic state to `OnsetParams` and wrap it in the appropriate problem type:
+Wrap the basic state and matching `OnsetParams` in the appropriate problem type,
+`BiglobalProblem` for a `BasicState` or `TriglobalProblem` for a `BasicState3D`
+(`OnsetProblem` rejects a basic state):
 
 ```julia
 params = OnsetParams(
@@ -370,8 +425,7 @@ params = OnsetParams(
     χ = 0.35,
     m = 12,
     lmax = 60,
-    Nr = 96,
-    basic_state = bs,  # Include the basic state
+    Nr = bs.Nr,  # must match the basic state's radial grid
     mechanical_bc = :no_slip,
     thermal_bc = :fixed_temperature,
 )
@@ -593,11 +647,11 @@ using JLD2
 # Save
 @save "basic_states/meridional_l6.jld2" bs
 
-# Load
-@load "basic_states/meridional_l6.jld2" bs_loaded
+# Load (restores the saved variable `bs`)
+@load "basic_states/meridional_l6.jld2" bs
 
 # Use in new problem
-params = OnsetParams(..., basic_state = bs_loaded)
+problem = BiglobalProblem(params, bs)
 ```
 
 ## Reality Conditions
@@ -709,12 +763,20 @@ The self-consistent solver includes nonlinear mean-flow inertia by default
 \qquad \frac{E}{Pr}\nabla^2\bar T=\bar{\mathbf u}\cdot\nabla\bar T.
 ```
 
-The damped Picard iteration solves thermal transport implicitly at fixed
-velocity, then solves momentum with frozen nonlinear forcing. It uses
+The damped Picard iteration solves thermal transport implicitly, then solves
+momentum with frozen nonlinear forcing. Temperature anomalies are advected by the
+previous velocity, but the spherical mean temperature is advected by the flow that
+the new temperature drives, so the linear buoyancy feedback (advection of the
+mean temperature gradient by the buoyancy-driven flow) is solved exactly in each
+step and only nonlinear transport is lagged. It uses
 ``-({\mathbf U}\cdot\nabla){\mathbf U}={\mathbf U}\times(\nabla\times{\mathbf U})
 -\nabla(|{\mathbf U}|^2/2)`` and absorbs the gradient in pressure. Angular
 products use an oversampled grid and the native vector-harmonic flow.
 Backtracking accepts updates that reduce the fixed-point residual described below.
+If the Picard iteration stalls, Newton–Krylov steps on the same fixed-point
+equation take over (GMRES with finite-difference Jacobian products and a line
+search). If those fail too, the boundary anomalies are raised from zero by
+natural-parameter continuation, each step starting from the previous steady state.
 `momentum_model=:stokes` explicitly retains the earlier weak-inertia model
 while still solving thermal transport.
 
@@ -746,14 +808,22 @@ boundary conditions.
 `info.residual_history` records their maximum, and
 `info.momentum_residual_history`, `info.thermal_residual_history`, and
 `info.step_history` record each accepted update (a zero step indicates a
-failed line search). `info.termination_reason` is `:converged`,
+failed line search). `info.newton_iterations` counts the Newton steps (zero when
+Picard converges), `info.forcing_history` records the fraction of the boundary
+anomalies at each step, and `info.forcing_reached` is the largest fraction with a
+converged steady state. Every Picard or Newton step counts toward
+`max_iterations`. `info.termination_reason` is `:converged`,
 `:max_iterations`, or `:stagnation`.
 
 When `info.iteration_converged=false`, the returned state is an incomplete iterate and
-must not be treated as a steady equilibrium. Strong forcing may require
-smaller `relaxation` or more iterations; Picard convergence is not guaranteed.
-Failure to converge does not establish
-physical instability. The convenience call `basic_state(params;
+must not be treated as a steady equilibrium. A steady state need not exist: above
+onset, the branch of steady states connected to weak forcing can end in a fold,
+beyond which no steady state continues it. The solver then reports
+`info.forcing_reached < 1`, the fraction of the requested anomalies it reached.
+For example, with stress-free walls at `E = 1e-2` and `Ra = 5e3`, a `Y21 + Y22`
+temperature forcing folds at an amplitude of about 0.005. Use weaker forcing, a
+lower Rayleigh number, or the noniterated Stokes–Coriolis state there. Failure to
+converge does not establish physical instability. The convenience call `basic_state(params;
 mode=:selfconsistent)` throws on nonconvergence unless
 `allow_unconverged=true` is explicitly requested.
 
@@ -827,6 +897,385 @@ change `info.spatial_convergence` or validate the omitted terms of an approximat
 physical model. In particular, a small iteration residual can coexist with a
 substantial change of the mean flow when `lmax_bs` is increased.
 
+## [Worked example: a Y₂₀ heat flux at the outer boundary](@id y20-heat-flux-example)
+
+This example solves the self-consistent mean-flow equations of
+[Self-Consistent Basic States with Advection](#Self-Consistent-Basic-States-with-Advection)
+for a shell whose inner boundary is held at a uniform temperature,
+``\bar T(r_i)=1``, while the outer boundary carries a prescribed heat flux with a
+``Y_2^0`` pattern:
+
+```math
+\left.\frac{\partial\bar T}{\partial r}\right|_{r_o}=q_0\left[1+\epsilon P_2(\cos\theta)\right],
+\qquad q_0=-\frac{\chi}{1-\chi},\qquad \epsilon=0.3.
+```
+
+``q_0`` is the conductive gradient, so the spherically averaged heat flux equals
+that of the conduction state and only its latitude dependence drives a flow. With
+``\epsilon>0`` the outer boundary loses 30% more heat than average at the poles and
+15% less at the equator. Both boundaries are no-slip. With the normalization of
+[Available Constructors](#Available-Constructors), `Y00(q₀)` sets the mean of
+``\partial\bar T/\partial r`` and `Y20(ε * q₀)` adds ``\epsilon q_0 P_2(\cos\theta)``.
+``Ra=3\times10^4`` is about 1.2 times the onset of convection in the conduction
+state with fixed-temperature walls, ``Ra_c\approx2.4\times10^4`` at ``m=3``. The
+steady state computed here therefore need not be stable; a
+[biglobal analysis](analysis/biglobal_stability.md) determines whether it is.
+The last line confirms the gradient imposed at the outer boundary:
+
+```@example y20_flux
+using Magrathea
+
+χ, E, Ra, Pr = 0.35, 1e-3, 3e4, 1.0
+q₀ = -χ / (1 - χ)                  # conductive ∂T̄/∂r at the outer boundary
+ε = 0.3
+flux = Y00(q₀) + Y20(ε * q₀)       # ∂T̄/∂r(r_o) = q₀[1 + ε P₂(cos θ)]
+
+function y20_state(Nr, lmax_bs)
+    cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
+    bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; flux_bc=flux,
+        lmax_bs=lmax_bs, max_iterations=80, tolerance=1e-10)
+    @assert info.iteration_converged
+    return bs
+end
+
+bs = y20_state(32, 24)
+(mean = bs.dtheta_dr_coeffs[0][end] / sqrt(4π), P₂ = bs.dtheta_dr_coeffs[2][end] * sqrt(5 / (4π)))
+```
+
+Refining each truncation separately, as in
+[Checking spatial resolution](#Checking-spatial-resolution), changes the velocity
+by these relative amounts:
+
+```@example y20_flux
+radial = mean_flow_resolution(bs, y20_state(40, 24); rtol=1e-3, atol=1e-14)
+angular = mean_flow_resolution(bs, y20_state(32, 32); rtol=1e-3, atol=1e-14)
+@assert radial.converged && angular.converged
+(radial = radial.velocity.total.relative_error, angular = angular.velocity.total.relative_error)
+```
+
+Next, sample the state on a grid of radius ``r`` and colatitude ``\theta``.
+[`mean_flow_velocity`](@ref) and [`mean_temperature`](@ref) evaluate the velocity
+and temperature. Velocities are in units of ``\Omega r_o``; dividing by ``E``
+converts them to the viscous unit ``\nu/r_o``, so they read as Reynolds numbers.
+The temperature anomaly removes the spherical mean at each radius. The Stokes
+streamfunction ``\psi``, with ``u_r=\partial_\theta\psi/(r^2\sin\theta)`` and
+``u_\theta=-\partial_r\psi/(r\sin\theta)``, is integrated from the north pole.
+It must vanish again at the south pole, which the last value checks:
+
+```@example y20_flux
+rs = range(χ, 1, 121)                    # radius
+θs = range(0, π, 241)                    # colatitude
+T = [mean_temperature(bs, r, θ) for r in rs, θ in θs]
+u = [mean_flow_velocity(bs, r, θ) for r in rs, θ in θs]
+ur = getfield.(u, :ur) ./ E              # units of ν/r_o
+uφ = getfield.(u, :uphi) ./ E
+
+w = sin.(θs)
+T′ = T .- (T * w) ./ sum(w)              # remove the spherical mean at each radius
+ψ = zeros(size(ur))                      # ψ = r² ∫₀^θ u_r sin θ′ dθ′
+for k in 2:length(θs)
+    ψ[:, k] = ψ[:, k-1] .+ rs .^ 2 .* (ur[:, k-1] .* w[k-1] .+ ur[:, k] .* w[k]) .* (step(θs) / 2)
+end
+X = rs .* sin.(θs)'                      # cylindrical radius s = r sin θ
+Z = rs .* cos.(θs)'                      # height z = r cos θ
+(uφ_range = extrema(uφ), ψ_south_pole = maximum(abs, ψ[:, end]) / maximum(abs, ψ))
+```
+
+Plot the outer heat flux and three meridional sections with CairoMakie:
+
+```@example y20_flux
+using CairoMakie
+
+function shell!(ax)
+    φ = range(-π / 2, π / 2, 200)
+    for a in (χ, 1)
+        lines!(ax, a .* cos.(φ), a .* sin.(φ); color=:black, linewidth=1.2)
+    end
+    lines!(ax, [0, 0, NaN, 0, 0], [χ, 1, NaN, -χ, -1]; color=:black, linewidth=1.2)
+    zt = sqrt(1 - χ^2)                   # the tangent cylinder s = χ
+    lines!(ax, [χ, χ], [-zt, zt]; color=(:gray25, 0.7), linewidth=0.9, linestyle=:dash)
+end
+
+limits = ((-0.03, 1.03), (-1.03, 1.03))
+aspect = AxisAspect(1.06 / 2.06)         # keeps the sections circular
+
+function section!(fig, col, F, title, colormap, label)
+    m = maximum(abs, F)
+    ax = Axis(fig[2, col]; title, limits, aspect)
+    hidedecorations!(ax); hidespines!(ax)
+    contourf!(ax, X, Z, F; levels=range(-m, m, 22), colormap)
+    lv = range(-m, m, 12)[2:end-1]       # solid positive and dashed negative contours
+    contour!(ax, X, Z, F; levels=filter(>(0), lv), color=(:black, 0.5), linewidth=0.6)
+    contour!(ax, X, Z, F; levels=filter(<(0), lv), color=(:black, 0.5), linewidth=0.6,
+             linestyle=:dash)
+    shell!(ax)
+    Colorbar(fig[3, col]; colormap, limits=(-m, m), label, vertical=false, flipaxis=false,
+             ticks=WilkinsonTicks(3), width=Relative(0.85))
+    return ax
+end
+
+fig = Figure(size=(960, 580), fontsize=14)
+Label(fig[0, 1:4], "Steady mean flow driven by a Y₂₀ heat flux at the outer boundary";
+      fontsize=17, font=:bold, tellwidth=false)
+Label(fig[1, 1:4], L"\chi=0.35,\; E=10^{-3},\; Ra=3\times10^{4},\; Pr=1;\quad \bar{T}(r_i)=1,\quad \partial_r\bar{T}(r_o)=q_0\,[1+0.3\,P_2(\cos\theta)]";
+      color=:gray25, tellwidth=false)
+
+# Heat flux out of the outer boundary, q = -∂T̄/∂r, against the height z = cos θ
+# so that it lines up with the outer boundary of the sections.
+axq = Axis(fig[2, 1]; title="Outer heat flux", limits=((0.75, 1.4), limits[2]), aspect,
+           xlabel=L"q/\bar{q}", xticks=[0.85, 1, 1.3], xgridvisible=false,
+           ygridvisible=false,
+           yticks=(sind.(-90:30:90), ["90°S", "60°S", "30°S", "0°", "30°N", "60°N", "90°N"]))
+μ = range(-1, 1, 201)
+lines!(axq, 1 .+ ε .* (3 .* μ .^ 2 .- 1) ./ 2, μ; color=:firebrick, linewidth=2.5)
+vlines!(axq, 1; color=:gray50, linestyle=:dash, linewidth=1)
+
+section!(fig, 2, T′, "Temperature anomaly", :balance, L"\bar{T}-\langle\bar{T}\rangle")
+section!(fig, 3, uφ, "Zonal flow", :PuOr, L"\bar{u}_\phi\, r_o/\nu")
+axψ = section!(fig, 4, 1e3 .* ψ, "Meridional circulation", :PRGn, L"10^3\,\psi/(\nu r_o)")
+
+# Direction of the meridional velocity (u_s, u_z) on a coarse grid of points.
+points, angles, speeds = Point2f[], Float64[], Float64[]
+for s in 0.06:0.11:0.98, z in -0.935:0.11:0.935   # symmetric about the equator
+    r, θ = hypot(s, z), atan(s, z)
+    χ + 0.04 < r < 0.97 || continue
+    v = mean_flow_velocity(bs, r, θ)
+    us = v.ur * sin(θ) + v.utheta * cos(θ)
+    uz = v.ur * cos(θ) - v.utheta * sin(θ)
+    push!(points, Point2f(s, z)); push!(angles, atan(uz, us)); push!(speeds, hypot(us, uz))
+end
+keep = speeds .> 0.03 * maximum(speeds)  # omit the nearly stagnant cell centres
+scatter!(axψ, points[keep]; marker=:rtriangle, rotation=angles[keep], markersize=8,
+         color=(:black, 0.8))
+
+colgap!(fig.layout, 16)
+save("y20_mean_flow.png", fig; px_per_unit=2)
+nothing # hide
+```
+
+![Outer heat flux and meridional sections of the temperature anomaly, zonal flow and meridional circulation of the steady state driven by a Y₂₀ heat flux](y20_mean_flow.png)
+
+From left to right, the figure shows the imposed outer heat flux and meridional
+sections of the temperature anomaly, the zonal flow and the meridional
+circulation. The rotation axis is vertical and the dashed vertical line marks the
+tangent cylinder ``s=r_i``. Solid contours are positive and dashed contours
+negative; the triangles give the direction of the meridional flow.
+
+- **Temperature.** The extra heat loss cools the polar regions
+  (``\bar T-\langle\bar T\rangle\approx-0.09`` at the poles) and the deficit warms
+  the equator (``\approx+0.04``). The anomaly vanishes on the isothermal inner
+  boundary.
+- **Zonal flow.** Outside the Ekman layers the flow is in thermal-wind balance,
+  ``2\,\partial_z\bar u_\phi=\beta\,\partial_\theta\bar T`` with
+  ``\beta=Ra\,E^2/(Pr(1-\chi)^3)``, which this state satisfies to within 2% in the
+  interior. With a warm equator, ``\bar u_\phi`` increases away from the equatorial
+  plane in both hemispheres. The flow is retrograde at low latitudes
+  (``\bar u_\phi r_o/\nu\approx-1.9``) and prograde at high latitudes near the
+  outer boundary (``\approx+0.8``).
+- **Meridional circulation.** There is one cell in each hemisphere,
+  counter-clockwise in the north (``\psi<0``) and its mirror image in the south.
+  Cold fluid sinks at high latitudes, flows towards the equator in the Ekman layer
+  of the inner boundary, rises at low latitudes and returns poleward in the Ekman
+  layer of the outer boundary. Its peak speed is about a sixth of that of the
+  zonal flow.
+
+The Reynolds and Péclet numbers are about 2, so inertia and heat advection are
+weak but not negligible. The spherical-mean temperature departs from conduction
+by only ``3\times10^{-4}``. However, the noniterated Stokes–Coriolis state,
+`basic_state(cd, χ, E, Ra, Pr; flux_bc=flux, lmax_bs=24)`, underestimates the zonal
+flow by about 10% and the meridional circulation by about 20%. To change the
+forcing, edit `flux`. For example, `ε < 0` puts the extra heat loss at the
+equator and, to leading order, reverses the anomaly and both flows.
+
+## [Worked example: a Y₂₂ heat flux and a 3-D basic state](@id y22-heat-flux-example)
+
+A heat flux that varies with longitude gives a `BasicState3D`, the basic state of
+a [tri-global analysis](triglobal.md). This example keeps the uniform inner
+temperature ``\bar T(r_i)=1`` and imposes a ``Y_2^2`` heat-flux pattern at the
+outer boundary:
+
+```math
+\left.\frac{\partial\bar T}{\partial r}\right|_{r_o}=q_0\left[1+\epsilon\sin^2\theta\cos 2\phi\right],
+\qquad q_0=-\frac{\chi}{1-\chi},\qquad \epsilon=0.3.
+```
+
+`Y22(a)` is ``3a\sin^2\theta\cos 2\phi``, so the pattern is `Y22(ε * q₀ / 3)`.
+Along the equator, the outer boundary loses 30% more heat than average at
+longitudes 0° and 180° and 30% less at ±90°. The 3-D heat step solves a dense
+system with ``(\ell_{\max}+1)^2N_r`` unknowns. This example therefore uses
+``E=10^{-2}``, where `lmax_bs = mmax_bs = 8` is enough for a figure.
+``Ra=3\times10^3`` is about 0.6 of the onset of convection in the conduction
+state with fixed-temperature walls, ``Ra_c\approx4.8\times10^3`` at ``m=3``. The
+last line confirms the imposed gradient:
+
+```@example y22_flux
+using Magrathea
+
+χ, E, Ra, Pr = 0.35, 1e-2, 3e3, 1.0
+q₀ = -χ / (1 - χ)                  # conductive ∂T̄/∂r at the outer boundary
+ε = 0.3
+flux = Y00(q₀) + Y22(ε * q₀ / 3)   # ∂T̄/∂r(r_o) = q₀[1 + ε sin²θ cos 2φ]
+
+function y22_state(Nr, lmax_bs)
+    cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
+    bs, info = basic_state_selfconsistent(cd, χ, E, Ra, Pr; flux_bc=flux,
+        lmax_bs=lmax_bs, mmax_bs=lmax_bs, max_iterations=80, tolerance=1e-10)
+    @assert info.iteration_converged
+    return bs
+end
+
+bs = y22_state(24, 8)
+(state = typeof(bs), mean = bs.dtheta_dr_coeffs[(0, 0)][end] / sqrt(4π),
+ Y22 = bs.dtheta_dr_coeffs[(2, 2)][end] * sqrt(10 / (4π)))
+```
+
+The radial truncation is converged to round-off. Raising `lmax_bs` and
+`mmax_bs` to 10 changes the velocity by a few parts in a thousand:
+
+```@example y22_flux
+radial = mean_flow_resolution(bs, y22_state(32, 8); rtol=1e-2, atol=1e-14)
+angular = mean_flow_resolution(bs, y22_state(24, 10); rtol=1e-2, atol=1e-14)
+@assert radial.converged && angular.converged
+(radial = radial.velocity.total.relative_error, angular = angular.velocity.total.relative_error)
+```
+
+Sample the equatorial plane ``\theta=\pi/2`` on a grid of radius and longitude
+with [`mean_temperature`](@ref) and [`mean_flow_velocity`](@ref). The temperature
+anomaly removes the azimuthal mean at each radius. The forcing is symmetric
+about the equator, so ``\bar u_\theta`` vanishes there and the flow in this
+plane is horizontal, as the last value confirms:
+
+```@example y22_flux
+rs = range(χ, 1, 61)                     # radius
+φs = range(0, 2π, 241)                   # longitude
+T = [mean_temperature(bs, r, π / 2, φ) for r in rs, φ in φs]
+u = [mean_flow_velocity(bs, r, π / 2, φ) for r in rs, φ in φs]
+ur = getfield.(u, :ur) ./ E              # units of ν/r_o
+uφ = getfield.(u, :uphi) ./ E
+T′ = T .- sum(T[:, 1:end-1]; dims=2) ./ (length(φs) - 1)   # remove the azimuthal mean
+X = rs .* cos.(φs)'                      # the plane z = 0, seen from the north
+Y = rs .* sin.(φs)'
+(T′_range = extrema(T′), uθ_over_uφ = maximum(v -> abs(v.utheta), u) / maximum(v -> abs(v.uphi), u))
+```
+
+Plot the outer heat flux on a Hammer equal-area map and three equatorial sections:
+
+```@example y22_flux
+using CairoMakie
+
+q(θ, φ) = 1 + ε * sin(θ)^2 * cos(2φ)     # heat flux out of the outer boundary / its mean
+qmap = cgrad(:balance; rev=true)         # blue where more heat is lost
+qrange = (1 - ε, 1 + ε)
+
+function equatorial_section!(fig, col, F, title, colormap, label)
+    m = maximum(abs, F)
+    ax = Axis(fig[4, col]; title, aspect=DataAspect(), limits=((-1.1, 1.1), (-1.1, 1.1)))
+    hidedecorations!(ax); hidespines!(ax)
+    contourf!(ax, X, Y, F; levels=range(-m, m, 22), colormap)
+    lv = range(-m, m, 12)[2:end-1]       # solid positive and dashed negative contours
+    contour!(ax, X, Y, F; levels=filter(>(0), lv), color=(:black, 0.5), linewidth=0.6)
+    contour!(ax, X, Y, F; levels=filter(<(0), lv), color=(:black, 0.5), linewidth=0.6,
+             linestyle=:dash)
+    t = range(0, 2π, 361)
+    for a in (χ, 1)
+        lines!(ax, a .* cos.(t), a .* sin.(t); color=:black, linewidth=1.2)
+    end
+    # The heat flux along the equator, as a ring around the shell
+    lines!(ax, 1.055 .* cos.(t), 1.055 .* sin.(t); color=q.(π / 2, t), colormap=qmap,
+           colorrange=qrange, linewidth=5)
+    Colorbar(fig[5, col]; colormap, limits=(-m, m), label, vertical=false, flipaxis=false,
+             ticks=WilkinsonTicks(3), width=Relative(0.8))
+    return ax
+end
+
+fig = Figure(size=(960, 780), fontsize=14)
+Label(fig[0, 1:3], "Steady mean flow driven by a Y₂₂ heat flux at the outer boundary";
+      fontsize=17, font=:bold, tellwidth=false)
+Label(fig[1, 1:3], L"\chi=0.35,\; E=10^{-2},\; Ra=3\times10^{3},\; Pr=1;\quad \bar{T}(r_i)=1,\quad \partial_r\bar{T}(r_o)=q_0\,[1+0.3\,\sin^2\theta\cos 2\phi]";
+      color=:gray25, tellwidth=false)
+
+# Hammer equal-area map of the outer boundary, longitude λ and latitude ϕ
+hammer(λ, ϕ) = (d = sqrt(1 + cos(ϕ) * cos(λ / 2));
+                Point2f(2√2 * cos(ϕ) * sin(λ / 2) / d, √2 * sin(ϕ) / d))
+λs = range(-π, π, 181)
+ϕs = range(-π / 2, π / 2, 91)
+P = [hammer(λ, ϕ) for λ in λs, ϕ in ϕs]
+top = fig[2, 1:3] = GridLayout()
+axm = Axis(top[1, 1]; title="Heat flux out of the outer boundary", aspect=DataAspect(),
+           limits=((-2.9, 2.9), (-1.62, 1.45)), width=440, height=233)
+hidedecorations!(axm); hidespines!(axm)
+contourf!(axm, first.(P), last.(P), [q(π / 2 - ϕ, λ) for λ in λs, ϕ in ϕs];
+          levels=range(qrange..., 13), colormap=qmap)
+for λ in -2π/3:π/3:2π/3                  # meridians, labelled below the map
+    lines!(axm, [hammer(λ, ϕ) for ϕ in ϕs]; color=(:white, 0.7), linewidth=0.6)
+    text!(axm, hammer(λ, 0)[1], -√2; text="$(round(Int, rad2deg(λ)))°", fontsize=11,
+          align=(:center, :top), offset=(0, -4), color=:gray25)
+end
+for ϕ in (-π/3, -π/6, π/6, π/3)          # parallels
+    lines!(axm, [hammer(λ, ϕ) for λ in λs]; color=(:white, 0.7), linewidth=0.6)
+end
+lines!(axm, [hammer(λ, 0) for λ in λs]; color=:black, linewidth=1.2, linestyle=:dash)
+lines!(axm, vcat([hammer(-π, ϕ) for ϕ in ϕs], [hammer(π, ϕ) for ϕ in reverse(ϕs)],
+                 [hammer(-π, -π / 2)]); color=:black, linewidth=1.2)
+Colorbar(top[1, 2]; colormap=qmap, limits=qrange, label=L"q/\bar{q}", height=180,
+         ticks=[0.7, 0.85, 1, 1.15, 1.3])
+
+Label(fig[3, 1:3], "Equatorial plane z = 0 seen from the north, rotating counter-clockwise; " *
+      "the outer ring repeats the heat flux along the equator"; color=:gray25, tellwidth=false)
+equatorial_section!(fig, 1, T′, "Temperature anomaly", :balance,
+                    L"\bar{T}-\langle\bar{T}\rangle_\phi")
+equatorial_section!(fig, 2, ur, "Radial velocity", :PRGn, L"\bar{u}_r\, r_o/\nu")
+axφ = equatorial_section!(fig, 3, uφ, "Azimuthal velocity", :PuOr, L"\bar{u}_\phi\, r_o/\nu")
+
+# Direction of the horizontal flow (u_x, u_y) on a coarse grid of points.
+points, angles, speeds = Point2f[], Float64[], Float64[]
+for x in -0.96:0.12:0.96, y in -0.96:0.12:0.96
+    r, φ = hypot(x, y), atan(y, x)
+    χ + 0.04 < r < 0.97 || continue
+    v = mean_flow_velocity(bs, r, π / 2, φ)
+    ux = v.ur * cos(φ) - v.uphi * sin(φ)
+    uy = v.ur * sin(φ) + v.uphi * cos(φ)
+    push!(points, Point2f(x, y)); push!(angles, atan(uy, ux)); push!(speeds, hypot(ux, uy))
+end
+keep = speeds .> 0.03 * maximum(speeds)  # omit nearly stagnant points
+scatter!(axφ, points[keep]; marker=:rtriangle, rotation=angles[keep], markersize=7,
+         color=(:black, 0.75))
+
+rowsize!(fig.layout, 4, Aspect(1, 1))    # sections as tall as they are wide
+rowgap!(fig.layout, 3, 4)
+save("y22_mean_flow.png", fig; px_per_unit=2)
+nothing # hide
+```
+
+![Hammer map of the Y₂₂ outer heat flux and equatorial sections of the temperature anomaly, radial velocity and azimuthal velocity of the steady state](y22_mean_flow.png)
+
+The map shows the imposed heat flux over the whole outer boundary. Blue marks
+regions that lose more heat than average and cool the fluid beneath them. The
+dashed line is the equator, where the sections below are taken. The sections are
+seen from the north, with longitude 0° to the right and increasing
+counter-clockwise, the direction of rotation. The ring around each section
+repeats the heat flux along the equator, and the triangles show the direction of
+the horizontal flow.
+
+- **Temperature.** Cold anomalies form beneath the high-flux longitudes and warm
+  ones beneath the low-flux longitudes, with
+  ``\bar T-\langle\bar T\rangle_\phi`` between −0.13 and +0.10. Heat advection
+  shifts them 20–35° west (clockwise); the azimuthal-mean flow in this plane is
+  retrograde, reaching ``\langle\bar u_\phi\rangle_\phi r_o/\nu\approx-0.5``.
+- **Radial velocity.** Warm fluid moves outwards and cold fluid inwards: the
+  ``m=2`` part of ``\bar u_r`` lies within about 6° of longitude of the
+  temperature anomaly, with ``\bar u_r r_o/\nu`` between −2.6 and +2.0.
+- **Azimuthal velocity.** Prograde and retrograde jets alternate around the
+  shell, with ``\bar u_\phi r_o/\nu`` between −3.2 and +2.8.
+
+Heat advection matters here. The self-consistent flow is about three times
+stronger than in the noniterated Stokes–Coriolis state,
+`basic_state(cd, χ, E, Ra, Pr; flux_bc=flux, lmax_bs=8)`, which keeps the
+conductive temperature. The difference comes from heat transport rather than
+momentum inertia: `momentum_model=:stokes` changes the peak velocity by about 1%.
+The state `bs` is the input of a tri-global stability analysis: see
+[Tri-Global Analysis](triglobal.md).
+
 ## Full Geostrophic Balance with Meridional Circulation
 
 The mean velocity is represented as
@@ -874,14 +1323,14 @@ Before using a basic state:
 ## Next Steps
 
 - **[Tri-Global Analysis](triglobal.md)** - Use 3-D basic states for mode coupling
-- **[MHD Extension](mhd_extension.md)** - Add magnetic field effects to basic states
+- **[MHD with mean flows](mhd_user_guide.md#Mean-flows:-biglobal-and-triglobal-MHD)** - Basic states with an imposed field and the induced field of their flow
 
 ---
 
 !!! info "Example Scripts"
     See the following examples in the `example/` directory:
 
-    - `basic_state_onset_example.jl` - Basic state with symbolic BCs
-    - `nonaxisymmetric_basic_state.jl` - 3D basic states with Y₂₂ patterns
-    - `flux_bc_mean_flow.jl` - Non-axisymmetric heat flux (Y₂₂) with meridional circulation
+    - `basic_state_onset_example.jl` - Critical Rayleigh numbers on conduction and meridional (Y₂₀) states
+    - `nonaxisymmetric_basic_state.jl` - 3D conduction/Stokes state with Y₂₀, Y₂₂ and Y₃₁ forcing and resolution checks
+    - `flux_bc_mean_flow.jl` - Non-axisymmetric heat flux (Y₂₂) with the self-consistent nonlinear solver
     - `flux_bc_axisymmetric_flow.jl` - Axisymmetric heat flux (Y₂₀)
