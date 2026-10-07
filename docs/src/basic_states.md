@@ -3,16 +3,6 @@
 !!! note "Eigensolver setup"
     Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Base states</div>
-  <h1>Separate the background state from the perturbations.</h1>
-  <p>
-    Magrathea.jl decouples the steady base state from the perturbations whose stability
-    you study, so you can analyze onset against realistic background temperature and
-    flow profiles.
-  </p>
-</div>
-
 ## Overview
 
 Two data structures handle base states:

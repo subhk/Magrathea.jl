@@ -3,16 +3,6 @@
 !!! note "Eigensolver setup"
     Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Mode coupling</div>
-  <h1>3-D instabilities across coupled azimuthal wavenumbers.</h1>
-  <p>
-    Tri-global analysis captures coupling between azimuthal wavenumbers when the base
-    state is fully 3-D &mdash; for instabilities driven by non-axisymmetric boundary
-    conditions or background flows.
-  </p>
-</div>
-
 ## When to Use Tri-Global Analysis
 
 Use tri-global analysis when:

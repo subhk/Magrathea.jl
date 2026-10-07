@@ -3,12 +3,6 @@
 !!! note "Eigensolver setup"
     Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Help</div>
-  <h1>FAQ &amp; troubleshooting.</h1>
-  <p>Common questions and fixes for Magrathea.jl users.</p>
-</div>
-
 ## Installation
 
 ### Q: Julia complains about incompatible package versions

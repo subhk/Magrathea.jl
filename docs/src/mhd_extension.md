@@ -3,16 +3,6 @@
 !!! note "Eigensolver setup"
     Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Magnetohydrodynamics</div>
-  <h1>Stability of rotating, conducting fluids in magnetic fields.</h1>
-  <p>
-    The MHD module studies the linear stability of conducting fluids under rotation,
-    thermal gradients, and imposed magnetic fields &mdash; for rotating magnetoconvection,
-    stellar convection, and laboratory MHD.
-  </p>
-</div>
-
 ## Overview
 
 The MHD implementation in `Magrathea` extends the hydrodynamic solver with:

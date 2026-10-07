@@ -1,13 +1,9 @@
 # Magrathea.jl Documentation
 
-```@raw html
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Linear stability in rotating spherical shells</div>
-  <h1>Spectral eigenvalue problems for rotating convection &amp; MHD.</h1>
-  <p>Analyze convection onset, stability about axisymmetric or three-dimensional
-  mean flows, and magnetoconvection in imposed axial or dipole fields.</p>
-</div>
-```
+Magrathea.jl solves spectral eigenvalue problems for the linear stability of
+rotating spherical shells: the onset of convection, stability about axisymmetric
+or three-dimensional mean flows, and magnetoconvection in imposed axial or dipole
+fields.
 
 [Get started](getting_started.md) · [First problem](problem_setup.md) ·
 [Examples](examples.md) · [API reference](reference.md)

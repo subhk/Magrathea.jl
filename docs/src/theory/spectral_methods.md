@@ -1,11 +1,5 @@
 # Spectral Methods
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Theory</div>
-  <h1>Sparse spectral discretization.</h1>
-  <p>The Chebyshev and ultraspherical spectral methods Magrathea.jl uses for high accuracy at high sparsity.</p>
-</div>
-
 ## Overview
 
 Magrathea.jl combines two spectral approaches:

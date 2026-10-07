@@ -1,11 +1,5 @@
 # Mathematical Foundations
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Theory</div>
-  <h1>The equations behind Magrathea.jl.</h1>
-  <p>The mathematical framework: governing equations, non-dimensionalization, and the eigenvalue-problem formulation.</p>
-</div>
-
 ## Governing Equations
 
 ### Boussinesq Convection in Rotating Shells
