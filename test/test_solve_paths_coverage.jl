@@ -19,8 +19,9 @@ using Magrathea
 # The only solver contact is asserting that backend=:slepc throws the
 # extension-absent ErrorException (which mentions SlepcWrap). All other tests
 # exercise construction / validation / bracketing logic that runs *before* any
-# eigensolve. Coefficient VALUES for m != 0 are never asserted (known bugs);
-# m != 0 appears only structurally. Tests prefer m = 0 / axisymmetric.
+# eigensolve. m != 0 appears only structurally; coupling coefficient values are
+# validated against independent references in mean_flow_coupling.jl. Tests
+# prefer m = 0 / axisymmetric.
 #
 # This file deliberately covers DIFFERENT functions/branches from
 # test_onset_solve_helpers.jl and test_solve_assembly_coverage.jl.

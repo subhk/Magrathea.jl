@@ -11,12 +11,13 @@
 
 1. [Introduction](#Introduction)
 2. [Quick Start](#Quick-Start)
-3. [Physical Parameters](#Physical-Parameters)
-4. [Boundary Conditions](#Boundary-Conditions)
-5. [Complete Workflow](#Complete-Workflow)
-6. [Common Use Cases](#Common-Use-Cases)
-7. [Troubleshooting](#Troubleshooting)
-8. [Reference Tables](#Reference-Tables)
+3. [Mean flows: biglobal and triglobal MHD](#Mean-flows:-biglobal-and-triglobal-MHD)
+4. [Physical Parameters](#Physical-Parameters)
+5. [Boundary Conditions](#Boundary-Conditions)
+6. [Complete Workflow](#Complete-Workflow)
+7. [Common Use Cases](#Common-Use-Cases)
+8. [Troubleshooting](#Troubleshooting)
+9. [Reference Tables](#Reference-Tables)
 
 ---
 
@@ -27,7 +28,10 @@ The MHD implementation in Magrathea.jl solves the **magnetohydrodynamic eigenval
 - **Convection onset** in planetary cores
 - **Magnetic modification of convection onset** with imposed axial or dipole fields
 - **Magnetoconvection** in laboratory experiments
-- **Linear stability** about motionless conductive MHD backgrounds
+- **Linear stability** about motionless conductive MHD backgrounds (`MHDProblem`)
+- **Biglobal and triglobal MHD stability** about self-consistent mean flows with an
+  induced mean field (an imposed field in `OnsetParams`; see
+  [Mean flows](#Mean-flows:-biglobal-and-triglobal-MHD))
 
 ### Mathematical Problem
 
@@ -46,7 +50,7 @@ Where:
 ### Key Features
 
 ✅ **Spectral accuracy**: Ultraspherical (Gegenbauer) method
-✅ **Flexible BCs**: No-slip, stress-free, insulating, perfect conductor
+✅ **Flexible BCs**: No-slip, stress-free, insulating, perfect conductor, finite-conductivity core or mantle
 ✅ **Background fields**: Axial and dipolar magnetic fields
 ✅ **Physics checks**: Independent Lorentz/induction, diffusion, wall, and core-matching tests; see [Codebase Structure](codebase_structure.md) for the validation files
 
@@ -60,15 +64,18 @@ Where:
 using Magrathea
 using LinearAlgebra, SparseArrays
 
-# Define parameters (Christensen & Wicht 2015, Table 1)
+# Onset benchmark of Barik et al. (2023): ricb = 0.35, Pr = 1, no-slip and
+# fixed-temperature walls, shell-thickness Ekman number Ek_d = 1e-3. E is based
+# on the outer radius, E = Ek_d (1 - ricb)^2; Ra is based on the shell thickness,
+# Ra = R̃a / Ek_d with the published critical value R̃a_c = 55.9.
 params = MHDParams(
-    E = 4.734e-5,      # Ekman number
+    E = 4.225e-4,       # Ekman number
     Pr = 1.0,           # Prandtl number
     Pm = 1.0,           # Magnetic Prandtl (irrelevant for Le=0)
-    Ra = 1.6e6,         # Rayleigh number
+    Ra = 5.59e4,        # Rayleigh number at the published onset
     Le = 0.0,           # NO magnetic field
     ricb = 0.35,        # Inner core radius
-    m = 9,              # Azimuthal wavenumber
+    m = 4,              # Critical azimuthal wavenumber
     lmax = 20,          # Max spherical harmonic degree
     N = 24,             # Radial resolution
     bci = 1, bco = 1,   # No-slip boundaries
@@ -86,9 +93,9 @@ println("Largest growth rate: ", maximum(growth_rates))
 println("Critical mode frequency: ", frequencies[argmax(growth_rates)])
 ```
 
-**Expected Output** (for Ra = Raᶜ ≈ 1.6×10⁶):
-- Growth rate: ≈ 0 (marginal stability)
-- Frequency: ≈ 0.35-0.40
+**Expected Output** (Ra at the published critical value):
+- Growth rate: ≈ 0 (marginal stability, |σ| < 10⁻⁵)
+- Frequency: ≈ -0.0231, the published drift frequency in units of the rotation rate
 
 ---
 
@@ -104,12 +111,37 @@ dissipate. Without buoyancy, no eigenvalue can grow at any resolution. Perfectly
 conducting walls with slip need no special treatment, since their motional electric
 field enters the weak form directly.
 
-A finite-conductivity inner core (`bci_magnetic = 1`) uses tau assembly, with fluid
+A finite-conductivity inner core (`bci_magnetic = 1`) or mantle
+(`bco_magnetic = 1`) uses tau assembly, with fluid
 residuals in `C⁽⁴⁾` (poloidal velocity) or `C⁽²⁾` (other fields). Only the highest
 residual coefficients are replaced by boundary constraints; unknowns remain
 Chebyshev coefficients. Tau pencils have infinite algebraic boundary eigenvalues;
 shift-invert targeting with `sigma=0.0` can select finite modes near onset. Check
 radial and angular convergence for the physical parameters being studied.
+
+Every returned eigenmode is also checked against the reconstructed physical
+magnetic boundary conditions. `solve(...; boundary_check=:warn)` is the default;
+`boundary_check=:error` rejects a result that fails, while `:none` disables this
+check. `boundary_rtol` (default `1e-6`) and `boundary_atol` (default `0`) set the
+tolerances; inspect `result.extra.magnetic_boundaries`. You can repeat the
+check independently with `magnetic_boundary_residuals(result; rtol=..., atol=...)`,
+or pass an operator and a coefficient vector or matrix. The diagnostic evaluates
+the full angular magnetic and electric fields, including components above
+`lmax`. This matters at slip walls: satisfying retained tau rows, or the Galerkin
+weak form, does not by itself bound the physical boundary residual at finite
+angular resolution. A passing boundary check complements eigenvalue refinement
+in `N` and `lmax`; it does not establish spatial convergence.
+
+The report's `passed` flag covers all stored modes. `per_mode` contains the
+`inner`, `outer`, and (when present) `mantle_outer` wall reports; `maximum`
+identifies the worst mode for each wall and component. Components are
+`normal_field`, `tangential_field`, and `tangential_electric`, with `nothing` for
+conditions that do not apply. Each metric reports its surface ``L^2`` `residual`,
+`scale`, `relative_residual`, `tolerance`, and `passed`. The scale includes the
+physical wall terms and a bulk RMS field reference; `atol` has absolute
+surface-norm units. On distributed workers without eigenvectors, `checked=false`
+records that the boundary check was unavailable. A `no_field` problem has no
+magnetic unknowns; its report has `applicable=false`.
 
 Strong fields need enough radial modes to resolve the magnetic (Hartmann) boundary
 layers, of thickness ``\sqrt{E\,E_m}/(Le\,B_0)`` at a wall with field ``B_0``. Below
@@ -126,18 +158,20 @@ For example, at `E = 1e-3`, `Pm = 1`, and `Le = 0.1`, the dipole needs about
 (`result.extra.spectral_tail`). Increase `N` until the leading eigenvalue converges.
 
 The tests compare shell magnetic free decay against independent collocation,
-and an equal-diffusivity conducting core against analytical full-sphere decay.
-For every mechanical, thermal, and magnetic wall type, both assemblies reproduce
-the exact spherical-Bessel decay rates of each field to better than 1e-8. They also
+and equal-material core/fluid/mantle configurations against analytical
+full-sphere decay. Mantle tests also compare unequal-diffusivity layers with an
+independent spherical-Bessel matching problem. At their supported wall types,
+the assemblies reproduce analytical spherical-Bessel decay rates. They also
 check parity separation, current-free Lorentz force, axial induction, and physical
 field reconstruction. Independent boundary tests evaluate spherical strain and the
 tangential electric field on computed eigenmodes of both assemblies. The slip-wall
 EMF uses analytical degree-one harmonic coefficients so forbidden angular
 couplings remain exactly zero, including in `Float32`.
 
-The solver linearizes about a **motionless conductive state** with a prescribed,
-current-free axial or dipolar field. It does not couple the hydrodynamic nonlinear
-mean-flow solver into MHD; explicit `MHDProblem.basic_state` objects are rejected.
+`MHDProblem` linearizes about a **motionless conductive state** with a prescribed,
+current-free axial or dipolar field, and rejects explicit `MHDProblem.basic_state`
+objects. For an imposed field together with a mean flow, use the collocation
+problems described in [Mean flows](#Mean-flows:-biglobal-and-triglobal-MHD).
 `no_field` is hydrodynamic stability, with no magnetic degrees of freedom.
 
 Both imposed fields have spherical-harmonic degree one. Same-type poloidal or
@@ -157,13 +191,77 @@ Galerkin eigenvectors must first be expanded using their recombination layout.
 
 ---
 
+## Mean flows: biglobal and triglobal MHD
+
+An imposed field can also be combined with a mean flow. Set `B0_type`, `Le`, `Pm`, and
+`magnetic_bc` in `OnsetParams`: `OnsetProblem`, `BiglobalProblem`, and `TriglobalProblem`
+then add the poloidal and toroidal magnetic perturbations `b = ∇×∇×(F𝐫) + ∇×(G𝐫)` to
+the collocation operator, with `B0_type` and `Le` normalized as in `MHDParams` and the
+magnetic Ekman number `E/Pm`. About a mean state with flow `U`, temperature `T̄` and
+mean field `B̄ = B₀ + b̄`, where `b̄` is the field the flow induces, the perturbations obey
+
+```math
+\begin{aligned}
+\lambda\mathbf u + 2\hat{\mathbf z}\times\mathbf u + (\mathbf U\cdot\nabla)\mathbf u + (\mathbf u\cdot\nabla)\mathbf U
+  &= -\nabla p + E\nabla^2\mathbf u + \beta r\theta\hat{\mathbf r}
+     + Le^2\left[(\nabla\times\mathbf b)\times\bar{\mathbf B} + \bar{\mathbf J}\times\mathbf b\right],\\
+\lambda\mathbf b &= \nabla\times(\mathbf u\times\bar{\mathbf B} + \mathbf U\times\mathbf b) + E_m\nabla^2\mathbf b,
+\qquad \bar{\mathbf J} = \nabla\times\bar{\mathbf b},
+\end{aligned}
+```
+
+with the heat equation unchanged. The mean state must be computed with the same field:
+`basic_state(params; mode=...)` with these `OnsetParams` builds it. The `:meridional`
+and `:nonaxisymmetric` modes solve the linear steady balance of the buoyancy-driven
+flow and its induced field. `:selfconsistent` also includes inertia, thermal
+advection, the Lorentz force `Le² J̄×b̄` of the induced field on itself, and its
+advection `∇×(U×b̄)`. The lower-level constructors take the same four keywords. The
+state stores `b̄` in `bs.field`, in the native potentials of `bs.flow`, and the magnetic
+configuration in `bs.magnetic`. Stability problems must use the same configuration;
+a mismatch, or a hydrodynamic state with a mean flow, is rejected.
+
+```julia
+params = OnsetParams(E=1e-2, Pr=1.0, Ra=2e3, χ=0.35, m=0, lmax=8, Nr=24,
+                     B0_type=axial, Le=0.1, Pm=1.0, magnetic_bc=:insulating)
+bs3d = basic_state(params; mode=:selfconsistent)   # flow, temperature and b̄
+result = solve(TriglobalProblem(params, bs3d, 0:3); nev=6)
+
+# Biglobal, about the axisymmetric part of a state:
+p2 = OnsetParams(E=1e-2, Pr=1.0, Ra=2e3, χ=0.35, m=2, lmax=8, Nr=24,
+                 B0_type=axial, Le=0.1)
+biglobal = solve(BiglobalProblem(p2, basic_state(p2; mode=:meridional)); nev=6)
+Br, Bθ, Bφ, r, grid = perturbation_magnetic(biglobal, 1)
+```
+
+**Supported walls.** `magnetic_bc` is `:insulating` (default) or `:perfect_conductor`,
+for both walls or as an `(inner, outer)` pair. A perfect conductor requires no-slip
+walls, since a slipping wall would add a motional EMF to its electric condition.
+Finite-conductivity cores and mantles remain specific to `MHDProblem`. With
+stress-free insulating walls, only the `m = 0` rigid rotation remains neutral and is
+removed, as in `MHDProblem`.
+
+**Resolution.** Like the tau pencil, the collocation pencil shows spurious growing
+eigenvalues when the magnetic (Hartmann) boundary layers, of thickness
+`√(E·E_m)/(Le·B₀)`, are under-resolved. The dipole is `χ⁻³` stronger at the inner
+wall. Onset and biglobal results carry the radial and angular spectral tails of every
+eigenvector in `result.extra.spectral_tail`, and a warning names a rough `Nr` when the
+leading mode is under-resolved. Increase `Nr` until the leading eigenvalue converges.
+
+**Validation.** Without a mean flow, the collocation eigenvalues converge to those of
+`MHDProblem` (`test/mhd_collocation.jl`). Self-consistent mean states satisfy the
+steady energy balance, in which the work against the Lorentz force equals the Ohmic
+dissipation. The kinetic and magnetic energy budget of coupled triglobal modes closes
+to round-off as `Nr` increases (`test/triglobal_physics.jl`).
+
+---
+
 ## Physical Parameters
 
 ### Dimensionless Numbers
 
 #### Ekman Number (E)
 
-**Definition:** E = ν/(ΩL²)
+**Definition:** E = ν/(Ω r_o²), based on the outer radius r_o
 
 **Physical meaning:** Ratio of viscous to Coriolis forces
 
@@ -179,28 +277,34 @@ Galerkin eigenvectors must first be expanded using their recombination layout.
 
 #### Rayleigh Number (Ra)
 
-**Definition:** Ra = αgΔTL³/(νκ)
+**Definition:** Ra = αgΔTd³/(νκ), based on the shell thickness d = r_o - r_i,
+as for `OnsetParams` (see the length-scale note in
+[Mathematical Foundations](theory/mathematical_foundations.md))
 
 **Physical meaning:** Measure of thermal forcing strength
 
 **Critical value Raᶜ:**
-- Depends on E, Pr, geometry, and boundary conditions
-- For Earth-like parameters (E~10⁻⁵, χ=0.35): Raᶜ ~ 10⁶
+- Depends on E, Pr, geometry, and boundary conditions, and grows steeply as E
+  decreases (asymptotically like E^(-4/3))
+- For ricb = 0.35, Pr = 1, no-slip and fixed-temperature walls: Raᶜ ≈ 5.59×10⁴
+  at E = 4.225×10⁻⁴ (m = 4) and Raᶜ ≈ 7.52×10⁵ at E = 4.225×10⁻⁵ (m = 5),
+  the published R̃aᶜ = Raᶜ·Ek_d = 55.9 and 75.2 of Barik et al. (2023)
 
 **Parameter scans:**
 ```julia
 # Find critical Rayleigh number
-Ra_values = [1e5, 5e5, 1e6, 1.5e6, 2e6]
+Ra_values = [4e4, 5e4, 5.5e4, 6e4, 7e4]
 for Ra in Ra_values
-    params = MHDParams(E=4.734e-5, Pr=1.0, Pm=1.0, Ra=Ra, Le=0.0,
-                       ricb=0.35, m=9, lmax=20, N=24, ...)
+    params = MHDParams(E=4.225e-4, Pr=1.0, Pm=1.0, Ra=Ra, Le=0.0,
+                       ricb=0.35, m=4, lmax=20, N=24, ...)
     # Solve and check if growth rate > 0
 end
 ```
 
 #### Lehnert Number (Le)
 
-**Definition:** Le = B₀/(√(μρ)ΩL)
+**Definition:** Le = B₀/(√(μρ)Ω r_o), based on the outer radius like E. It enters
+the Lorentz force as Le²; the induction coupling has unit strength.
 
 **Physical meaning:** Magnetic field strength relative to rotation
 
@@ -347,13 +451,62 @@ eigenvalue; no prescribed skin-depth frequency is used. `forcing_frequency` must
 remain zero. The imposed dipole is prescribed in the shell; only its perturbation
 is continued regularly through the core.
 
-A finite-conductivity mantle (`bco_magnetic=1`) and unequal core/shell diffusivities
-are not implemented. For the physical matching conditions, see the
+Unequal core/fluid diffusivities are not implemented. For the physical matching conditions, see the
 [MagIC inner-core equations](https://magic-sph.github.io/numerics.html#magnetic-boundary-conditions-and-inner-core).
+
+#### [Finite-conductivity mantle](@id conducting-mantle)
+
+Set `bco_magnetic=1` and `mantle_radius > 1` to add a **stationary conducting shell** outside the fluid,
+ending at ``R_m``. Its magnetic permeability equals the fluid's;
+`mantle_diffusivity_ratio=η_m/η_f` is positive and defaults to `1`. The mantle
+has no velocity or thermal unknowns. Its magnetic perturbations diffuse with the
+same eigenvalue as the fluid and any conducting inner core. Beyond ``R_m`` the
+perturbation field is insulating and decays at infinity.
+
+At the fluid–mantle interface ``r=1``, continuity of magnetic field gives
+``f=f_m``, ``f'=f_m'``, and ``g=g_m``. Continuity of tangential electric field
+uses ``\mathbf E_f=E_m\nabla\times\mathbf b_f-\mathbf u\times\mathbf B_0``
+and ``\mathbf E_m=E_m(\eta_m/\eta_f)\nabla\times\mathbf b_m``. Its
+spheroidal component is
+
+```math
+E_m(g'+g/r)-[\mathbf u\times\mathbf B_0]_{\mathrm{sph}}
+=E_m\frac{\eta_m}{\eta_f}(g_m'+g_m/r).
+```
+
+The outer mantle surface satisfies ``(l+1)f_m+R_m f_m'=0`` and ``g_m=0``.
+The coefficient vector appends `:fm` and `:gm` after the fluid sections and any
+`:fi`, `:gi` core sections. Each mantle potential has `N+1` Chebyshev coefficients
+on ``[1,R_m]``. Thus `N` refines the fluid, core, and mantle radial representations
+together. `perturbation_magnetic(vector, op; region=:mantle)` reconstructs the
+mantle field, and `region=:core` reconstructs an included conducting core,
+including its regular centre. The default region remains `:fluid`.
+
+```julia
+params = MHDParams(
+    E=0.01, Pr=1.0, Pm=1.0, Ra=1.0, Le=0.01,
+    ricb=0.35, m=1, lmax=4, N=24, B0_type=axial,
+    bci_magnetic=1, bco_magnetic=1,
+    mantle_radius=1.2, mantle_diffusivity_ratio=3.0,
+)
+result = solve(MHDProblem(params); backend=:dense, nev=2,
+               boundary_check=:error)
+```
+
+Slip at a conducting interface uses the specified continuity of the tangential
+electric field in the stationary frame, including the fluid motional term.
+With a conductivity contrast, this conventional interface model need not reproduce
+a resolved no-slip shear layer; no boundary-layer model is added. See
+[Rekier, Triana & Buffett (2025)](https://doi.org/10.1029/2024GL113585).
 
 ---
 
 ## Complete Workflow
+
+This low-level workflow builds and solves the coefficient-tau pencil directly.
+For insulating or perfectly conducting walls, `solve(MHDProblem(params))` uses the
+energy-conserving Galerkin assembly instead (see
+[Eigensolver and model scope](#Eigensolver-and-model-scope)).
 
 ### Step 1: Define Parameters
 
@@ -409,7 +562,7 @@ A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
 println("\nMatrix assembly:")
 println("  Total DOFs: ", size(A, 1))
-println("  Interior DOFs: ", length(interior_dofs))
+println("  Differential-equation rows: ", length(interior_dofs))
 println("  Sparsity: ", nnz(A), " / ", size(A,1)^2,
         " = ", 100*nnz(A)/size(A,1)^2, "%")
 ```
@@ -422,7 +575,7 @@ println("  Sparsity: ", nnz(A), " / ", size(A,1)^2,
 # Keep the full coefficient-space pencil, including boundary constraints.
 
 # Find eigenvalues with largest real part
-σ, v, history = solve_eigenvalue_problem(
+σ, v, info = solve_eigenvalue_problem(
     A, B;
     nev=20,      # Number of eigenvalues
     tol=1e-6,    # Tolerance
@@ -435,13 +588,15 @@ for i in 1:length(σ)
 end
 ```
 
-#### Using Arpack
+#### Dense backend for small problems
 
 ```julia
-using Arpack
-
-σ, v = eigs(A_int, B_int, nev=20, which=:LR, tol=1e-6)
+σ, v, info = solve_eigenvalue_problem(A, B; nev=20, which=:LR, backend=:dense)
 ```
+
+The dense backend eliminates the tau rows (the zero rows of `B`) exactly, drops the
+infinite eigenvalues, and computes the whole finite spectrum. It costs O(n³), so
+use it only for small validation problems.
 
 ### Step 5: Analyze Results
 
@@ -468,19 +623,20 @@ end
 
 ### Use Case 1: Hydrodynamic Onset (Benchmark)
 
-**Goal:** Reproduce Christensen & Wicht (2015) Table 1
+**Goal:** Reproduce the onset benchmark of Barik et al. (2023) at Ek_d = 10⁻³
 
 ```julia
-# Parameters from published benchmark
-E = 4.734e-5
-Pr = 1.0
+# Published critical point: m = 4, R̃aᶜ = Raᶜ·Ek_d = 55.9, ωᶜ = -0.0231
+Ek_d = 1e-3
 ricb = 0.35
-m = 9
+E = Ek_d * (1 - ricb)^2   # outer-radius Ekman number
+Pr = 1.0
+m = 4
 lmax = 20
 Nr = 24
 
 params = MHDParams(
-    E=E, Pr=Pr, Pm=1.0, Ra=1.6e6, Le=0.0,
+    E=E, Pr=Pr, Pm=1.0, Ra=55.9 / Ek_d, Le=0.0,
     ricb=ricb, m=m, lmax=lmax, N=Nr,
     bci=1, bco=1,
     bci_thermal=0, bco_thermal=0,
@@ -501,12 +657,12 @@ A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
 println("Critical mode:")
 println("  Growth rate: ", σ_max, " (should be ≈ 0)")
-println("  Frequency: ", ω_crit, " (should be ≈ 0.37)")
+println("  Frequency: ", ω_crit, " (should be ≈ -0.0231)")
 ```
 
 **Expected results:**
-- σ ≈ 0 (marginal stability at Raᶜ)
-- ω ≈ 0.37 (prograde thermal wind)
+- σ ≈ 0 (marginal stability at Raᶜ, |σ| < 10⁻⁵)
+- ω ≈ -0.0231 (the published drift frequency, in units of the rotation rate)
 
 ### Use Case 2: MHD with Axial Field
 
@@ -533,7 +689,7 @@ for Le in Le_values
     params_le = MHDParams(
         E=1e-3, Pr=1.0, Pm=5.0, Ra=1e5, Le=Le,
         ricb=0.35, m=2, lmax=15, N=32,
-        B0_type=axial,
+        B0_type=Le > 0 ? axial : no_field,   # an imposed field requires Le > 0
         bci=1, bco=1,
         bci_thermal=0, bco_thermal=0,
         bci_magnetic=0, bco_magnetic=0
@@ -552,10 +708,13 @@ for Le in Le_values
     println("Le = $Le: σ_max = ", growth_rates[end])
 end
 
-# Plot growth rate vs Le (stabilization by magnetic field)
+# Plot growth rate vs Le
 ```
 
-**Physical insight:** Increasing Le stabilizes convection (magnetic tension)
+**Physical insight:** The effect of the field is not monotonic. In this scan the
+growth rate is essentially unchanged up to Le = 10⁻³, rises slightly at
+Le = 10⁻², and falls at Le = 0.1. A field can relax the rotational constraint as
+well as add magnetic tension.
 
 ### Use Case 3: Perfect Conductor Inner Core
 
@@ -579,7 +738,7 @@ A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
 println("Perfect conductor IC boundary:")
 println("  Uses one constraint per magnetic potential at each wall")
-println("  Interior DOFs: ", length(interior_dofs))
+println("  Differential-equation rows: ", length(interior_dofs))
 
 # Solve eigenvalue problem
 σ, _, _ = solve_eigenvalue_problem(
@@ -607,12 +766,13 @@ end
 **Solutions:**
 1. Increase `tol` to 1e-5 or 1e-4
 2. Increase `nev` to find more eigenvalues
-3. Try different `which` option (`:LM`, `:LI`, `:LR`)
-4. Check matrix condition number: `cond(Matrix(A_int))`
+3. Try a different `which` (`:LR` or `:LI`), or pass a shift `sigma` near the
+   expected eigenvalue (for example `sigma=0.0` near onset)
+4. For a small problem, cross-check with `backend=:dense`
 
 ```julia
 # More robust solving
-σ, v, history = solve_eigenvalue_problem(
+σ, v, info = solve_eigenvalue_problem(
     A, B;
     nev=30,       # More eigenvalues
     tol=1e-4,     # Relaxed tolerance
@@ -629,16 +789,19 @@ end
 2. Scan Ra to find Raᶜ
 3. Check if correct mode (m, l) is selected
 
-### Problem: Matrix is singular
+### Problem: Singular `B` or infinite eigenvalues
 
-**Symptoms:** Zero eigenvalues, solver fails
+**Symptoms:** `B` is singular; a generalized solver reports infinite eigenvalues
 
-**Diagnosis:** Boundary conditions may be over-constrained
+**Diagnosis:** Each tau boundary row of `B` is zero by construction, so the tau pencil
+has infinite eigenvalues. Shift-invert (`sigma`) and the dense backend return only
+finite ones. The Galerkin pencil used by `solve` for insulating or perfectly
+conducting walls has no boundary rows. With stress-free walls, the rigid rotation
+is removed by the angular-momentum condition described above.
 
 **Check:**
-1. `length(interior_dofs)` should be > 0
-2. `rank(B_int)` should equal `size(B_int, 1)`
-3. Verify BC settings are compatible
+1. Solve the full `(A, B)` pencil; do not slice it to `interior_dofs`
+2. Use supported boundary codes: 0 or 1 for mechanical and thermal walls, 0, 1, or 2 for magnetic walls
 
 ### Problem: Results don't match Kore
 
@@ -648,11 +811,10 @@ end
 3. Magrathea.jl uses Boussinesq (no anelastic corrections)
 4. Resolution too low (increase lmax or N)
 
-**Verification:**
-```julia
-# Check against Christensen & Wicht (2015) Table 1
-# Parameters MUST match exactly
-```
+**Verification:** Kore and most of the literature scale both E and Ra by the
+shell thickness d. Pass `E = Ek_d * (1 - ricb)^2` and `Ra = Ra_d` (see the
+length-scale note in [Mathematical Foundations](theory/mathematical_foundations.md)),
+then reproduce Use Case 1, which `test/published_benchmarks.jl` checks.
 
 ---
 
@@ -682,15 +844,23 @@ end
 | Insulating | bci/bco_magnetic = 0 | Silicate mantle | (l+1)f + r·f' = 0 (CMB) |
 | Perfect conductor | bci/bco_magnetic = 2 | Ideal stationary wall | f=0, tangential E=0 |
 | Conducting core | bci_magnetic = 1 | Equal diffusivity/permeability | Core diffusion and interface matching |
+| Conducting mantle | bco_magnetic = 1 | Finite stationary shell, equal permeability | Mantle diffusion, electric matching, exterior vacuum |
 
 ### Table 3: Matrix Size Estimates
 
-| lmax | N | Approx. DOFs | Memory (GB) | Solve Time |
-|------|---|-------------|-------------|------------|
-| 10 | 24 | ~600 | <0.1 | seconds |
-| 20 | 32 | ~2000 | ~0.3 | ~10 sec |
-| 30 | 48 | ~5000 | ~2 | ~1 min |
-| 50 | 64 | ~15000 | ~20 | ~10 min |
+Matrix size for `m = 2` with an imposed field (five fields), and the dense storage
+of two complex matrices that `estimate_size(MHDProblem(params))` reports.
+A single parity is `symm = ±1`; `symm = 0` keeps both.
+
+| lmax | N | DOFs (one parity) | DOFs (`symm = 0`) | Dense storage (one parity / both) |
+|------|---|-------------------|-------------------|-----------------------------------|
+| 10 | 24 | 575 | 1,125 | 0.01 / 0.04 GB |
+| 20 | 32 | 1,584 | 3,135 | 0.08 / 0.29 GB |
+| 30 | 48 | 3,577 | 7,105 | 0.38 / 1.5 GB |
+| 50 | 64 | 7,995 | 15,925 | 1.9 / 7.6 GB |
+
+The sparse pencils store far less: for `lmax = 15`, `N = 32`, and `m = 2`, the tau
+matrix `A` takes about 2 MB, against 21 MB for one dense complex matrix.
 
 ---
 
@@ -699,11 +869,12 @@ end
 **Documentation:**
 - `?MHDParams` - Parameter structure
 - `?MHDStabilityOperator` - Operator construction
-- `?assemble_mhd_matrices` - Matrix assembly
-- `?apply_magnetic_boundary_conditions!` - Magnetic BCs
+- `?assemble_mhd_matrices` - Tau-pencil assembly
+- `?magnetic_boundary_residuals` - Physical magnetic wall checks
+- `?Magrathea.apply_magnetic_boundary_conditions!` - Magnetic tau rows (internal)
 
 **Examples:**
-- `test_mhd_basic.jl` - Basic validation
+- `test/published_benchmarks.jl` - Published onset benchmark
 - `test/mhd_physics.jl` - Analytical magnetic physics regressions
 - `example/mhd_dynamo_example.jl` - Full workflow
 
@@ -718,6 +889,6 @@ end
 
 ---
 
-**Last updated:** October 26, 2025
+**Last updated:** October 3, 2026
 **Magrathea.jl version:** Development
 **Author:** Magrathea.jl Development Team

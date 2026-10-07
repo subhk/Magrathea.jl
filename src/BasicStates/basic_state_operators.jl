@@ -213,26 +213,15 @@ function _build_azimuthal_coupling_cache(m::Int, lmax_m::Int, lmax_0::Int,
     mu = [cos(T(2k - 1) * T(pi) * inv_denominator) for k in 1:ntheta]
     weight = T(pi) / T(ntheta)
 
-    Pm = _associated_legendre_table(m, lmax_m, mu)
-    P0 = _associated_legendre_table(0, lmax_0, mu)
-    Nm = _normalization_table(T, m, lmax_m)
-    N0 = _normalization_table(T, 0, lmax_0)
-
-    y_m = similar(Pm)
-    for i in axes(Pm, 1)
-        y_m[i, :] .= Nm[i] .* Pm[i, :]
-    end
-
-    y_0 = similar(P0)
-    for i in axes(P0, 1)
-        y_0[i, :] .= N0[i] .* P0[i, :]
-    end
+    y_m = _normalized_legendre_table(m, lmax_m, mu)
+    y_0 = _normalized_legendre_table(0, lmax_0, mu)
 
     return AzimuthalCouplingCache(m, weight, y_m, y_0)
 end
 
 """Build the complete linearized physical equations about an axisymmetric state."""
 function build_basic_state_operators(bs::BasicState{T}, op, m::Int) where T
+    _check_basic_state_mechanical_bc(op.params.mechanical_bc, bs)
     blocks=_mean_state_blocks(bs,op,op,m,m)
     select(fo,fi)=Dict((lo,li)=>b for ((lo,a,li,c),b) in blocks if a===fo && c===fi)
     emptyblocks()=Dict{Tuple{Int,Int},Matrix{Complex{T}}}()

@@ -1,11 +1,5 @@
 # Mathematical Foundations
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Theory</div>
-  <h1>The equations behind Magrathea.jl.</h1>
-  <p>The mathematical framework: governing equations, non-dimensionalization, and the eigenvalue-problem formulation.</p>
-</div>
-
 ## Governing Equations
 
 ### Boussinesq Convection in Rotating Shells
@@ -88,7 +82,9 @@ This yields the dimensionless parameters:
 
     The returned critical value `Ra_c` is the ``d``-based Rayleigh number; the
     *modified* Rayleigh number commonly tabulated is ``\widetilde{Ra} = Ra_c \cdot Ek_d``.
-    This mapping is validated to four significant figures below.
+    `test/published_benchmarks.jl` checks this mapping against the onset benchmark of
+    Barik et al. (2023) at ``Ek_d = 10^{-3}`` (``\widetilde{Ra}_c = 55.9``,
+    ``\omega_c = -0.0231``) for both the onset and the MHD solvers.
 
 ### Non-Dimensional Equations
 
@@ -191,27 +187,48 @@ The eigenvalue ``\sigma = \sigma_r + i\omega`` determines:
 
 ## Linearized Equations in Spectral Form
 
-Taking the curl of the momentum equation eliminates pressure. The linearized equations for each ``(\ell, m)`` mode become:
-
-### Poloidal Equation (2× curl of momentum)
+Taking ``\mathbf r\cdot\nabla\times`` and ``\mathbf r\cdot\nabla\times\nabla\times`` of the
+momentum equation eliminates pressure. Write the velocity with the solver's
+potentials, ``\mathbf u=\nabla\times\nabla\times(P\mathbf r)+\nabla\times(T\mathbf r)``
+(the onset coordinates [above](#Coordinates-stored-by-the-stability-solver)), and
+expand ``P``, ``T`` and ``\Theta`` in orthonormal harmonics. With
+``L=\ell(\ell+1)``, ``\beta = Ra\,E^2/(Pr(1-\chi)^3)`` and
 
 ```math
-\sigma \nabla^2 \mathcal{L} P_\ell = E \nabla^4 \mathcal{L} P_\ell - 2im \frac{\partial}{\partial z}(z \cdot \nabla^2 P_\ell) + C_\ell^{(PT)} T_{\ell\pm1} + \frac{Ra \cdot E^2}{Pr} \ell(\ell+1) \Theta_\ell
+D_\ell = \frac{d^2}{dr^2} + \frac{2}{r}\frac{d}{dr} - \frac{L}{r^2},
 ```
 
-### Toroidal Equation (1× curl of momentum)
+each ``(\ell, m)`` component satisfies the following equations.
+
+### Poloidal Equation (``\mathbf r\cdot\nabla\times\nabla\times`` of momentum)
 
 ```math
-\sigma \mathcal{L} T_\ell = E \nabla^2 \mathcal{L} T_\ell + 2im \frac{\partial}{\partial z}(z \cdot T_\ell) + C_\ell^{(TP)} P_{\ell\pm1}
+\sigma L D_\ell P_\ell = E L D_\ell^2 P_\ell + 2im\, D_\ell P_\ell + \mathcal{C}_\ell[T] - \beta L \Theta_\ell
+```
+
+### Toroidal Equation (``\mathbf r\cdot\nabla\times`` of momentum)
+
+```math
+\sigma L T_\ell = E L D_\ell T_\ell + 2im\, T_\ell - \mathcal{C}_\ell[P]
 ```
 
 ### Temperature Equation
 
 ```math
-\sigma \Theta_\ell = \frac{E}{Pr} \nabla^2 \Theta_\ell - u_r \frac{dT_0}{dr}
+\sigma \Theta_\ell = \frac{E}{Pr} D_\ell \Theta_\ell - \frac{L P_\ell}{r} \frac{dT_0}{dr}
 ```
 
-Where the Coriolis coupling terms ``C_\ell^{(PT)}`` and ``C_\ell^{(TP)}`` couple modes with ``\Delta\ell = \pm 1``.
+The Coriolis coupling ``\mathcal{C}_\ell`` connects degrees ``\ell\pm1``:
+
+```math
+\mathcal{C}_\ell[f] = 2(\ell^2-1)\,c_\ell \left(\frac{\ell-1}{r} - \frac{d}{dr}\right) f_{\ell-1}
+ - 2\ell(\ell+2)\,c_{\ell+1} \left(\frac{\ell+2}{r} + \frac{d}{dr}\right) f_{\ell+1},
+\qquad c_\ell = \sqrt{\frac{\ell^2-m^2}{4\ell^2-1}}.
+```
+
+In the solver's ``Y_{\ell m}/\sqrt{2\ell+1}`` normalization the two coupling
+coefficients become ``2(\ell^2-1)\sqrt{\ell^2-m^2}/(2\ell-1)`` and
+``2\ell(\ell+2)\sqrt{(\ell+1)^2-m^2}/(2\ell+3)``.
 
 ## Eigenvalue Problem
 
@@ -288,11 +305,12 @@ For the MHD convention ``\mathbf b=\nabla\times\nabla\times(rf\hat r)+\nabla\tim
 | Insulating exterior | ``rf'+(\ell+1)f=0``, ``g=0`` |
 | Stationary perfect conductor, no-slip fluid | ``f=0``, ``g'+g/r=0`` |
 | Equal-diffusivity/permeability stationary conducting core, no-slip fluid | Continuous ``f,f',g,g'`` with diffusion solved in the core |
+| Equal-permeability stationary conducting mantle on ``1\le r\le R_m``, no-slip fluid | Continuous ``f,f',g`` and ``E_m(g'+g/r)=E_m(\eta_m/\eta_f)(g_m'+g_m/r)`` at ``r=1``; ``(\ell+1)f_m+R_mf_m'=0``, ``g_m=0`` at ``R_m`` |
 
 When the fluid slips, use the full tangential electric field
 ``\mathbf E_t=[E_m\nabla\times\mathbf b-\mathbf u\times\mathbf B_0]_t``:
-it vanishes at a perfect conductor and is continuous at a conducting-core
-interface. The toroidal wall equation includes this motional EMF; the other
+it vanishes at a perfect conductor and is continuous at a conducting core or
+mantle interface. The toroidal wall equation includes this motional EMF; the other
 component follows from the poloidal induction equation and converges with radial
 resolution. See the [MHD guide](../mhd_user_guide.md#Magnetic-Boundary-Conditions)
 for the core assumptions and supported options.
@@ -308,13 +326,15 @@ harmonics. Conditions on unretained harmonics require angular convergence too.
 The critical Rayleigh number ``Ra_c`` is defined as the value where the leading eigenvalue has zero growth rate:
 
 ```math
-Ra_c = \min_{m, \ell} \{ Ra : \max(\text{Re}(\sigma)) = 0 \}
+Ra_c = \min_{m} \{ Ra : \max(\text{Re}(\sigma)) = 0 \}
 ```
 
 At onset:
 - Convection first appears at ``(Ra_c, m_c)``
 - The critical frequency ``\omega_c = \text{Im}(\sigma)`` gives the drift rate
-- For rotating convection, typically ``\omega_c > 0`` (prograde drift)
+- Perturbations vary as ``e^{\sigma t + im\phi}``, so the pattern drifts at angular
+  velocity ``-\omega_c/m``: ``\omega_c < 0`` is prograde drift, as in the benchmark
+  value ``\omega_c = -0.0231`` of Barik et al. (2023)
 
 ## MHD Extension
 

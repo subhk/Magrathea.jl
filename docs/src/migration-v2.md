@@ -22,7 +22,10 @@ leading_mode(result)
 ```
 
 Sparse solves now require the [SLEPc extension](getting_started.md#SLEPc-setup).
-Load `PetscWrap` and `SlepcWrap` and call `slepc_init!` before solving.
+Load `PetscWrap` and `SlepcWrap` and call `slepc_init!` before solving. Small
+validation problems can use `solve(problem; backend=:dense)` instead, which
+needs no PETSc. `solve` extends `CommonSolve.solve`, so it does not clash with
+the `solve` of other packages built on CommonSolve, such as SciML.
 
 The lower-level `solve_onset_problem`, `solve_biglobal_problem`, and
 `solve_triglobal_eigenvalue_problem` interfaces remain available. Check their
@@ -68,8 +71,9 @@ mean state is rejected. `no_field` requires `Le=0` and has no magnetic
 unknowns; it is not a kinematic-dynamo calculation.
 
 Magnetic inner-boundary flags distinguish insulating (`0`), finite
-conducting core (`1`), and perfect conductor (`2`). The outer boundary
-supports `0` and `2`; a finite conducting mantle is rejected.
+conducting core (`1`), and perfect conductor (`2`). The outer boundary uses
+the same flags; `bco_magnetic=1` is a stationary finite conducting mantle that
+needs an explicit `mantle_radius > 1` and accepts `mantle_diffusivity_ratio`.
 
 Do not use `A[interior_dofs, interior_dofs]` on MHD tau pencils. Those indices
 identify differential-equation rows, and coefficient columns cannot be

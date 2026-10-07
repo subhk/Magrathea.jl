@@ -16,6 +16,10 @@ MHDParams
 
 ## Problems & solve
 
+`solve` extends `CommonSolve.solve`. Every method accepts `backend=:slepc`
+(the default sparse solver, which needs the SLEPc extension) or
+`backend=:dense` (a dense LAPACK solve for small validation problems).
+
 ```@docs
 OnsetProblem
 BiglobalProblem
@@ -52,6 +56,8 @@ nonaxisymmetric_basic_state
 basic_state_selfconsistent
 nonaxisymmetric_basic_state_selfconsistent
 mean_flow_velocity
+mean_temperature
+mean_flow_resolution
 create_thermal_wind_basic_state
 BasicState
 BasicState3D
@@ -71,6 +77,7 @@ assemble_matrices
 ```@docs
 MHDStabilityOperator
 assemble_mhd_matrices
+magnetic_boundary_residuals
 ```
 
 ## Eigensolver lifecycle and field reconstruction

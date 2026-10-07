@@ -62,13 +62,48 @@ function validate_onset_params(params)
     return nothing
 end
 
+# Basic states are built about the differential-heating conduction profile; with one
+# present, the stability operator takes its temperature gradient from the state.
+function _check_basic_state_heating(params)
+    hasproperty(params, :heating) && params.heating === :internal && throw(ArgumentError(
+        "heating=:internal applies to the built-in conduction profile only; basic " *
+        "states use differential heating. Solve internal heating with OnsetProblem."))
+    return nothing
+end
+
+# The stability coupling reads basic-state coefficients only up to degree lmax_bs.
+function _check_basic_state_truncation(bs)
+    for field_name in (:theta_coeffs, :dtheta_dr_coeffs, :ur_coeffs, :utheta_coeffs,
+                       :uphi_coeffs, :dur_dr_coeffs, :dutheta_dr_coeffs, :duphi_dr_coeffs),
+        key in keys(getproperty(bs, field_name))
+        ℓ = key isa Tuple ? first(key) : key
+        ℓ <= bs.lmax_bs || throw(ArgumentError(
+            "Basic-state $field_name has degree ℓ=$ℓ above lmax_bs=$(bs.lmax_bs), " *
+            "which the stability operator would ignore; raise lmax_bs"))
+    end
+    return nothing
+end
+
+# A basic state may use its own radial resolution, but its grid must span [χ, 1].
+function _check_shell_domain(r, χ)
+    T = float(eltype(r))
+    tol = sqrt(eps(T))
+    isapprox(first(r), T(χ); rtol=tol, atol=tol) &&
+        isapprox(last(r), one(T); rtol=tol, atol=tol) || throw(ArgumentError(
+        "Radial grid spans [$(first(r)), $(last(r))], not the shell [χ=$χ, 1]"))
+    return nothing
+end
+
 """
     validate_basic_state_consistency(bs::BasicState, params)
 
 Cross-validate that a BasicState is compatible with the given parameters.
 """
 function validate_basic_state_consistency(bs, params)
+    _check_basic_state_heating(params)
+    _check_basic_state_truncation(bs)
     _check_basic_state_thermal_bc(params.thermal_bc, bs)
+    _check_basic_state_mechanical_bc(params.mechanical_bc, bs)
     bs.Nr == params.Nr || throw(ArgumentError(
         "BasicState Nr=$(bs.Nr) doesn't match params Nr=$(params.Nr)"))
     length(bs.r) == params.Nr || throw(ArgumentError(
@@ -114,7 +149,10 @@ end
 Cross-validate that a BasicState3D is compatible with the given parameters.
 """
 function validate_basic_state_3d_consistency(bs, params)
+    _check_basic_state_heating(params)
+    _check_basic_state_truncation(bs)
     _check_basic_state_thermal_bc(params.thermal_bc, bs)
+    _check_basic_state_mechanical_bc(params.mechanical_bc, bs)
     bs.Nr == params.Nr || throw(ArgumentError(
         "BasicState3D Nr=$(bs.Nr) doesn't match params Nr=$(params.Nr)"))
     length(bs.r) == params.Nr || throw(ArgumentError(

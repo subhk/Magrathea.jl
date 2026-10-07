@@ -50,7 +50,8 @@ function _mhd_operator_at_degree(op::MHDStabilityOperator{T}, N::Int) where {T}
     q = MHDParams{T}(p.E, p.Pr, p.Pm, p.Ra, p.Le, p.ricb, p.m, p.lmax, p.symm, N,
                      p.B0_type, p.B0_amplitude, p.bci, p.bco, p.bci_thermal,
                      p.bco_thermal, p.bci_magnetic, p.bco_magnetic,
-                     p.forcing_frequency, p.heating, p.L, p.Etherm, p.Em)
+                     p.forcing_frequency, p.heating, p.L, p.Etherm, p.Em,
+                     p.mantle_radius, p.mantle_diffusivity_ratio)
     return with_logger(() -> MHDStabilityOperator(q), NullLogger())
 end
 
@@ -71,7 +72,7 @@ _mhd_energy_galerkin_supported(p::MHDParams) = p.bci_magnetic in (0, 2) && p.bco
 
 Energy-conserving Galerkin form of the MHD eigenproblem `A x = λ B x` for insulating
 or perfectly conducting magnetic walls, with an axial, dipole, or no background field.
-A finite-conductivity inner core is not supported; use `assemble_mhd_matrices`.
+A finite-conductivity core or mantle is not supported; use `assemble_mhd_matrices`.
 
 Each momentum and induction equation is tested against its own trial basis in the
 energy inner product, so `B` is Hermitian positive definite on the velocity and
@@ -83,7 +84,7 @@ function assemble_mhd_energy_galerkin(op::MHDStabilityOperator{T}) where {T}
     p = op.params
     _mhd_energy_galerkin_supported(p) || throw(ArgumentError(
         "The energy-conserving Galerkin assembly supports insulating (0) or perfectly " *
-        "conducting (2) magnetic walls; use assemble_mhd_matrices for a conducting core."))
+        "conducting (2) magnetic walls; use assemble_mhd_matrices for a finite conducting core or mantle."))
     N = p.N; ri = p.ricb; ro = one(T); m = p.m
     Npad = N + 8
     opp = _mhd_operator_at_degree(op, Npad)

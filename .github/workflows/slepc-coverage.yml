@@ -7,18 +7,24 @@ name: SLEPc Coverage
 
 on:
   workflow_dispatch:
+  # Any source change can alter the assembled pencils, so real solves run on
+  # pull requests as well as after merge. The PETSc build is cached.
   push:
     branches: [main]
     paths:
       - ".github/workflows/slepc-coverage.yml"
+      - "Project.toml"
+      - "src/**"
       - "ext/MagratheaSlepcExt/**"
-      - "src/Stability/solver.jl"
-      - "src/Stability/triglobal.jl"
-      - "src/Stability/onset.jl"
-      - "src/Stability/biglobal.jl"
-      - "src/solve.jl"
-      - "src/MHD/assembly.jl"
-      - "src/Stability/linear.jl"
+      - "test/test_slepc_solve_coverage.jl"
+      - "test/slepc_assembly_regressions.jl"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/slepc-coverage.yml"
+      - "Project.toml"
+      - "src/**"
+      - "ext/MagratheaSlepcExt/**"
       - "test/test_slepc_solve_coverage.jl"
       - "test/slepc_assembly_regressions.jl"
 

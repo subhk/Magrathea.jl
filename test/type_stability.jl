@@ -97,7 +97,7 @@ end
     cd = ChebyshevDiffn(Nr, T[χ, one(T)], 4)
     r = cd.x
     theta = fill(T(0.1), Nr)
-    uphi = fill(T(0.2), Nr)
+    uphi = T(0.2) .* (r .- χ) .* (one(T) .- r)
     zero_coeff = zeros(T, Nr)
     bs = BasicState{T}(
         lmax_bs = 1,
@@ -476,7 +476,8 @@ end
     theta_coeffs = Dict{Int, Vector{T}}(
         ℓ => fill(T(0.02) / T(ℓ + 1), Nr) for ℓ in 0:4)
     uphi_coeffs = Dict{Int, Vector{T}}(
-        ℓ => fill(T(0.03) / T(ℓ + 1), Nr) for ℓ in 0:4)
+        ℓ => (T(0.03) / T(ℓ + 1)) .* (r .- T(0.35)) .* (one(T) .- r)
+        for ℓ in 0:4)
     bs = BasicState{T}(
         lmax_bs = 4,
         Nr = Nr,

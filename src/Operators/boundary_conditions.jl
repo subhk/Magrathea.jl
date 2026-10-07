@@ -8,7 +8,6 @@
 # =============================================================================
 
 using SparseArrays: SparseMatrixCSC
-using SpecialFunctions: sphericalbesselj
 
 """
     velocity_from_potentials(op, P, T)
@@ -24,7 +23,10 @@ The formulas follow the standard decomposition
 ```
 
 assuming fields vary as `exp(i m φ)`.  The returned arrays share the same shape
-as the input potentials.
+as the input potentials. Polar points use the regular limits described in
+[`potentials_to_velocity`](@ref). For `|m| = 1`, optional operator properties
+`costheta`, `cosθ`, `theta`, or `θ` identify the poles; otherwise their orientation
+is inferred from `Dθ*sintheta`. No angular coordinates are required for `m = 0`.
 """
 function velocity_from_potentials(op, P, T)
     Nr, Nθ = size(P)
@@ -43,24 +45,136 @@ function velocity_from_potentials(op, P, T)
     # Radial derivatives of the potentials
     dr_P = op.Dr * P
 
-    # Common geometric factors
-    inv_r = _get_inv_r(op, Nr)
-    inv_r2 = inv_r .* inv_r
-
+    inv_r = _inv_r_vector(_get_inv_r(op, Nr), Nr)
     im_m = _get_im_m(op)
-
-    # Velocity components
-    u_r = -lap_ang_P .* inv_r2
-    u_θ = (dr_P * op.Dθ') .* inv_r
-    u_φ = -(dθ_T .* inv_r)
-
-    if !iszero(im_m)
-        inv_r_sinθ = _get_inv_r_sinθ(op, inv_r, Nr, Nθ)
-        u_θ .+= (im_m .* T) .* inv_r_sinθ
-        u_φ .+= (im_m .* dr_P) .* inv_r_sinθ
+    dθ_dr_P = dr_P * op.Dθ'
+    if iszero(im_m)
+        # Retain real output for real axisymmetric inputs and do not require
+        # an angular-coordinate property that this branch never uses.
+        return -lap_ang_P .* (inv_r .* inv_r), dθ_dr_P .* inv_r, -dθ_T .* inv_r
     end
 
-    return u_r, u_θ, u_φ
+    sinθ = if hasproperty(op, :inv_r_sinθ)
+        inv_r_sinθ = _get_inv_r_sinθ(op, inv_r, Nr, Nθ)
+        inv_r[1] ./ vec(inv_r_sinθ[1, :])
+    else
+        _get_sinθ(op, Nθ)
+    end
+    cosθ = if hasproperty(op, :costheta)
+        op.costheta
+    elseif hasproperty(op, :cosθ)
+        getproperty(op, :cosθ)
+    elseif hasproperty(op, :theta)
+        cos.(op.theta)
+    elseif hasproperty(op, :θ)
+        cos.(getproperty(op, :θ))
+    else
+        nothing
+    end
+    cosθ === nothing || length(cosθ) == Nθ || throw(DimensionMismatch(
+        "costheta must have length $Nθ"))
+    CT = promote_type(eltype(lap_ang_P), eltype(dθ_dr_P), eltype(dθ_T),
+                      eltype(inv_r), eltype(sinθ), typeof(im_m))
+    return _scale_potential_velocity!(CT.(lap_ang_P), CT.(dθ_dr_P), CT.(dθ_T),
+                                      dr_P, P, T, inv_r, sinθ, op.Dθ, im_m;
+                                      costheta=cosθ)
+end
+
+# This is shared by both reconstruction entrypoints. The first three arrays
+# initially contain LθP, ∂θ∂rP, and ∂θT, respectively. Keeping the m=0 branch
+# separate avoids evaluating an undefined 0/sinθ, including for zero fields.
+function _scale_potential_velocity!(ur, uθ, uφ, dP_dr, P, Tor,
+                                    inv_r, sintheta, Dθ, im_m; costheta=nothing)
+    Nr, Nθ = size(P)
+    if iszero(im_m)
+        @inbounds for j in 1:Nθ, i in 1:Nr
+            ur[i, j] = -ur[i, j] * inv_r[i]^2
+            uθ[i, j] *= inv_r[i]
+            uφ[i, j] *= -inv_r[i]
+        end
+        return ur, uθ, uφ
+    end
+
+    RT = typeof(float(real(zero(eltype(sintheta)))))
+    pole_tolerance = 4eps(RT)
+    @inbounds for j in 1:Nθ
+        if abs(sintheta[j]) <= pole_tolerance
+            _scale_polar_velocity!(ur, uθ, uφ, dP_dr, P, Tor, inv_r,
+                                    sintheta, Dθ, im_m, j, costheta)
+        else
+            inv_sinθ = inv(sintheta[j])
+            for i in 1:Nr
+                inv_r_sinθ = inv_r[i] * inv_sinθ
+                ur[i, j] = -ur[i, j] * inv_r[i]^2
+                uθ[i, j] = uθ[i, j] * inv_r[i] + im_m * Tor[i, j] * inv_r_sinθ
+                uφ[i, j] = im_m * dP_dr[i, j] * inv_r_sinθ - uφ[i, j] * inv_r[i]
+            end
+        end
+    end
+    return ur, uθ, uφ
+end
+
+function _scale_polar_velocity!(ur, uθ, uφ, dP_dr, P, Tor, inv_r,
+                                sintheta, Dθ, im_m, j, costheta)
+    m = im_m / im
+    isreal(m) && isinteger(real(m)) || throw(ArgumentError(
+        "Polar velocity requires an integer azimuthal wavenumber"))
+    order = abs(real(m))
+    RT = typeof(float(real(zero(eltype(uθ)))))
+    # Input roundoff, including sin(pi), may leave a tiny nonzero endpoint.
+    # Relative tolerances have no unit floor: a small irregular field must not
+    # silently become a regular zero field.
+    input_eps = eps(RT)
+    for data in (P, Tor, Dθ, sintheta)
+        data_type = typeof(float(real(zero(eltype(data)))))
+        input_eps = max(input_eps, eps(data_type))
+    end
+    roundoff = 64input_eps
+    dscale = sum(abs, view(Dθ, j, :))
+    for i in axes(P, 1)
+        pscale = maximum(abs, view(P, i, :))
+        tscale = maximum(abs, view(Tor, i, :))
+        abs(P[i, j]) <= roundoff * pscale &&
+        abs(Tor[i, j]) <= roundoff * tscale || throw(ArgumentError(
+            "Nonaxisymmetric potentials must vanish at a pole (angular column $j)"))
+        isfinite(uθ[i, j]) && isfinite(uφ[i, j]) || throw(ArgumentError(
+            "Finite angular derivatives are required at a pole (angular column $j)"))
+        if order > 1
+            dpscale = maximum(abs, view(dP_dr, i, :))
+            abs(uθ[i, j]) <= roundoff * dscale * dpscale &&
+            abs(uφ[i, j]) <= roundoff * dscale * tscale || throw(ArgumentError(
+                "For |m| > 1, regular potentials have zero first angular derivatives at a pole"))
+        end
+    end
+
+    # Higher orders have zero polar velocity. An identically zero first-order
+    # limit also needs no north/south orientation information.
+    if order > 1 || (all(iszero, view(uθ, :, j)) && all(iszero, view(uφ, :, j)))
+        ur[:, j] .= 0
+        uθ[:, j] .= 0
+        uφ[:, j] .= 0
+        return nothing
+    end
+    c = if costheta === nothing
+        derivative = sum(Dθ[j, k] * sintheta[k] for k in eachindex(sintheta))
+        # An unresolved derivative cannot distinguish the two poles reliably.
+        isreal(derivative) && isfinite(derivative) && abs(derivative) > sqrt(input_eps) ||
+            throw(ArgumentError("Cannot identify north/south pole; supply costheta for |m| = 1"))
+        sign(real(derivative))
+    else
+        value = costheta[j]
+        cosine_roundoff = max(roundoff, 64eps(typeof(float(real(value)))))
+        isreal(value) && isfinite(value) && abs(abs(value) - 1) <= cosine_roundoff ||
+            throw(ArgumentError("costheta must equal +1 or -1 at a pole"))
+        sign(real(value))
+    end
+    for i in axes(P, 1)
+        hp, ht = uθ[i, j], uφ[i, j]
+        ur[i, j] = 0
+        uθ[i, j] = (hp + im_m * ht / c) * inv_r[i]
+        uφ[i, j] = (im_m * hp / c - ht) * inv_r[i]
+    end
+    return nothing
 end
 
 """
@@ -327,8 +441,8 @@ solver instead evolves core coefficients with the unknown eigenvalue.
 # Numerical Stability
 
 - For |x| < 10⁻¹⁰, uses series expansion: j'ₗ/jₗ ≈ l/x
-- For normal values, uses recurrence relation
-- Handles complex arguments robustly (needed for k = (1-i)√...)
+- Otherwise evaluates j_{l+1}/j_l by its continued fraction (modified Lentz), which
+  stays accurate where jₗ itself underflows or overflows, for real and complex x
 
 # Arguments
 
@@ -366,26 +480,30 @@ logderiv_complex = spherical_bessel_j_logderiv(l, k * ri)
 # See Also
 
 - The MHD eigenproblem evolves the conducting core explicitly instead of prescribing a frequency.
-- `SpecialFunctions.sphericalbesselj`: Underlying Bessel function
 """
 function spherical_bessel_j_logderiv(l::Int, x::Complex{T}) where {T<:Real}
+    T <: AbstractFloat || return spherical_bessel_j_logderiv(l, float(x))
     # For very small |x|, use series expansion: j_l(x) ≈ x^l / (2l+1)!!
     # so d/dx[log(j_l)] ≈ l/x
     if abs(x) < 1e-10
         return complex(T(l)) / x
     end
 
-    # Use recurrence relation: d/dx[log(j_l)] = l/x - j_{l+1}/j_l
-    jl = sphericalbesselj(l, x)
-    jl_plus_1 = sphericalbesselj(l + 1, x)
-
-    # Check for numerical issues
-    if abs(jl) < 1e-30
-        # If j_l is very small, fall back to asymptotic form
-        return complex(T(l)) / x
+    # d/dx[log(j_l)] = l/x - j_{l+1}/j_l, with j_{l+1}/j_l = x/g and the continued
+    # fraction g = 2l+3 - x²/(2l+5 - x²/(2l+7 - …)) evaluated by modified Lentz.
+    # Forming j_l and j_{l+1} separately loses the ratio once j_l underflows
+    # (small x, large l) or overflows (large complex x).
+    tiny = sqrt(floatmin(T))
+    g = complex(T(2l + 3)); C = g; D = zero(g)
+    for k in 2:(10_000 + 4 * ceil(Int, abs(x)))
+        b = T(2l + 2k + 1)
+        D = b - x^2 * D; iszero(D) && (D = complex(tiny)); D = inv(D)
+        C = b - x^2 / C; iszero(C) && (C = complex(tiny))
+        Δ = C * D
+        g *= Δ
+        abs(Δ - 1) <= 4 * eps(T) && return T(l) / x - x / g
     end
-
-    return T(l) / x - jl_plus_1 / jl
+    error("spherical_bessel_j_logderiv: continued fraction did not converge for l=$l, x=$x")
 end
 
 # Overload for real arguments (though we primarily use complex)
@@ -396,13 +514,14 @@ spherical_bessel_j_logderiv(l::Int, x::T) where {T<:Real} =
     apply_magnetic_boundary_conditions!(A, B, op, section)
 
 Apply the coefficient-space MHD tau constraints for `:f` or `:g`, including
-interface rows in an evolving conducting core. Uses the same boundary data as
+interface rows in an evolving conducting core or mantle. Uses the same boundary data as
 serial and distributed assembly. The highest residual coefficients are replaced.
 """
 function apply_magnetic_boundary_conditions!(A::SparseMatrixCSC, B::SparseMatrixCSC,
                                               op, section::Symbol)
     section in (:f, :g) || throw(ArgumentError("Magnetic section must be :f or :g"))
     core_section = section == :f ? :fi : :gi
-    _apply_mhd_boundary_conditions!(A, B, op, (section, core_section))
+    mantle_section = section == :f ? :fm : :gm
+    _apply_mhd_boundary_conditions!(A, B, op, (section, core_section, mantle_section))
     return nothing
 end

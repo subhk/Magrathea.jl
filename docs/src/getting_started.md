@@ -1,8 +1,8 @@
 # Getting Started
 
 Install the core package first, then configure SLEPc for sparse eigenvalue
-solves. Basic-state construction, matrix assembly, and the documentation
-build work without PETSc.
+solves. Basic-state construction, matrix assembly, dense eigensolves of small
+problems, and the documentation build work without PETSc.
 
 ## Installation
 
@@ -28,8 +28,10 @@ examples, and tests. The problem/solve interface is documented in the
 
 ## SLEPc setup
 
-The supported sparse eigensolver is `backend=:slepc`. Its Julia wrappers are
-weak dependencies, so instantiating the core package does not install them.
+The supported sparse eigensolver is `backend=:slepc`, the default of every
+`solve` method. Its Julia wrappers are weak dependencies, so instantiating the
+core package does not install them. The alternative `backend=:dense` needs no
+PETSc but forms dense matrices, so it suits only small validation problems.
 
 Install matching PETSc/SLEPc libraries using complex scalars. The shift-invert
 configuration below also requires MUMPS. Configure `PETSC_DIR`, `PETSC_ARCH`,
@@ -77,6 +79,13 @@ op = LinearStabilityOperator(params)
 A, B = assemble_matrices(op)
 @assert size(A) == size(B) == (op.total_dof, op.total_dof)
 nothing # hide
+```
+
+A problem this small can also be solved with the dense backend:
+
+```@example installation
+result = solve(problem; nev=4, backend=:dense)
+(result.growth_rate, result.frequency)
 ```
 
 For core regression tests, run from the checkout:
@@ -136,6 +145,8 @@ julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.in
 julia --project=docs docs/make.jl
 ```
 
+The docs environment includes CairoMakie, which draws the figures of the executed
+examples; the first instantiation precompiles it, which takes several minutes.
 Open `docs/build/index.html`. A normal local build does not deploy.
 CI passes `--deploy` explicitly when publishing. To check the directory-style
 URLs used on the website without deploying:

@@ -147,7 +147,8 @@ end
         @test biglobal ≈ onset rtol=1e-8 atol=1e-10
     end
 
-    # Basic states fix the inner temperature; a flux inner wall is rejected.
+    # A fixed-temperature inner wall needs matching perturbations, and fixed flux
+    # on both walls leaves the basic state's mean temperature undetermined.
     p = OnsetParams(E=1e-3, Pr=1.0, Ra=3e4, χ=χ, m=2, lmax=10, Nr=Nr, thermal_bc=:fixed_flux)
     @test_throws ArgumentError BiglobalProblem(p, temp)
     @test_throws ArgumentError Magrathea.basic_state(p; mode=:conduction)

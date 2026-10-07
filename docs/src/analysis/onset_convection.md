@@ -115,7 +115,10 @@ op = LinearStabilityOperator(params)
 
 # Inspect operator properties
 println("Total degrees of freedom: ", op.total_dof)
-println("Matrix sparsity: ", 1 - nnz(op.A) / length(op.A))
+
+# Assemble the collocation pencil A x = λ B x and the tau-row split
+A, B, interior_dofs, boundary_dofs = assemble_matrices(op)
+println("Matrix sparsity: ", 1 - count(!iszero, A) / length(A))
 ```
 
 !!! note "No BasicState Required"
@@ -201,6 +204,9 @@ critical = find_global_critical(
 println("Global critical: m_c = $(critical.m_c), Ra_c = $(critical.Ra_c)")
 ```
 
+The exported `find_global_critical_onset(; E, Pr, χ, lmax, Nr, m_range)` runs
+the same sweep and returns `(m_c, Ra_c, ω_c, all_results)`.
+
 ## Scaling Laws
 
 At low Ekman number, theoretical asymptotic analysis predicts power-law scalings:
@@ -224,10 +230,13 @@ indicating finer azimuthal structure at lower Ekman numbers.
 ### Drift Frequency
 
 ```math
-\omega_c \sim C_\omega \cdot E^{-2/3}
+\omega_c \sim C_\omega \cdot E^{1/3}
 ```
 
-(with rotational time scaling) or ``\omega_c \sim C_\omega \cdot E^{2/3}`` (with viscous time scaling).
+in the rotation time units used by the solvers, equivalent to
+``\omega_c \sim C_\omega \cdot E^{-2/3}`` in viscous time units. The rough
+estimates returned by `onset_scaling_laws(E, χ)` use the viscous-unit
+``E^{-2/3}`` form for ``\omega_c``.
 
 ### Convection Column Width
 
@@ -262,8 +271,10 @@ and the drift frequency ``\omega_c`` (in units of ``\Omega``, hence
 convention-independent) to 0.04%. At ``Ek_d = 10^{-4}`` the critical Rayleigh
 number and drift at the reference critical mode ``m = 5`` match to 0.06% and 0.3%.
 This validates the full onset pipeline end to end — the Coriolis, viscous,
-buoyancy and thermal-advection operators, the ultraspherical radial
-discretization, and the shift-invert eigensolver.
+buoyancy and thermal-advection operators, the Chebyshev collocation radial
+discretization with boundary-constraint reduction, and the eigensolver.
+`test/published_benchmarks.jl` checks the ``Ek_d = 10^{-3}`` critical point with
+both the collocation onset solver and the ultraspherical MHD solver without a field.
 
 !!! note "Resolution at low Ekman number"
     Global critical-mode selection becomes resolution-sensitive as ``E`` decreases
@@ -369,9 +380,16 @@ for ℓ in op.l_sets[:Θ]
     temperature[ℓ] = eigvec[op.index_map[(ℓ, :Θ)]]
 end
 
-# If you already have P(r,θ) and T(r,θ) on a grid, you can compute velocities:
-# u_r, u_θ, u_φ = potentials_to_velocity(P, T; Dr, Dθ, Lθ, r, sintheta, m)
+# Complex (r, θ) amplitudes of the physical fields; multiply by exp(imφ)
+u_r, u_θ, u_φ, r, grid = perturbation_velocity(eigvec, op)
+θ_field, r, grid = perturbation_temperature(eigvec, op)
+# From a solve: perturbation_velocity(result, mode) and perturbation_temperature(result, mode)
 ```
+
+The coefficients follow the onset convention ``u = \nabla\times\nabla\times(P\mathbf r) + \nabla\times(T\mathbf r)``
+with angular functions ``Y_\ell^m/\sqrt{2\ell+1}``. `potentials_to_velocity` instead
+expects physical potentials of ``\nabla\times\nabla\times(P\hat{\mathbf r})``, so it
+needs ``rP`` and ``rT``; the helpers above apply these conventions.
 
 ## Complete Example
 

@@ -7,8 +7,10 @@
 #  existing suites (thermal_wind.jl, sh_transform.jl, sparse_operator.jl,
 #  galerkin_radial.jl, chebyshev.jl). They are restricted to safe, deterministic
 #  m=0 / axisymmetric paths plus pure structural (dims / eltype / no-throw /
-#  round-trip) checks; no eigensolver / SLEPc / MPI is touched, and no m≠0
-#  advection/coupling COEFFICIENT VALUES are asserted (those carry known bugs).
+#  round-trip) checks; no eigensolver / SLEPc / MPI is touched. m≠0 coupling
+#  coefficient values are validated in mean_flow_coupling.jl; the legacy
+#  component-form compute_full_advection_spectral is approximate by design and
+#  warns.
 # =============================================================================
 
 using Test
@@ -472,7 +474,7 @@ end
 end
 
 # -----------------------------------------------------------------------------
-@testset "ultraspherical: _zero_row!, boundary functionals, apply_boundary_conditions!" begin
+@testset "ultraspherical: _zero_row! and boundary functionals" begin
     # _zero_row! clears stored entries of one row in place, leaving others intact
     A = sparse(Float64[1 2 0; 0 3 4; 5 0 6])
     Magrathea._zero_row!(A, 2)
@@ -488,25 +490,4 @@ end
     do_ = Magrathea._chebyshev_boundary_derivative(N, :outer)
     @test do_[2] ≈ 1.0 && do_[3] ≈ 4.0          # n^2 at outer
     @test length(Magrathea._chebyshev_boundary_second_derivative(N, :inner)) == N + 1
-
-    # _bc_row_values: dirichlet / neumann / neumann2 + unsupported -> ArgumentError
-    ri, ro = _RI, _RO
-    br, vals = Magrathea._bc_row_values(:dirichlet, 1, N, ri, ro, Float64)
-    @test br == 1:(N + 1)
-    @test vals == ones(N + 1)                    # outer Dirichlet
-    _, vn = Magrathea._bc_row_values(:neumann, 1, N, ri, ro, Float64)
-    @test length(vn) == N + 1
-    _, vn2 = Magrathea._bc_row_values(:neumann2, 1, N, ri, ro, Float64)
-    @test length(vn2) == N + 1
-    @test_throws ArgumentError Magrathea._bc_row_values(:bogus, 1, N, ri, ro, Float64)
-
-    # apply_boundary_conditions! overwrites the BC row in A and zeros it in B
-    K = N + 1
-    Amat = sparse(2.0 * I(K)) + sparse(Float64[i == j ? 0.0 : 0.1 for i in 1:K, j in 1:K])
-    Bmat = sparse(3.0 * I(K))
-    Magrathea.apply_boundary_conditions!(Amat, Bmat, [1], :dirichlet, N, ri, ro)
-    @test collect(Amat[1, :]) ≈ ones(K)          # outer Dirichlet functional
-    @test all(==(0.0), collect(Bmat[1, :]))      # B row cleared
-    # untouched rows of B keep their identity scaling
-    @test Bmat[2, 2] == 3.0
 end

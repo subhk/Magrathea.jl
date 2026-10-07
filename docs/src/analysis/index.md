@@ -2,7 +2,8 @@
 
 Choose the problem from the symmetry and physics of the background state.
 All eigenvalue examples assume an initialized
-[SLEPc session](../getting_started.md#SLEPc-setup).
+[SLEPc session](../getting_started.md#SLEPc-setup). Small validation problems
+can instead pass `backend=:dense` to `solve`, which needs no PETSc.
 
 ## Supported problems
 
@@ -13,8 +14,10 @@ All eigenvalue examples assume an initialized
 | `TriglobalProblem` | Nonaxisymmetric, three components | None | Coupled signed `m_range` |
 | `MHDProblem` | Zero | Imposed axial/dipole, or hydrodynamic `no_field` | Independent single `m` |
 
-The MHD solver currently does not combine an imposed magnetic field with a
-prescribed hydrodynamic mean flow.
+`MHDProblem` linearizes about the motionless conductive state. To combine an imposed
+field with a mean flow, set `B0_type`, `Le`, `Pm`, and `magnetic_bc` in `OnsetParams`:
+`BiglobalProblem` and `TriglobalProblem` then include magnetic perturbations about a
+self-consistent MHD mean state ([MHD guide](../mhd_user_guide.md#Mean-flows:-biglobal-and-triglobal-MHD)).
 
 ## Onset convection
 
@@ -82,10 +85,11 @@ params = MHDParams(E=1e-3, Pr=1.0, Pm=1.0, Ra=100.0, Le=0.01,
 result = solve(MHDProblem(params); nev=6, sigma=0.0)
 ```
 
-Insulating axial cases use boundary-recombined Galerkin assembly. Dipole or
-conducting-wall cases use the coefficient-tau formulation, with extra
-evolving coefficients for a finite conducting inner core. `no_field`
-requires `Le=0` and omits magnetic unknowns.
+Insulating or perfectly conducting magnetic walls use energy-conserving
+Galerkin assembly for every field type. A finite-conductivity inner core or
+outer mantle (`bci_magnetic=1` or `bco_magnetic=1`) uses the coefficient-tau
+formulation, with extra evolving coefficients in the conducting solid.
+`no_field` requires `Le=0` and omits magnetic unknowns.
 
 [MHD guide](../mhd_user_guide.md)
 

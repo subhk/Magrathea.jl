@@ -177,6 +177,32 @@ end
     end
 end
 
+@testset "mean_temperature evaluates axisymmetric and 3-D states" begin
+    cd=ChebyshevDiffn(20,[.35,1.],4)
+    bs=meridional_basic_state(cd,.35,.01,100.,1.,6,.01)
+    for (r,θ) in ((.35,.4),(.63,1.1),(1.,2.9),(.8,0.),(.8,float(π)))
+        @test mean_temperature(bs,r,θ) ≈ Magrathea.evaluate_basic_state(bs,r,θ).theta_bar atol=1e-13
+    end
+    # Public pattern convention: P_ℓ^|m| with the Condon–Shortley phase, cos(mφ) for
+    # m ≥ 0 and sin(|m|φ) for m < 0, fixed on the outer wall; the inner wall is at 1.
+    three=nonaxisymmetric_basic_state(cd,.35,.01,10.,1.,4,2,Dict((2,1)=>.05,(1,1)=>.03,(2,-2)=>.02))
+    for (θ,φ) in ((.6,.4),(2.,3.),(π/2,1.3))
+        pattern=.05*(-3sin(θ)cos(θ)cos(φ))+.03*(-sin(θ)cos(φ))+.02*3sin(θ)^2*sin(2φ)
+        @test mean_temperature(three,1.,θ,φ) ≈ pattern atol=1e-12
+        @test mean_temperature(three,.35,θ,φ) ≈ 1 atol=1e-12
+    end
+    # An outer heat-flux pattern is reproduced by the radial derivative.
+    flux=basic_state(cd,.35,.01,10.,1.;flux_bc=Y00(-1.)+Y22(-.1),lmax_bs=4)
+    h=1e-6
+    for (θ,φ) in ((.7,.3),(π/2,0.),(2.5,4.))
+        dTdr=(mean_temperature(flux,1.,θ,φ)-mean_temperature(flux,1-h,θ,φ))/h
+        @test dTdr ≈ -1-.3sin(θ)^2*cos(2φ) rtol=1e-4
+    end
+    @test mean_temperature(conduction_basic_state(cd,.35,4),.63,1.1) ≈ .35/.65*(1/.63-1)
+    @test_throws ArgumentError mean_temperature(bs,.3,1.)
+    @test_throws ArgumentError mean_temperature(bs,.6,-.1)
+end
+
 @testset "Original mean-flow audit parameters remain bounded under refinement" begin
     cd=ChebyshevDiffn(32,[.35,1.],4)
     for m in (0,2)

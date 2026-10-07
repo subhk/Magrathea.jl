@@ -204,6 +204,10 @@ function _show_children(io::IO, p::MHDParams, prefix::AbstractString)
     _emit_row(io, prefix, false, "mechanical BCs", "inner=$(p.bci), outer=$(p.bco)")
     _emit_row(io, prefix, false, "thermal BCs", "inner=$(p.bci_thermal), outer=$(p.bco_thermal)")
     _emit_row(io, prefix, false, "magnetic BCs", "inner=$(p.bci_magnetic), outer=$(p.bco_magnetic)")
+    if p.bco_magnetic == 1
+        _emit_row(io, prefix, false, "conducting mantle",
+                  "outer radius=$(p.mantle_radius), diffusivity/fluid=$(p.mantle_diffusivity_ratio)")
+    end
     _emit_row(io, prefix, true, "heating", p.heating)
 end
 

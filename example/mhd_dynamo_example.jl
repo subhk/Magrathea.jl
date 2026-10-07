@@ -98,8 +98,9 @@ println()
 # Solve Eigenvalue Problem
 # =============================================================================
 
-# Axial field with insulating walls routes through the boundary-recombined
-# (tau-free) Galerkin assembly; dipole fields or conducting walls use tau.
+# Insulating or perfectly conducting walls route through the energy-conserving
+# Galerkin assembly for any background field; a finite conducting core or mantle
+# uses tau.
 println("Solving MHD eigenvalue problem...")
 println()
 

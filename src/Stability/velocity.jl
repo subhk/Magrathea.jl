@@ -13,7 +13,7 @@
 using LinearAlgebra
 
 """
-    potentials_to_velocity(P, T; Dr, Dθ, Lθ, r, sintheta, m)
+    potentials_to_velocity(P, T; Dr, Dθ, Lθ, r, sintheta, m, costheta=nothing)
 
 Compute velocity components `(u_r, u_θ, u_φ)` from poloidal and toroidal
 potentials on a meridional (r, θ) grid for a single azimuthal mode m.
@@ -41,6 +41,15 @@ L² Y_ℓm = -ℓ(ℓ+1) Y_ℓm.
 - `r::AbstractVector` - Radial coordinates (length Nr)
 - `sintheta::AbstractVector` - sin(θ) values (length Nθ)
 - `m::Int` - Azimuthal wavenumber
+- `costheta` - Optional cos(θ) vector. At polar points it identifies north and
+  south for the `|m| = 1` limit; otherwise the sign is inferred from `Dθ*sintheta`.
+
+At either pole the input must represent regular potentials, with finite angular
+derivatives. Axisymmetric reconstruction does not divide by sin(θ). For `|m| = 1`
+the tangential components use the analytic limit `f/sin(θ) = ∂θf/cos(θ)`;
+for `|m| > 1` they vanish. Values of `|sin(θ)| ≤ 4eps` are treated as poles to
+include floating-point evaluations of sin(π). Irregular pole data or ambiguous
+north/south orientation for a nonzero `|m| = 1` limit raise `ArgumentError`.
 
 # Returns
 - `(u_r, u_θ, u_φ)` - Velocity components as (Nr, Nθ) complex matrices
@@ -65,7 +74,8 @@ function potentials_to_velocity(P::AbstractMatrix,
                                 Lθ,
                                 r::AbstractVector,
                                 sintheta::AbstractVector,
-                                m::Int)
+                                m::Int,
+                                costheta=nothing)
     Nr, Nθ = size(P)
     size(Tor) == size(P) || throw(DimensionMismatch("P and T must have same size"))
     size(Dr) == (Nr, Nr) || throw(DimensionMismatch(
@@ -78,6 +88,8 @@ function potentials_to_velocity(P::AbstractMatrix,
         "r must have length $Nr, got $(length(r))"))
     length(sintheta) == Nθ || throw(DimensionMismatch(
         "sintheta must have length $Nθ, got $(length(sintheta))"))
+    costheta === nothing || length(costheta) == Nθ || throw(DimensionMismatch(
+        "costheta must have length $Nθ, got $(length(costheta))"))
 
     CT = promote_type(eltype(P), eltype(Tor), Complex{eltype(r)},
                       Complex{eltype(sintheta)})
@@ -94,19 +106,9 @@ function potentials_to_velocity(P::AbstractMatrix,
     mul!(uθ, dP_dr, transpose(Dθ))   # ∂²P/∂r∂θ
     mul!(uφ, Tor, transpose(Dθ))     # ∂T/∂θ
 
-    im_m = CT(im * m)
-    @inbounds for j in 1:Nθ
-        inv_sinθ = inv(sintheta[j])
-        for i in 1:Nr
-            inv_r = inv(r[i])
-            inv_r_sinθ = inv_r * inv_sinθ
-            ur[i, j] = -ur[i, j] * inv_r * inv_r
-            uθ[i, j] = uθ[i, j] * inv_r + im_m * Tor[i, j] * inv_r_sinθ
-            uφ[i, j] = im_m * dP_dr[i, j] * inv_r_sinθ - uφ[i, j] * inv_r
-        end
-    end
-
-    return ur, uθ, uφ
+    return _scale_potential_velocity!(ur, uθ, uφ, dP_dr, P, Tor,
+                                      inv.(r), sintheta, Dθ, CT(im * m);
+                                      costheta=costheta)
 end
 
 
@@ -194,14 +196,43 @@ function _normalization_table(::Type{T}, m::Int, lmax::Int) where {T<:Real}
     n_l = lmax - m + 1
     N = Vector{T}(undef, n_l)
     for l in m:lmax
-        # Compute (l-m)!/(l+m)! iteratively to avoid overflow
-        ratio = one(T)
+        # Take each square root before dividing. The factorial ratio can
+        # underflow even when the normalization itself is representable.
+        normalization = sqrt(T(2 * l + 1) / (T(4) * T(π)))
         for k in (l - m + 1):(l + m)
-            ratio /= k
+            normalization /= sqrt(T(k))
         end
-        N[l - m + 1] = sqrt(T(2 * l + 1) / (T(4) * T(π)) * ratio)
+        N[l - m + 1] = normalization
     end
     return N
+end
+
+"""Fully normalized `N_lm P_l^m(μ)` including the Condon–Shortley phase.
+Recur on normalized values throughout, so neither factorial normalization nor
+unnormalized associated Legendre polynomials need to be representable in `T`."""
+function _normalized_legendre_table(m::Int, lmax::Int, mu::Vector{T}) where {T<:Real}
+    n_l = lmax - m + 1
+    Q = zeros(T, max(0, n_l), length(mu))
+    n_l <= 0 && return Q
+    for j in eachindex(mu)
+        s = sqrt(max(zero(T), one(T) - mu[j]^2))
+        q = inv(sqrt(T(4) * T(π)))
+        for k in 1:m
+            q *= -sqrt(T(2k + 1) / T(2k)) * s
+        end
+        Q[1, j] = q
+    end
+    lmax == m && return Q
+    Q[2, :] .= sqrt(T(2m + 3)) .* mu .* Q[1, :]
+    for l in (m + 2):lmax
+        den = T(l - m) * T(l + m)
+        a = sqrt(T(2l - 1) * T(2l + 1) / den)
+        b = sqrt(T(2l + 1) * T(l - m - 1) * T(l + m - 1) /
+                 (T(2l - 3) * den))
+        i = l - m + 1
+        Q[i, :] .= a .* mu .* Q[i - 1, :] .- b .* Q[i - 2, :]
+    end
+    return Q
 end
 
 
@@ -276,12 +307,8 @@ function build_meridional_grid(Nθ::Int, m::Int, lmax::Int;
     end
     sinθ = sin.(θ)
 
-    # Build differentiation matrix Dθ using finite differences or spectral
-    Dθ = _build_theta_derivative_matrix(θ)
-
-    # Build angular Laplacian L² for mode m
-    # L² = (1/sinθ) d/dθ (sinθ d/dθ) - m²/sin²θ
-    Lθ = _build_angular_laplacian(θ, sinθ, Dθ, m)
+    # θ-derivative and angular Laplacian L² for mode m
+    Dθ, Lθ = _harmonic_theta_operators(cosθ, sinθ, m)
 
     # Precompute spherical harmonics Y_ℓm(θ, φ=0)
     Ylm = _precompute_spherical_harmonics(m, lmax, cosθ)
@@ -335,62 +362,37 @@ end
 
 
 """
-    _build_theta_derivative_matrix(θ)
+    _harmonic_theta_operators(cosθ, sinθ, m) -> (Dθ, Lθ)
 
-Build differentiation matrix for θ using Chebyshev-like spectral differentiation.
+θ-derivative `Dθ` and angular Laplacian `Lθ` (L² Y_ℓm = -ℓ(ℓ+1) Y_ℓm) on the nodes
+`θ`, for fields of azimuthal order `m`. Both act through interpolation in the
+order-`m` harmonics of degrees |m| … |m| + n - 1 on the n informative nodes, so they
+are exact for every such field; polynomial interpolation in θ itself is
+ill-conditioned on these nodes. At high order, nodes where every harmonic is below
+round-off of its peak carry no information (the fields underflow there); their rows
+and columns are zero.
 """
-function _build_theta_derivative_matrix(θ::Vector{T}) where T
-    n = length(θ)
-    D = zeros(T, n, n)
-
-    for i in 1:n
-        for j in 1:n
-            if i != j
-                D[i, j] = _barycentric_weight(θ, j) /
-                          (_barycentric_weight(θ, i) * (θ[i] - θ[j]))
-            end
-        end
-        D[i, i] = -sum(D[i, k] for k in 1:n if k != i)
+function _harmonic_theta_operators(cosθ::Vector{T}, sinθ::Vector{T}, m::Int) where T
+    a = abs(m); nθ = length(cosθ)
+    table = _normalized_legendre_table(a, a + nθ - 1, cosθ)
+    peak = vec(maximum(abs, table; dims=2))
+    nodes = [j for j in 1:nθ if any(abs(table[k, j]) > eps(T) * peak[k] for k in axes(table, 1))]
+    n = length(nodes); L = a + n - 1
+    Q = _normalized_legendre_table(a, L, cosθ[nodes])  # Q[ℓ-a+1, j] = Y_ℓa(θ_j)
+    V = permutedims(Q)
+    # sinθ ∂θY_ℓa = ℓ cosθ Y_ℓa - √((2ℓ+1)(ℓ²-a²)/(2ℓ-1)) Y_(ℓ-1)a
+    dV = similar(V)
+    for k in 1:n, j in 1:n
+        ℓ = a + k - 1
+        lower = k == 1 ? zero(T) :
+            sqrt(T(2ℓ + 1) * T(ℓ - a) * T(ℓ + a) / T(2ℓ - 1)) * Q[k - 1, j]
+        dV[j, k] = (ℓ * cosθ[nodes[j]] * Q[k, j] - lower) / sinθ[nodes[j]]
     end
-
-    return D
-end
-
-
-function _barycentric_weight(θ::Vector{T}, j::Int) where T
-    n = length(θ)
-    w = one(T)
-    for k in 1:n
-        if k != j
-            w *= (θ[j] - θ[k])
-        end
-    end
-    return 1 / w
-end
-
-
-"""
-    _build_angular_laplacian(θ, sinθ, Dθ, m)
-
-Build angular Laplacian operator L² for azimuthal mode m.
-
-L² = (1/sinθ) d/dθ (sinθ d/dθ) - m²/sin²θ
-
-For Y_ℓm, this gives L² Y_ℓm = -ℓ(ℓ+1) Y_ℓm.
-"""
-function _build_angular_laplacian(θ::Vector{T}, sinθ::Vector{T},
-                                   Dθ::Matrix{T}, m::Int) where T
-    n = length(θ)
-    cosθ = cos.(θ)
-
-    # L² = d²/dθ² + (cosθ/sinθ) d/dθ - m²/sin²θ
-    # which is equivalent to (1/sinθ) d/dθ (sinθ d/dθ) - m²/sin²θ
-
-    D2θ = Dθ * Dθ  # Second derivative
-
-    Lθ = D2θ + Diagonal(cosθ ./ sinθ) * Dθ - Diagonal(T(m^2) ./ (sinθ.^2))
-
-    return Lθ
+    F = lu(V)
+    Dθ = zeros(T, nθ, nθ); Lθ = zeros(T, nθ, nθ)
+    Dθ[nodes, nodes] = dV / F
+    Lθ[nodes, nodes] = (V * Diagonal(T[-ℓ * (ℓ + 1) for ℓ in a:L])) / F
+    return Dθ, Lθ
 end
 
 
@@ -400,14 +402,13 @@ end
 Precompute Y_ℓm(θ, φ=0) for ℓ ∈ [m, lmax].
 """
 function _precompute_spherical_harmonics(m::Int, lmax::Int, cosθ::Vector{T}) where {T<:Real}
-    Plm = _associated_legendre_table(m, lmax, cosθ)
-    Nlm = _normalization_table(T, m, lmax)
+    Qlm = _normalized_legendre_table(m, lmax, cosθ)
 
     Ylm = Dict{Int, Vector{Complex{T}}}()
     for ℓ in m:lmax
         idx = ℓ - m + 1
         # Y_ℓm(θ, φ=0) = N_ℓm × P_ℓ^m(cosθ) × e^{im×0} = N_ℓm × P_ℓ^m(cosθ)
-        Ylm[ℓ] = Complex{T}.(Nlm[idx] .* Plm[idx, :])
+        Ylm[ℓ] = Complex{T}.(Qlm[idx, :])
     end
 
     return Ylm
@@ -578,15 +579,20 @@ function eigenvector_to_velocity(eigenvector::AbstractVector{<:Complex}, op;
     end
 end
 
+# Highest degree of any field (m = 0 fields reach lmax + 1), so a default grid
+# returned with one field can be reused for the others.
+_reconstruction_l_top(op) = maximum((maximum(ls; init=0) for ls in values(op.l_sets));
+                                    init=max(op.params.m, op.params.lmax))
+
 function _eigenvector_to_velocity_default_grid(eigenvector::AbstractVector{<:Complex},
                                                op,
                                                ::Nothing)
     m = op.params.m
-    lmax = op.params.lmax
-    Nθ_use = 2 * lmax
+    l_top = _reconstruction_l_top(op)
+    Nθ_use = 2 * l_top
     GT = typeof(op.params.E)
     # The assertion fixes the grid parameter for inference after construction.
-    grid = build_meridional_grid(Nθ_use, m, lmax; T=GT)::MeridionalGrid{GT}
+    grid = build_meridional_grid(Nθ_use, m, l_top; T=GT)::MeridionalGrid{GT}
     return _eigenvector_to_velocity(eigenvector, op, grid)
 end
 
@@ -594,11 +600,11 @@ function _eigenvector_to_velocity_default_grid(eigenvector::AbstractVector{<:Com
                                                op,
                                                Nθ::Int)
     m = op.params.m
-    lmax = op.params.lmax
+    l_top = _reconstruction_l_top(op)
     Nθ_use = Nθ
     GT = typeof(op.params.E)
     # Mirror the default-grid path so explicit Nθ calls stay type-stable too.
-    grid = build_meridional_grid(Nθ_use, m, lmax; T=GT)::MeridionalGrid{GT}
+    grid = build_meridional_grid(Nθ_use, m, l_top; T=GT)::MeridionalGrid{GT}
     return _eigenvector_to_velocity(eigenvector, op, grid)
 end
 
@@ -619,18 +625,18 @@ function _eigenvector_to_velocity(eigenvector::AbstractVector{<:Complex},
 end
 
 """Reconstruct onset's rP/rT potentials and Y_lm/√(2l+1) angular convention."""
-function _onset_velocity_from_coefficients(Pcoeff,Tcoeff,r,Dr,grid::MeridionalGrid{T},m) where T
+function _onset_velocity_from_coefficients(Pcoeff,Tcoeff,r,Dr,grid::MeridionalGrid{T},m;
+        poloidal_derivatives=nothing) where T
     CT=promote_type(_coefficient_eltype(Pcoeff,grid),_coefficient_eltype(Tcoeff,grid))
     Nr=length(r); Nθ=length(grid.θ); a=abs(m)
     L=max(maximum(keys(Pcoeff);init=a),maximum(keys(Tcoeff);init=a))
-    g=SHGrid{T}(L,a,grid.cosθ,zeros(T,Nθ),T[0],
-        Dict(k=>_associated_legendre_table(k,L,grid.cosθ) for k in 0:min(a+1,L)),
-        Dict(k=>_normalization_table(T,k,L) for k in 0:a))
+    g=SHGrid{T}(L,a,grid.cosθ,zeros(T,Nθ),T[0])
     ur=zeros(CT,Nr,Nθ); uθ=similar(ur); uφ=similar(ur)
     fill!(uθ,0); fill!(uφ,0)
     for (l,p) in Pcoeff
         y,h,v=_coupling_harmonic(g,l,m); norm=inv(sqrt(T(2l+1)))
-        dp=Dr*p; q=l*(l+1)
+        dp=poloidal_derivatives === nothing ? Dr*p : poloidal_derivatives[l]
+        q=l*(l+1)
         for j in 1:Nθ, i in 1:Nr
             ur[i,j]+=norm*q*p[i]/r[i]*y[j]
             uθ[i,j]+=norm*(dp[i]+p[i]/r[i])*h[j]
@@ -856,7 +862,8 @@ function _mode_reconstruction(problem, m_abs::Int)
                 mechanical_bc = params_tri.mechanical_bc,
                 thermal_bc = params_tri.thermal_bc,
                 equatorial_symmetry = params_tri.equatorial_symmetry,
-                basic_state = nothing
+                basic_state = nothing;
+                _magnetic_kwargs(params_tri)...
             )
             op = LinearStabilityOperator(params_m)
             # The tau-row nullspace depends only on the boundary conditions, so it
@@ -955,7 +962,7 @@ function perturbation_temperature(evec::AbstractVector{<:Complex},
     m    = op.params.m
     Nr   = op.params.Nr
     T    = typeof(op.params.E)
-    l_top = maximum(op.l_sets[:Θ]; init=max(m, op.params.lmax))
+    l_top = _reconstruction_l_top(op)
     g = grid === nothing ?
         build_meridional_grid(Nθ === nothing ? 2 * l_top : Nθ, m, l_top; T=T) : grid
 
@@ -973,11 +980,37 @@ function perturbation_temperature(evec::AbstractVector{<:Complex},
     return θfield, op.r, g
 end
 
-"""`perturbation_magnetic` is not defined for hydrodynamic problems (no magnetic field)."""
-function perturbation_magnetic(::AbstractVector{<:Complex},
-                               ::LinearStabilityOperator; kwargs...)
-    error("perturbation_magnetic: hydrodynamic problems have no magnetic field. " *
-          "Magnetic reconstruction is only available for MHD results (MHDStabilityOperator).")
+"""Magnetic potential profiles `(F, G)` by degree from a full collocation eigenvector."""
+function extract_magnetic_coefficients(eigenvector::AbstractVector{<:Complex}, op)
+    CT = eltype(eigenvector)
+    pick(field) = Dict{Int, Vector{CT}}(ℓ => eigenvector[op.index_map[(ℓ, field)]]
+                                        for ℓ in get(op.l_sets, field, Int[]))
+    return pick(:F), pick(:G)
+end
+
+"""
+    perturbation_magnetic(evec, op::LinearStabilityOperator; Nθ=nothing, grid=nothing)
+
+Reconstruct the physical perturbation field `(b_r, b_θ, b_φ)` of a collocation
+eigenvector with an imposed field (`B0_type` set in `OnsetParams`), with the radial
+and meridional grids, as `perturbation_velocity` does for the flow. The potentials
+follow `b = ∇×∇×(F𝐫) + ∇×(G𝐫)` with angular functions `Y/√(2ℓ+1)`, in the units of
+the imposed field; multiply by `e^{imφ}`. Returns `(Br, Bθ, Bφ, r_grid, grid)`.
+"""
+function perturbation_magnetic(evec::AbstractVector{<:Complex},
+                               op::LinearStabilityOperator;
+                               Nθ::Union{Int,Nothing}=nothing,
+                               grid::Union{MeridionalGrid,Nothing}=nothing)
+    _has_magnetic(op.params) || error("perturbation_magnetic: this problem has no magnetic " *
+        "field; set B0_type and Le in OnsetParams, or use an MHD result.")
+    m = op.params.m
+    if grid === nothing
+        l_top = _reconstruction_l_top(op)
+        grid = build_meridional_grid(something(Nθ, 2 * l_top), m, l_top; T=typeof(op.params.E))
+    end
+    F, G = extract_magnetic_coefficients(evec, op)
+    Br, Bθ, Bφ = _onset_velocity_from_coefficients(F, G, op.r, op.cd.D1, grid, m)
+    return Br, Bθ, Bφ, op.r, grid
 end
 
 """

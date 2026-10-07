@@ -1,7 +1,8 @@
 # =============================================================================
 #  Self-consistent basic states with temperature advection
 #
-#  Solve (E/Pr) ∇²T̄ = ū·∇T̄ using the complete Stokes–Coriolis velocity.
+#  Solve (E/Pr) ∇²T̄ = ū·∇T̄ coupled to Navier–Stokes–Coriolis momentum;
+#  momentum_model=:stokes explicitly omits momentum inertia.
 #  Both axisymmetric and nonaxisymmetric states can transport heat meridionally.
 #  Each relaxed thermal update is followed by a new viscous momentum solve.
 # =============================================================================
@@ -33,8 +34,12 @@ Fields:
     mechanical_bc::Symbol = :no_slip
     thermal_bc::Symbol = :fixed_temperature
     max_iterations::Int = 20
-    tolerance::T = T(1e-8)
+    tolerance::T = _default_mean_tolerance(typeof(E))
 end
+
+# Default convergence tolerance of the self-consistent mean state: 1e-8, but never
+# below the round-off floor of the state's float type (Float32 cannot reach 1e-8).
+_default_mean_tolerance(::Type{T}) where {T<:Real} = T(max(1e-8, 64 * eps(T)))
 
 _value_real_type(::Type{T}) where {T<:Real} = T
 _value_real_type(::Type{Complex{T}}) where {T<:Real} = T
@@ -478,15 +483,23 @@ Solve the steady Navier–Stokes–Coriolis and thermal advection-diffusion equa
 The default `momentum_model=:navier_stokes` includes nonlinear mean-flow inertia.
 Use `momentum_model=:stokes` explicitly for the weak-inertia approximation.
 
-Returns `(bs, info)`. `info.converged` requires the relative change of the flow
+Returns `(bs, info)`. `info.iteration_converged` (also available as the
+backward-compatible `info.converged`) requires the relative change of the flow
 and temperature under one Picard update (`info.momentum_residual`,
 `info.thermal_residual`), plus the boundary/gauge defect, to satisfy `tolerance`.
+This certifies iteration convergence at the chosen truncation only.
+`info.spatial_convergence` is always `:unchecked`; compare states after separate
+radial and angular refinement with [`mean_flow_resolution`](@ref) before using
+the state for quantitative work.
 Boundary amplitudes follow `nonaxisymmetric_basic_state`, including the
 `ArgumentError` for nonzero modes outside `lmax_bs`/`mmax_bs`;
 `coupled_thermal_wind` is an ignored compatibility keyword.
-The damped Picard iteration backtracks on this fixed-point residual; nonconvergence
-is returned explicitly through `info.termination_reason`. Increase `lmax_bs`,
-`mmax_bs` and radial resolution to check the spectral truncation independently.
+The damped Picard iteration backtracks on this fixed-point residual. If it stalls,
+Newton–Krylov steps continue, with continuation in the boundary-anomaly amplitude
+when needed (`info.newton_iterations`); `info.forcing_reached < 1` is the largest
+fraction of the anomalies with a steady state, where the steady branch typically
+ends in a fold. Nonconvergence is returned explicitly through
+`info.termination_reason`.
 """
 function nonaxisymmetric_basic_state_selfconsistent(
     cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
@@ -494,35 +507,47 @@ function nonaxisymmetric_basic_state_selfconsistent(
     mechanical_bc::Symbol = :no_slip,
     thermal_bc::Symbol = :fixed_temperature,
     outer_fluxes::Dict{Tuple{Int,Int}, <:Real} = Dict{Tuple{Int,Int}, T}(),
+    inner_thermal_bc::Symbol = :fixed_temperature,
+    inner_amplitudes::Dict{Tuple{Int,Int}, <:Real} = Dict{Tuple{Int,Int}, T}(),
     max_iterations::Int = 50,
-    tolerance::T = T(1e-8),
+    tolerance::Real = _default_mean_tolerance(T),
     verbose::Bool = false,
     coupled_thermal_wind::Bool = true,
     momentum_model::Symbol = :navier_stokes,
-    relaxation::Real = 0.5
+    relaxation::Real = 0.5,
+    B0_type::BackgroundField = no_field,
+    Le::Real = 0,
+    Pm::Real = 1,
+    magnetic_bc = :insulating
 ) where T<:Real
 
     max_iterations > 0 || throw(ArgumentError("max_iterations must be positive"))
     isfinite(tolerance) && tolerance > 0 || throw(ArgumentError("tolerance must be finite and positive"))
+    tolerance = T(tolerance)
     momentum_model in (:navier_stokes,:stokes) || throw(ArgumentError("momentum_model must be :navier_stokes or :stokes"))
     isfinite(relaxation) && 0 < relaxation <= 1 || throw(ArgumentError("relaxation must be in (0,1]"))
+    magnetic = _mean_magnetic(E, B0_type, T(Le), T(Pm), magnetic_bc, mechanical_bc)
     initial = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, lmax_bs, mmax_bs, amplitudes;
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc, outer_fluxes=outer_fluxes,
-        coupled_thermal_wind=coupled_thermal_wind)
+        inner_thermal_bc=inner_thermal_bc, inner_amplitudes=inner_amplitudes,
+        coupled_thermal_wind=coupled_thermal_wind, B0_type=B0_type, Le=Le, Pm=Pm,
+        magnetic_bc=magnetic_bc)
     theta = deepcopy(initial.theta_coeffs)
     r = cd.x; N = length(r); D = Matrix(cd.D1); D2 = Matrix(cd.D2)
     # Preserve the actual prescribed boundary values, including homogeneous
     # Neumann conditions on sine modes generated during the iteration.
-    bc = Dict(k => (v[1], thermal_bc==:fixed_temperature ? v[end] :
-        initial.dtheta_dr_coeffs[k][end], thermal_bc) for (k,v) in theta)
-    theta,flow,info=_iterate_mean_state(theta,initial.flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
+    wall(k, v, i, kind) = kind == :fixed_temperature ? v[i] : initial.dtheta_dr_coeffs[k][i]
+    bc = Dict(k => (wall(k, v, 1, inner_thermal_bc), wall(k, v, N, thermal_bc),
+                    (inner_thermal_bc, thermal_bc)) for (k,v) in theta)
+    theta,flow,info,field=_iterate_mean_state(theta,initial.flow,D,D2,E,Ra,Pr,bc,mechanical_bc;
         momentum_model=momentum_model,max_iterations=max_iterations,tolerance=tolerance,
-        relaxation=relaxation,verbose=verbose)
+        relaxation=relaxation,verbose=verbose,magnetic=magnetic,field=initial.field)
     dtheta = Dict(k=>D*v for (k,v) in theta)
     ur,uθ,uφ,dur,duθ,duφ = _mean_flow_components(flow)
     bs = BasicState3D(lmax_bs=lmax_bs,mmax_bs=mmax_bs,Nr=N,r=r,
         theta_coeffs=theta,dtheta_dr_coeffs=dtheta,ur_coeffs=ur,utheta_coeffs=uθ,
-        uphi_coeffs=uφ,dur_dr_coeffs=dur,dutheta_dr_coeffs=duθ,duphi_dr_coeffs=duφ,flow=flow)
+        uphi_coeffs=uφ,dur_dr_coeffs=dur,dutheta_dr_coeffs=duθ,duphi_dr_coeffs=duφ,flow=flow,
+        inner_thermal_bc=inner_thermal_bc,field=field,magnetic=_magnetic_record(magnetic,T(Pm)))
     return bs,info
 end
 
@@ -532,36 +557,65 @@ Construct a nonlinear steady mean flow from symbolic boundary conditions.
 Both axisymmetric and nonaxisymmetric forcing iterate thermal transport and
 Navier–Stokes–Coriolis momentum balance. `momentum_model=:stokes` opts out of
 momentum inertia; 3D defaults to `mmax_bs=lmax_bs` to retain generated harmonics. Returns the
-basic state and convergence information; pure conduction returns `nothing`
-for the information. An explicit `lmax_bs`/`mmax_bs` must retain every nonzero
+basic state and iteration convergence information. `info.iteration_converged`
+and its compatibility alias `info.converged` have the same meaning;
+`info.spatial_convergence=:unchecked` requires a separate refinement comparison
+with [`mean_flow_resolution`](@ref). The no-boundary-forcing shortcut returns
+the analytical conduction state and `nothing` for the information, preserving
+the existing return convention. Explicit zero-flow boundary conditions use the
+iterative path and return the same diagnostic fields as forced states.
+An explicit `lmax_bs`/`mmax_bs` must retain every nonzero
 boundary mode (otherwise an `ArgumentError` is thrown instead of dropping it);
 `coupled_thermal_wind` is ignored (warns once when `false`).
+`inner_temperature_bc` or `inner_flux_bc` prescribes the inner boundary in the same
+way, as for [`basic_state`](@ref).
 See `nonaxisymmetric_basic_state_selfconsistent`.
 """
 function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
                                     temperature_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
                                     flux_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
+                                    inner_temperature_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
+                                    inner_flux_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
                                     mechanical_bc::Symbol=:no_slip,
                                     lmax_bs::Union{Nothing, Int}=nothing,
                                     max_iterations::Int=50,
-                                    tolerance::Float64=1e-8,
+                                    tolerance::Union{Nothing,Real}=nothing,
                                     verbose::Bool=false,
                                     coupled_thermal_wind::Bool=true,
                                     momentum_model::Symbol=:navier_stokes,
                                     mmax_bs::Union{Nothing,Int}=nothing,
-                                    relaxation::Real=0.5)
+                                    relaxation::Real=0.5,
+                                    B0_type::BackgroundField=no_field, Le::Real=0, Pm::Real=1,
+                                    magnetic_bc=:insulating)
+    magnetic = (B0_type=B0_type, Le=Le, Pm=Pm, magnetic_bc=magnetic_bc)
 
     # Validate: can't have both temperature_bc and flux_bc
     if temperature_bc !== nothing && flux_bc !== nothing
         error("Cannot specify both temperature_bc and flux_bc. Choose one.")
     end
+    if inner_temperature_bc !== nothing && inner_flux_bc !== nothing
+        error("Cannot specify both inner_temperature_bc and inner_flux_bc. Choose one.")
+    end
     _warn_ignored_flow_keywords(coupled_thermal_wind=coupled_thermal_wind)
 
     momentum_model in (:navier_stokes,:stokes) || throw(ArgumentError("momentum_model must be :navier_stokes or :stokes"))
     max_iterations>0 || throw(ArgumentError("max_iterations must be positive"))
+    T = eltype(cd.x)
+    tolerance = something(tolerance, _default_mean_tolerance(T))
     isfinite(tolerance) && tolerance>0 || throw(ArgumentError("tolerance must be finite and positive"))
     isfinite(relaxation) && 0<relaxation<=1 || throw(ArgumentError("relaxation must be in (0,1]"))
-    T = eltype(cd.x)
+
+    if inner_temperature_bc !== nothing || inner_flux_bc !== nothing
+        _lmax, _mmax, axisymmetric, amplitudes, keywords = _two_wall_setup(T,
+            temperature_bc, flux_bc, inner_temperature_bc, inner_flux_bc, lmax_bs, mmax_bs;
+            full_band=true)
+        bs, info = nonaxisymmetric_basic_state_selfconsistent(cd, T(χ), T(E), T(Ra), T(Pr),
+            _lmax, _mmax, amplitudes; mechanical_bc=mechanical_bc,
+            max_iterations=max_iterations, tolerance=T(tolerance), verbose=verbose,
+            coupled_thermal_wind=coupled_thermal_wind, momentum_model=momentum_model,
+            relaxation=relaxation, keywords..., magnetic...)
+        return (axisymmetric && _mmax == 0 ? _axisymmetric_state(bs) : bs), info
+    end
 
     # Determine thermal BC type and the boundary condition
     if flux_bc !== nothing
@@ -593,7 +647,7 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
             _lmax,0,to_dict(bc); mechanical_bc=mechanical_bc,thermal_bc=thermal_bc,
             max_iterations=max_iterations,tolerance=T(tolerance),verbose=verbose,
             coupled_thermal_wind=coupled_thermal_wind,
-            momentum_model=momentum_model,relaxation=relaxation)
+            momentum_model=momentum_model,relaxation=relaxation,magnetic...)
         return _axisymmetric_state(bs),info
     end
 
@@ -610,7 +664,7 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
             tolerance=T(tolerance),
             verbose=verbose,
             coupled_thermal_wind=coupled_thermal_wind,
-            momentum_model=momentum_model,relaxation=relaxation
+            momentum_model=momentum_model,relaxation=relaxation,magnetic...
         )
     else  # fixed_flux
         return nonaxisymmetric_basic_state_selfconsistent(
@@ -624,7 +678,7 @@ function basic_state_selfconsistent(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
             tolerance=T(tolerance),
             verbose=verbose,
             coupled_thermal_wind=coupled_thermal_wind,
-            momentum_model=momentum_model,relaxation=relaxation
+            momentum_model=momentum_model,relaxation=relaxation,magnetic...
         )
     end
 end

@@ -1,13 +1,9 @@
 # Magrathea.jl Documentation
 
-```@raw html
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Linear stability in rotating spherical shells</div>
-  <h1>Spectral eigenvalue problems for rotating convection &amp; MHD.</h1>
-  <p>Analyze convection onset, stability about axisymmetric or three-dimensional
-  mean flows, and magnetoconvection in imposed axial or dipole fields.</p>
-</div>
-```
+Magrathea.jl solves spectral eigenvalue problems for the linear stability of
+rotating spherical shells: the onset of convection, stability about axisymmetric
+or three-dimensional mean flows, and magnetoconvection in imposed axial or dipole
+fields.
 
 [Get started](getting_started.md) · [First problem](problem_setup.md) ·
 [Examples](examples.md) · [API reference](reference.md)
@@ -19,7 +15,7 @@
 | `OnsetProblem` | Motionless conductive state | Chebyshev collocation with boundary-constraint reduction |
 | `BiglobalProblem` | Axisymmetric temperature and three-component velocity | Collocation with mean-flow advection and shear |
 | `TriglobalProblem` | Nonaxisymmetric temperature and velocity | Coupled signed azimuthal orders |
-| `MHDProblem` | Motionless conductive state and imposed magnetic field | Ultraspherical Galerkin for insulating axial fields; tau for dipole or conducting walls |
+| `MHDProblem` | Motionless conductive state and imposed magnetic field | Energy-conserving Galerkin for insulating or perfectly conducting walls; coefficient tau for finite-conductivity walls |
 
 The self-consistent hydrodynamic mean-state solver includes nonlinear
 momentum inertia and thermal advection in both 2D and 3D. Its Stokes
@@ -57,6 +53,10 @@ These small truncations demonstrate the API. Increase radial and angular
 resolution, vary the spectral target, and check eigenpair residuals before
 using a growth rate quantitatively. The fastest-growing returned eigenpair
 need not be the fastest-growing eigenpair of the complete spectrum.
+
+Problems this small can also be solved without PETSc:
+`solve(problem; backend=:dense)` uses a dense LAPACK eigensolver for
+validation-sized truncations. Use SLEPc for production resolutions.
 
 Construction and matrix assembly do not require PETSc:
 

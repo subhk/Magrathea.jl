@@ -182,7 +182,7 @@ function SparseStabilityOperator(params::SparseOnsetParams{T}) where {T}
     N = params.N
     ri, ro = params.ricb, one(T)
 
-    @info "Building sparse operators" N=N ricb=ri
+    @debug "Building sparse operators" N=N ricb=ri
 
     # Pre-compute radial operators for poloidal velocity
     @debug "Computing poloidal operators..."
@@ -229,7 +229,7 @@ function SparseStabilityOperator(params::SparseOnsetParams{T}) where {T}
     n_per_mode = N + 1
     matrix_size = (n_poloidal + n_toroidal + n_temperature) * n_per_mode
 
-    @info "Sparse operator built" poloidal_modes=length(ll_top) toroidal_modes=length(ll_bot) matrix_size="$(matrix_size) × $(matrix_size)" sparsity="~$(estimate_sparsity(N, n_poloidal, n_toroidal))%"
+    @debug "Sparse operator built" poloidal_modes=length(ll_top) toroidal_modes=length(ll_bot) matrix_size="$(matrix_size) × $(matrix_size)" sparsity="~$(estimate_sparsity(N, n_poloidal, n_toroidal))%"
 
     return SparseStabilityOperator{T}(
         params,
@@ -658,7 +658,7 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
     # Matrix size
     n = op.matrix_size
 
-    @info "Assembling sparse matrices" size="$n × $n" poloidal_modes=op.ll_top toroidal_modes=op.ll_bot
+    @debug "Assembling sparse matrices" size="$n × $n" poloidal_modes=op.ll_top toroidal_modes=op.ll_bot
 
     # Initialize sparse matrices using COO vectors. Keep value storage tied to
     # the parameter precision; Coriolis terms still introduce complex values.
@@ -838,7 +838,7 @@ function assemble_sparse_matrices(op::SparseStabilityOperator{T}) where {T}
 
     # Differential-equation rows: everything except the tau rows (zero in B)
     interior_dofs = setdiff(1:n, sort!(collect(bc_rows)))
-    @info "Sparse assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
+    @debug "Sparse assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
 
     info = Dict(
         "method" => "Sparse ultraspherical",
@@ -872,6 +872,16 @@ function _filter_coo_rows!(rows::Vector{Int}, cols::Vector{Int}, vals::Vector,
     return nothing
 end
 
+"""Chebyshev-coefficient functional `∫ r³ v(r) dr` on `[ri, ro]`, proportional to the
+angular momentum of an ℓ = 1 toroidal field `v` (rigid rotation is `v ∝ r`)."""
+function _angular_momentum_functional(::Type{T}, N::Int, ri, ro) where T
+    # N + 5 Chebyshev nodes integrate r³·T_N exactly.
+    x = T[-cospi(T(k) / (N + 4)) for k in 0:(N + 4)]
+    r = ri .+ (x .+ 1) .* ((ro - ri) / 2)
+    w = _mean_radial_weights(r) .* r .^ 3
+    return T[sum(w .* cos.(n .* acos.(x))) for n in 0:N]
+end
+
 """
     _compute_sparse_bc(op) -> (bc_rows::Set{Int}, bcA::Vector{Tuple{Int,Int,Complex{T}}})
 
@@ -886,7 +896,8 @@ projected residual, never the T₀/T₁ rows: rows N-2..N+1 of a poloidal block
 a toroidal or temperature block (outer, inner).
 
 Mechanical BCs (controlled by bci/bco):
-- 0 = stress-free: u = 0, ∂²u/∂r² = 0 (poloidal); v - r·∂v/∂r = 0 (toroidal)
+- 0 = stress-free: u = 0, ∂²u/∂r² = 0 (poloidal); v - r·∂v/∂r = 0 (toroidal). For
+  m ≤ 1 row N-1 of the ℓ = 1 toroidal block sets the angular momentum to zero.
 - 1 = no-slip: u = 0, ∂u/∂r = 0 (poloidal); v = 0 (toroidal)
 
 Thermal BCs (controlled by bci_thermal/bco_thermal):
@@ -938,6 +949,14 @@ function _compute_sparse_bc(op::SparseStabilityOperator{T}) where {T}
         last_row = first_row + N
         add!(last_row - 1, first_row, params.bco == 1 ? vo : vo .- ro .* do_)
         add!(last_row, first_row, params.bci == 1 ? vi : vi .- ri .* di)
+    end
+
+    # Stress-free walls leave the ℓ = 1 rigid rotation neutral for m ≤ 1; fix its
+    # angular momentum to zero, as `_compute_mhd_bc` does.
+    k = findfirst(==(1), op.ll_bot)
+    if params.bci == 0 && params.bco == 0 && params.m <= 1 && k !== nothing
+        first_row = (nb_top + k - 1) * n_per_mode + 1
+        add!(first_row + N - 2, first_row, _angular_momentum_functional(T, N, ri, ro))
     end
 
     # Temperature BCs

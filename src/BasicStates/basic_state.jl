@@ -33,6 +33,12 @@ Fields:
 - `uphi_coeffs::Dict{Int,Vector{T}}` - Zonal flow coefficients ū_φ,ℓ0(r) for each ℓ
 - `dtheta_dr_coeffs::Dict{Int,Vector{T}}` - Radial derivative ∂θ̄_ℓ0/∂r
 - `duphi_dr_coeffs::Dict{Int,Vector{T}}` - Radial derivative ∂ū_φ,ℓ0/∂r
+- `inner_thermal_bc::Symbol` - Inner-wall thermal condition, `:fixed_temperature`
+  (default) or `:fixed_flux`; perturbations must use the same inner condition
+- `field` - induced mean magnetic field `b̄` of an MHD state, in the same native
+  potentials as `flow` (the imposed field is not included), or `nothing`
+- `magnetic` - `(B0_type, Le, Pm, magnetic_bc)` the state was computed with, or
+  `nothing` for a hydrodynamic state; stability problems must use the same values
 """
 @with_kw_noshow struct BasicState{T<:Real}
     lmax_bs::Int
@@ -47,6 +53,9 @@ Fields:
     dur_dr_coeffs::Dict{Int,Vector{T}} = empty(theta_coeffs)
     dutheta_dr_coeffs::Dict{Int,Vector{T}} = empty(theta_coeffs)
     flow::Union{Nothing,SolenoidalMeanFlow{T}} = nothing
+    inner_thermal_bc::Symbol = :fixed_temperature
+    field::Union{Nothing,SolenoidalMeanFlow{T}} = nothing
+    magnetic::Union{Nothing,NamedTuple} = nothing
 end
 
 
@@ -78,6 +87,12 @@ Fields:
 - `dur_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}` - ∂ū_r,ℓm/∂r
 - `dutheta_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}` - ∂ū_θ,ℓm/∂r
 - `duphi_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}` - ∂ū_φ,ℓm/∂r
+- `inner_thermal_bc::Symbol` - Inner-wall thermal condition, `:fixed_temperature`
+  (default) or `:fixed_flux`; perturbations must use the same inner condition
+- `field` - induced mean magnetic field `b̄` of an MHD state, in the same native
+  potentials as `flow` (the imposed field is not included), or `nothing`
+- `magnetic` - `(B0_type, Le, Pm, magnetic_bc)` the state was computed with, or
+  `nothing` for a hydrodynamic state; stability problems must use the same values
 
 Note: Perturbations on this basic state couple multiple azimuthal modes m simultaneously.
 The eigenvalue problem becomes block-coupled across different m values.
@@ -101,6 +116,9 @@ The eigenvalue problem becomes block-coupled across different m values.
     dutheta_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}
     duphi_dr_coeffs::Dict{Tuple{Int,Int},Vector{T}}
     flow::Union{Nothing,SolenoidalMeanFlow{T}} = nothing
+    inner_thermal_bc::Symbol = :fixed_temperature
+    field::Union{Nothing,SolenoidalMeanFlow{T}} = nothing
+    magnetic::Union{Nothing,NamedTuple} = nothing
 end
 
 
@@ -118,16 +136,16 @@ end
 
 function _axisymmetric_state(bs::BasicState3D{T}) where T
     axis(d)=Dict(l=>v for ((l,m),v) in d if m==0)
-    f=bs.flow
-    if f !== nothing
-        only0(d)=Dict(k=>v for (k,v) in d if k[2]==0)
-        f=SolenoidalMeanFlow(f.lmax,0,f.r,only0(f.p),only0(f.t),only0(f.dp),only0(f.d2p),only0(f.dt))
-    end
+    only0(d)=Dict(k=>v for (k,v) in d if k[2]==0)
+    axisymmetric(f)=f===nothing ? nothing :
+        SolenoidalMeanFlow(f.lmax,0,f.r,only0(f.p),only0(f.t),only0(f.dp),only0(f.d2p),only0(f.dt))
     BasicState(lmax_bs=bs.lmax_bs,Nr=bs.Nr,r=bs.r,
         theta_coeffs=axis(bs.theta_coeffs),dtheta_dr_coeffs=axis(bs.dtheta_dr_coeffs),
         uphi_coeffs=axis(bs.uphi_coeffs),duphi_dr_coeffs=axis(bs.duphi_dr_coeffs),
         ur_coeffs=axis(bs.ur_coeffs),utheta_coeffs=axis(bs.utheta_coeffs),
-        dur_dr_coeffs=axis(bs.dur_dr_coeffs),dutheta_dr_coeffs=axis(bs.dutheta_dr_coeffs),flow=f)
+        dur_dr_coeffs=axis(bs.dur_dr_coeffs),dutheta_dr_coeffs=axis(bs.dutheta_dr_coeffs),
+        flow=axisymmetric(bs.flow),inner_thermal_bc=bs.inner_thermal_bc,
+        field=axisymmetric(bs.field),magnetic=bs.magnetic)
 end
 
 """
@@ -139,7 +157,7 @@ This type provides a convenient way to specify temperature boundary conditions
 using standard spherical harmonic notation (Y_ℓm) rather than dictionary syntax.
 
 # Amplitude convention
-An amplitude `a` for mode `(ℓ, m)` prescribes the outer-boundary pattern
+An amplitude `a` for mode `(ℓ, m)` prescribes the boundary pattern
 
     a · P_ℓ^m(cosθ) · cos(mφ)
 
@@ -147,7 +165,9 @@ where `P_ℓ^m` is the unnormalized associated Legendre function *including the
 Condon–Shortley phase* `(-1)^m`, as used for the stored coefficients. Odd-`m`
 patterns therefore carry a minus sign: `Y11(a)` is `-a sinθ cosφ` and `Y21(a)`
 is `-3a sinθ cosθ cosφ`, while `Y20(a)` is `a (3cos²θ - 1)/2`. With a flux
-boundary condition the same pattern prescribes `∂θ̄/∂r` at `r_o`.
+boundary condition the same pattern prescribes `∂θ̄/∂r` at the wall. A pattern
+applies to the outer wall (`temperature_bc`, `flux_bc`) or the inner wall
+(`inner_temperature_bc`, `inner_flux_bc`).
 
 # Constructor Functions
 - `Ylm(ℓ, m, amplitude)` - General spherical harmonic mode
@@ -400,7 +420,7 @@ function Base.show(io::IO, bc::SphericalHarmonicBC{T}) where T
 
     terms = String[]
     for ((ℓ, m), amp) in sort(collect(bc.coeffs), by=x->(x[1][1], x[1][2]))
-        if abs(amp) < eps(T) * 1000
+        if abs(amp) < eps(float(T)) * 1000
             continue
         end
         if amp == 1.0
@@ -436,7 +456,9 @@ end
 """
     conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
                            thermal_bc::Symbol=:fixed_temperature,
-                           outer_flux::T=-χ/(1-χ)) where T
+                           outer_flux::T=-χ/(1-χ),
+                           inner_thermal_bc::Symbol=:fixed_temperature,
+                           inner_flux::T=-1/(χ*(1-χ))) where T
 
 Create a basic state corresponding to pure conduction (no meridional variation).
 
@@ -457,6 +479,11 @@ Arguments:
                  boundary) and a positive value carries heat inward. The default
                  outer_flux = -χ/(1 - χ) carries the conduction heat flux and
                  reproduces the fixed-temperature conduction profile (θ̄(r_o) = 0).
+- `inner_thermal_bc` - Inner thermal boundary condition, `:fixed_temperature`
+  (default, θ̄(r_i) = 1) or `:fixed_flux` (dθ̄/dr|_{r_i} = inner_flux). Fixed flux
+  on both walls leaves the mean temperature undetermined and throws.
+- `inner_flux` - Prescribed ∂θ̄/∂r at r_i (only used if inner_thermal_bc=:fixed_flux).
+  The default -1/(χ(1-χ)) carries the conduction heat flux.
 
 # Physical Interpretation
 For fixed temperature BCs:
@@ -472,8 +499,11 @@ The conduction profile for ℓ=0 with fixed flux at outer is:
 """
 function conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
                                 thermal_bc::Symbol=:fixed_temperature,
-                                outer_flux::T=-χ/(one(T)-χ)) where T
+                                outer_flux::T=-χ/(one(T)-χ),
+                                inner_thermal_bc::Symbol=:fixed_temperature,
+                                inner_flux::T=-one(T)/(χ*(one(T)-χ))) where T
     r = cd.x
+    _check_shell_domain(r, χ)
     Nr = length(r)
 
     r_i = T(χ)
@@ -484,22 +514,12 @@ function conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
         error("thermal_bc must be :fixed_temperature or :fixed_flux, got: $thermal_bc")
     end
 
-    # ℓ=0 conduction profile
-    inner_value = sqrt(T(4) * T(pi))   # θ̄_00(r_i) = 1 × √(4π)
-
-    if thermal_bc == :fixed_temperature
-        outer_value = zero(T)           # θ̄_00(r_o) = 0
-        theta_cond, dtheta_dr_cond = laplace_mode_profile(0, r, r_i, r_o,
-                                                         inner_value, outer_value;
-                                                         outer_bc=:fixed_temperature)
-    else  # fixed_flux
-        # For ℓ=0: dθ̄_00/dr|_{r_o} = outer_flux × √(4π)
-        # (normalize by √(4π) to match the spherical harmonic coefficient)
-        outer_flux_normalized = outer_flux * sqrt(T(4) * T(pi))
-        theta_cond, dtheta_dr_cond = laplace_mode_profile(0, r, r_i, r_o,
-                                                         inner_value, outer_flux_normalized;
-                                                         outer_bc=:fixed_flux)
-    end
+    # ℓ=0 conduction profile. Coefficients carry the factor √(4π) of Y_00:
+    # θ̄_00(r_i) = 1 × √(4π), or dθ̄_00/dr at a fixed-flux wall = flux × √(4π).
+    inner_value = (inner_thermal_bc === :fixed_flux ? inner_flux : one(T)) * sqrt(T(4) * T(pi))
+    outer_value = thermal_bc == :fixed_flux ? outer_flux * sqrt(T(4) * T(pi)) : zero(T)
+    theta_cond, dtheta_dr_cond = laplace_mode_profile(0, r, r_i, r_o, inner_value,
+        outer_value; outer_bc=thermal_bc, inner_bc=inner_thermal_bc)
 
     # Initialize dictionaries
     theta_coeffs = Dict{Int,Vector{T}}()
@@ -529,7 +549,8 @@ function conduction_basic_state(cd::ChebyshevDiffn{T}, χ::T, lmax_bs::Int;
         theta_coeffs = theta_coeffs,
         uphi_coeffs = uphi_coeffs,
         dtheta_dr_coeffs = dtheta_dr_coeffs,
-        duphi_dr_coeffs = duphi_dr_coeffs
+        duphi_dr_coeffs = duphi_dr_coeffs,
+        inner_thermal_bc = inner_thermal_bc
     )
 
 end
@@ -540,17 +561,24 @@ Construct the axisymmetric conductive-temperature / viscous mean-flow state.
 The outer anomaly is `amplitude * P₂(cosθ)` for fixed temperature. For fixed
 flux, ∂θ̄/∂r at r_o is `outer_flux_mean` plus `F * P₂(cosθ)`, where
 `F = amplitude` when it is nonzero and `outer_flux_Y20` otherwise. The default
-`outer_flux_mean = -χ/(1-χ)` carries the conduction heat flux. The inner
-temperature is uniform.
+`outer_flux_mean = -χ/(1-χ)` carries the conduction heat flux. The inner wall
+has the same choice: with `inner_thermal_bc=:fixed_temperature` (default) its
+temperature is `1 + inner_amplitude * P₂(cosθ)`; with `:fixed_flux`, ∂θ̄/∂r at r_i
+is `inner_flux_mean + inner_amplitude * P₂(cosθ)`, where the default
+`inner_flux_mean = -1/(χ(1-χ))` carries the conduction heat flux. Fixed flux on
+both walls leaves the mean temperature undetermined and throws.
 
 All three velocity components solve the steady Stokes–Coriolis equations in a
 solenoidal vector-harmonic basis, with both mechanical boundaries enforced.
 `Ra` is shell-gap based. This neglects momentum inertia and temperature
 advection; use `basic_state_selfconsistent` to include both nonlinear effects.
 Use `mean_flow_velocity` to evaluate the full vector field.
+Retaining the boundary forcing alone does not resolve the velocity: Coriolis
+coupling generates higher degrees. Check radial and angular refinement with
+[`mean_flow_resolution`](@ref), especially at small Ekman number.
 
-A nonzero Y₂₀ forcing requires `lmax_bs ≥ 2`; smaller values throw an
-`ArgumentError` rather than dropping the forcing. Without Y₂₀ forcing any
+A nonzero Y₂₀ forcing on either wall requires `lmax_bs ≥ 2`; smaller values throw
+an `ArgumentError` rather than dropping the forcing. Without Y₂₀ forcing any
 `lmax_bs ≥ 0` is accepted and gives the conduction profile with zero flow.
 """
 function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T,
@@ -558,9 +586,15 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
                                mechanical_bc::Symbol=:no_slip,
                                thermal_bc::Symbol=:fixed_temperature,
                                outer_flux_mean::T=-χ/(one(T)-χ),
-                               outer_flux_Y20::T=zero(T)) where T
+                               outer_flux_Y20::T=zero(T),
+                               inner_thermal_bc::Symbol=:fixed_temperature,
+                               inner_amplitude::T=zero(T),
+                               inner_flux_mean::T=-one(T)/(χ*(one(T)-χ)),
+                               B0_type::BackgroundField=no_field, Le::Real=0, Pm::Real=1,
+                               magnetic_bc=:insulating) where T
 
     r = cd.x
+    _check_shell_domain(r, χ)
     Nr = length(r)
     r_i = T(χ)
     r_o = T(1.0)
@@ -575,10 +609,13 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
     forcing_Y20 = (thermal_bc == :fixed_temperature || amplitude != zero(T)) ?
                   amplitude : outer_flux_Y20
     lmax_bs >= 0 || throw(ArgumentError("lmax_bs must be non-negative, got $lmax_bs"))
-    if lmax_bs < 2 && !iszero(forcing_Y20)
-        kind = thermal_bc == :fixed_temperature ? "temperature" : "flux"
-        throw(ArgumentError("meridional_basic_state imposes a nonzero Y₂₀ boundary " *
-            "$kind ($forcing_Y20), which lmax_bs=$lmax_bs cannot retain; use lmax_bs ≥ 2."))
+    for (wall, bc, value) in (("outer", thermal_bc, forcing_Y20),
+                              ("inner", inner_thermal_bc, inner_amplitude))
+        if lmax_bs < 2 && !iszero(value)
+            kind = bc == :fixed_temperature ? "temperature" : "flux"
+            throw(ArgumentError("meridional_basic_state imposes a nonzero Y₂₀ $wall " *
+                "boundary $kind ($value), which lmax_bs=$lmax_bs cannot retain; use lmax_bs ≥ 2."))
+        end
     end
 
     # Spherical harmonic normalization for Y_20
@@ -588,37 +625,33 @@ function meridional_basic_state(cd::ChebyshevDiffn{T}, χ::T, E::T, Ra::T, Pr::T
     theta_coeffs = Dict{Int,Vector{T}}(ℓ => zeros(T, Nr) for ℓ in 0:lmax_bs)
     dtheta_dr_coeffs = Dict{Int,Vector{T}}(ℓ => zeros(T, Nr) for ℓ in 0:lmax_bs)
 
-    if thermal_bc == :fixed_temperature
-        # ℓ=0 mode: uniform inner temp, zero outer temp
-        theta_coeffs[0], dtheta_dr_coeffs[0] = laplace_mode_profile(0, r, r_i, r_o,
-            sqrt(T(4)*T(pi)), zero(T); outer_bc=:fixed_temperature)
-        # ℓ=2 mode: zero at inner, amplitude × P₂ pattern at outer
-        if lmax_bs >= 2
-            theta_coeffs[2], dtheta_dr_coeffs[2] = laplace_mode_profile(2, r, r_i, r_o,
-                zero(T), forcing_Y20 / norm_Y20; outer_bc=:fixed_temperature)
-        end
-    else  # fixed_flux
-        # ℓ=0 mode: uniform inner temp, prescribed mean flux at outer
-        # Normalize flux by √(4π) for spherical harmonic coefficient
-        theta_coeffs[0], dtheta_dr_coeffs[0] = laplace_mode_profile(0, r, r_i, r_o,
-            sqrt(T(4)*T(pi)), outer_flux_mean * sqrt(T(4) * T(pi)); outer_bc=:fixed_flux)
-        # ℓ=2 mode: zero at inner, prescribed P₂ flux at outer
-        if lmax_bs >= 2
-            theta_coeffs[2], dtheta_dr_coeffs[2] = laplace_mode_profile(2, r, r_i, r_o,
-                zero(T), forcing_Y20 / norm_Y20; outer_bc=:fixed_flux)
-        end
+    # ℓ=0 mode: mean temperature (or ∂θ̄/∂r at a fixed-flux wall) on each wall, with
+    # the √(4π) factor of the Y_00 coefficient.
+    inner_mean = inner_thermal_bc === :fixed_flux ? inner_flux_mean : one(T)
+    outer_mean = thermal_bc == :fixed_flux ? outer_flux_mean : zero(T)
+    theta_coeffs[0], dtheta_dr_coeffs[0] = laplace_mode_profile(0, r, r_i, r_o,
+        inner_mean * sqrt(T(4)*T(pi)), outer_mean * sqrt(T(4)*T(pi));
+        outer_bc=thermal_bc, inner_bc=inner_thermal_bc)
+    # ℓ=2 mode: the P₂ patterns prescribed on each wall
+    if lmax_bs >= 2
+        theta_coeffs[2], dtheta_dr_coeffs[2] = laplace_mode_profile(2, r, r_i, r_o,
+            inner_amplitude / norm_Y20, forcing_Y20 / norm_Y20;
+            outer_bc=thermal_bc, inner_bc=inner_thermal_bc)
     end
 
     theta3 = Dict((l,0)=>v for (l,v) in theta_coeffs)
-    flow = _steady_mean_flow(theta3, r, cd.D1, cd.D2, E, Ra, Pr, lmax_bs, 0;
-                             mechanical_bc=mechanical_bc)
+    magnetic = _mean_magnetic(E, B0_type, T(Le), T(Pm), magnetic_bc, mechanical_bc)
+    flow, field = _mean_flow_and_field(theta3, r, cd.D1, cd.D2, E, Ra, Pr, lmax_bs, 0;
+                                       mechanical_bc=mechanical_bc, magnetic=magnetic)
     ur, utheta, uphi, dur, dutheta, duphi = _mean_flow_components(flow)
     axis(d) = Dict(l=>v for ((l,m),v) in d if m==0)
     return BasicState(lmax_bs=lmax_bs, Nr=Nr, r=r,
         theta_coeffs=theta_coeffs, dtheta_dr_coeffs=dtheta_dr_coeffs,
         uphi_coeffs=axis(uphi), duphi_dr_coeffs=axis(duphi),
         ur_coeffs=axis(ur), utheta_coeffs=axis(utheta),
-        dur_dr_coeffs=axis(dur), dutheta_dr_coeffs=axis(dutheta), flow=flow)
+        dur_dr_coeffs=axis(dur), dutheta_dr_coeffs=axis(dutheta), flow=flow,
+        inner_thermal_bc=inner_thermal_bc, field=field,
+        magnetic=_magnetic_record(magnetic, T(Pm)))
 end
 
 
@@ -653,7 +686,7 @@ end
 
 """
     laplace_mode_profile(ℓ, r, r_i, r_o, inner_value, outer_value;
-                         outer_bc=:fixed_temperature)
+                         outer_bc=:fixed_temperature, inner_bc=:fixed_temperature)
 
 Solve the radial Laplace equation for spherical harmonic mode ℓ.
 
@@ -665,63 +698,40 @@ General solution: θ̄_ℓ(r) = A r^ℓ + B r^{-(ℓ+1)}
 - `ℓ::Int` - Spherical harmonic degree
 - `r` - Radial grid points
 - `r_i, r_o` - Inner and outer radii
-- `inner_value` - Value or flux at inner boundary (always Dirichlet for temperature)
+- `inner_value` - Value (for `inner_bc=:fixed_temperature`) or radial derivative (for
+  `inner_bc=:fixed_flux`) at the inner boundary
 - `outer_value` - Value (for :fixed_temperature) or flux (for :fixed_flux) at outer boundary
-- `outer_bc` - Outer boundary condition type:
-  - `:fixed_temperature` (default): θ̄_ℓ(r_o) = outer_value
-  - `:fixed_flux`: dθ̄_ℓ/dr|_{r_o} = outer_value
+- `outer_bc`, `inner_bc` - Boundary condition type at each wall:
+  - `:fixed_temperature` (default): θ̄_ℓ = value
+  - `:fixed_flux`: dθ̄_ℓ/dr = value
+
+Fixed flux on both walls leaves the ℓ = 0 profile undetermined up to a constant, so
+that combination throws an `ArgumentError` for ℓ = 0.
 
 # Returns
 - `θ` - Temperature profile θ̄_ℓ(r)
 - `dθ` - Radial derivative dθ̄_ℓ/dr
 
-# Mathematical Details
-For fixed temperature at both boundaries:
-  - θ̄_ℓ(r_i) = inner_value
-  - θ̄_ℓ(r_o) = outer_value
-
-For fixed temperature at inner, fixed flux at outer:
-  - θ̄_ℓ(r_i) = inner_value
-  - dθ̄_ℓ/dr|_{r_o} = outer_value
-
 The derivative is: dθ̄_ℓ/dr = A ℓ r^{ℓ-1} - B (ℓ+1) r^{-(ℓ+2)}
 """
 function laplace_mode_profile(ℓ::Int, r::AbstractVector{T}, r_i::T, r_o::T,
                              inner_value::T, outer_value::T;
-                             outer_bc::Symbol=:fixed_temperature) where T
-
-    if outer_bc == :fixed_temperature
-        # Both boundaries have Dirichlet conditions (fixed temperature)
-        # θ̄_ℓ(r_i) = inner_value
-        # θ̄_ℓ(r_o) = outer_value
-        M = T[
-            r_i^ℓ          r_i^(-(ℓ+1));
-            r_o^ℓ          r_o^(-(ℓ+1))
-        ]
-        rhs = T[inner_value, outer_value]
-
-    elseif outer_bc == :fixed_flux
-        # Inner: Dirichlet (fixed temperature)
-        # Outer: Neumann (fixed flux)
-        # θ̄_ℓ(r_i) = inner_value
-        # dθ̄_ℓ/dr|_{r_o} = outer_value
-        #
-        # From θ̄_ℓ = A r^ℓ + B r^{-(ℓ+1)}:
-        #   dθ̄_ℓ/dr = A ℓ r^{ℓ-1} - B (ℓ+1) r^{-(ℓ+2)}
-        #
-        # At r = r_o:
-        #   dθ̄_ℓ/dr|_{r_o} = A ℓ r_o^{ℓ-1} - B (ℓ+1) r_o^{-(ℓ+2)}
-        M = T[
-            r_i^ℓ                    r_i^(-(ℓ+1));
-            ℓ * r_o^(ℓ-1)           -(ℓ+1) * r_o^(-(ℓ+2))
-        ]
-        rhs = T[inner_value, outer_value]
-
-    else
-        error("outer_bc must be :fixed_temperature or :fixed_flux, got: $outer_bc")
+                             outer_bc::Symbol=:fixed_temperature,
+                             inner_bc::Symbol=:fixed_temperature) where T
+    for (wall, bc) in ((:outer, outer_bc), (:inner, inner_bc))
+        bc in (:fixed_temperature, :fixed_flux) ||
+            error("$(wall)_bc must be :fixed_temperature or :fixed_flux, got: $bc")
     end
+    ℓ == 0 && inner_bc === outer_bc === :fixed_flux && throw(ArgumentError(
+        "Fixed flux on both walls leaves the mean temperature undetermined; " *
+        "fix the temperature on at least one wall"))
 
-    α, β = M \ rhs
+    # Row for θ̄_ℓ = A r^ℓ + B r^{-(ℓ+1)} (temperature) or its derivative (flux).
+    row(radius, bc) = bc === :fixed_temperature ?
+        T[radius^ℓ, radius^(-(ℓ+1))] :
+        T[ℓ * radius^(ℓ-1), -(ℓ+1) * radius^(-(ℓ+2))]
+    M = permutedims(hcat(row(r_i, inner_bc), row(r_o, outer_bc)))
+    α, β = M \ T[inner_value, outer_value]
 
     θ = α .* r.^ℓ .+ β .* r.^(-(ℓ+1))
     dθ = α * ℓ .* r.^(ℓ-1) .- β * (ℓ+1) .* r.^(-(ℓ+2))
@@ -938,8 +948,17 @@ historical no-factorial normalization. Every nonzero entry of `amplitudes`
 For `:fixed_flux` without a `(0, 0)` entry, the mean outer ∂θ̄/∂r is the
 conduction value `-χ/(1-χ)`.
 
+`inner_amplitudes` prescribes the inner wall in the same convention: temperature
+patterns for `inner_thermal_bc=:fixed_temperature` (default), or ∂θ̄/∂r patterns
+for `:fixed_flux`. Without a `(0, 0)` entry the inner wall keeps the mean
+temperature 1, or for `:fixed_flux` the conduction value `-1/(χ(1-χ))`. Fixed flux
+on both walls leaves the mean temperature undetermined and throws an
+`ArgumentError`.
+
 `Ra` is shell-gap based. Momentum inertia and thermal advection are omitted;
 `nonaxisymmetric_basic_state_selfconsistent` includes both nonlinear effects.
+Check spatial accuracy by independently refining the radial grid and angular
+truncation and comparing states with [`mean_flow_resolution`](@ref).
 `coupled_thermal_wind` and `include_meridional_flow` are ignored compatibility
 keywords: the complete viscous velocity solve always includes the full coupling
 and the meridional circulation. Passing `false` emits a one-time warning.
@@ -955,23 +974,33 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
                                      mechanical_bc::Symbol=:no_slip,
                                      thermal_bc::Symbol=:fixed_temperature,
                                      outer_fluxes::AbstractDict=Dict{Tuple{Int,Int},Float64}(),
+                                     inner_thermal_bc::Symbol=:fixed_temperature,
+                                     inner_amplitudes::AbstractDict=Dict{Tuple{Int,Int},Float64}(),
                                      coupled_thermal_wind::Bool=true,
-                                     include_meridional_flow::Bool=true)
+                                     include_meridional_flow::Bool=true,
+                                     B0_type::BackgroundField=no_field, Le::Real=0, Pm::Real=1,
+                                     magnetic_bc=:insulating)
 
     r = cd.x
+    _check_shell_domain(r, χ)
     T = eltype(r)  # Get the element type from the Chebyshev grid
     Nr = length(r)
     r_i = T(χ)
     r_o = T(1.0)
 
-    # Validate thermal BC
-    if !(thermal_bc in (:fixed_temperature, :fixed_flux))
-        error("thermal_bc must be :fixed_temperature or :fixed_flux, got: $thermal_bc")
+    # Validate thermal BCs
+    for (name, bc) in (("thermal_bc", thermal_bc), ("inner_thermal_bc", inner_thermal_bc))
+        bc in (:fixed_temperature, :fixed_flux) ||
+            error("$name must be :fixed_temperature or :fixed_flux, got: $bc")
     end
+    thermal_bc === inner_thermal_bc === :fixed_flux && throw(ArgumentError(
+        "Fixed flux on both walls leaves the mean temperature undetermined; " *
+        "fix the temperature on at least one wall"))
     # The mode loop below only reads retained modes; reject anything it would drop.
     _check_retained_bc_modes(amplitudes, lmax_bs, mmax_bs, "amplitudes")
     thermal_bc == :fixed_flux &&
         _check_retained_bc_modes(outer_fluxes, lmax_bs, mmax_bs, "outer_fluxes")
+    _check_retained_bc_modes(inner_amplitudes, lmax_bs, mmax_bs, "inner_amplitudes")
     _warn_ignored_flow_keywords(coupled_thermal_wind=coupled_thermal_wind,
                                 include_meridional_flow=include_meridional_flow)
 
@@ -1002,25 +1031,17 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
                 # =============================================================
                 # ℓ=0, m=0: Radial conduction profile (mean temperature)
                 # =============================================================
-                # Inner BC: θ̄_00(r_i) = 1 × √(4π) (uniform temperature = 1)
-                inner_value = sqrt(T(4) * T(π))
-
-                if thermal_bc == :fixed_temperature
-                    # Outer BC: θ̄_00(r_o) = 0 (cold outer boundary)
-                    outer_value = T(get(amplitudes,(0,0),zero(T))) * sqrt(T(4)*T(π))
-                    theta_00, dtheta_00 = laplace_mode_profile(0, r, r_i, r_o,
-                                                               inner_value, outer_value;
-                                                               outer_bc=:fixed_temperature)
-                else  # fixed_flux
-                    # Outer BC: dθ̄_00/dr|_{r_o} = flux_00 × √(4π)
-                    # Get flux from outer_fluxes or amplitudes; without either,
-                    # carry the conduction heat flux.
-                    flux_00 = get(outer_fluxes, (0,0), get(amplitudes, (0,0), -r_i/(r_o-r_i)))
-                    outer_flux_normalized = T(flux_00) * sqrt(T(4) * T(π))
-                    theta_00, dtheta_00 = laplace_mode_profile(0, r, r_i, r_o,
-                                                               inner_value, outer_flux_normalized;
-                                                               outer_bc=:fixed_flux)
-                end
+                # Each wall fixes the mean temperature (inner 1, outer 0 unless
+                # given) or ∂θ̄/∂r (default: the conduction heat flux), times √(4π).
+                inner_mean = inner_thermal_bc === :fixed_flux ?
+                    get(inner_amplitudes, (0,0), -r_o/(r_i*(r_o-r_i))) :
+                    get(inner_amplitudes, (0,0), one(T))
+                outer_mean = thermal_bc == :fixed_flux ?
+                    get(outer_fluxes, (0,0), get(amplitudes, (0,0), -r_i/(r_o-r_i))) :
+                    get(amplitudes, (0,0), zero(T))
+                theta_00, dtheta_00 = laplace_mode_profile(0, r, r_i, r_o,
+                    T(inner_mean) * sqrt(T(4)*T(π)), T(outer_mean) * sqrt(T(4)*T(π));
+                    outer_bc=thermal_bc, inner_bc=inner_thermal_bc)
 
                 theta_coeffs[(0,0)] = theta_00
                 dtheta_dr_coeffs[(0,0)] = dtheta_00
@@ -1029,31 +1050,19 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
                 # =============================================================
                 # ℓ > 0 or m > 0: Higher-order modes
                 # =============================================================
-                # Get amplitude/flux for this mode
-                # For fixed_flux: check outer_fluxes first, then amplitudes
+                # Outer amplitude/flux; for fixed_flux check outer_fluxes first
                 if thermal_bc == :fixed_flux
                     value = get(outer_fluxes, (ℓ,m), get(amplitudes, (ℓ,m), zero(T)))
                 else
                     value = get(amplitudes, (ℓ,m), zero(T))
                 end
+                inner_value = T(get(inner_amplitudes, (ℓ,m), zero(T)))
 
-                if value != 0
-                    # Inner BC: θ̄_ℓm(r_i) = 0 (uniform inner temperature)
-                    inner_value = zero(T)
-
-                    if thermal_bc == :fixed_temperature
-                        # Outer BC: θ̄_ℓm(r_o) = amplitude / norm_Ylm
-                        outer_value = T(value) / norm_Ylm
-                        theta_lm, dtheta_lm = laplace_mode_profile(ℓ, r, r_i, r_o,
-                                                                   inner_value, outer_value;
-                                                                   outer_bc=:fixed_temperature)
-                    else  # fixed_flux
-                        # Outer BC: dθ̄_ℓm/dr|_{r_o} = flux / norm_Ylm
-                        outer_flux_normalized = T(value) / norm_Ylm
-                        theta_lm, dtheta_lm = laplace_mode_profile(ℓ, r, r_i, r_o,
-                                                                   inner_value, outer_flux_normalized;
-                                                                   outer_bc=:fixed_flux)
-                    end
+                if value != 0 || inner_value != 0
+                    # Each wall: θ̄_ℓm or dθ̄_ℓm/dr = amplitude / norm_Ylm
+                    theta_lm, dtheta_lm = laplace_mode_profile(ℓ, r, r_i, r_o,
+                        inner_value / norm_Ylm, T(value) / norm_Ylm;
+                        outer_bc=thermal_bc, inner_bc=inner_thermal_bc)
 
                     theta_coeffs[(ℓ,m)] = theta_lm
                     dtheta_dr_coeffs[(ℓ,m)] = dtheta_lm
@@ -1077,8 +1086,10 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
 
     # The complete velocity is always returned (see _warn_ignored_flow_keywords):
     # omitting meridional components would violate continuity for m != 0.
-    flow = _steady_mean_flow(theta_coeffs, r, cd.D1, cd.D2, E, Ra, Pr,
-                             lmax_bs, mmax_bs; mechanical_bc=mechanical_bc)
+    magnetic = _mean_magnetic(E, B0_type, T(Le), T(Pm), magnetic_bc, mechanical_bc)
+    flow, field = _mean_flow_and_field(theta_coeffs, r, cd.D1, cd.D2, E, Ra, Pr,
+                                       lmax_bs, mmax_bs; mechanical_bc=mechanical_bc,
+                                       magnetic=magnetic)
     ur_coeffs, utheta_coeffs, uphi_coeffs, dur_dr_coeffs, dutheta_dr_coeffs,
         duphi_dr_coeffs = _mean_flow_components(flow)
 
@@ -1095,7 +1106,10 @@ function nonaxisymmetric_basic_state(cd::ChebyshevDiffn, χ::Real, E::Real, Ra::
         dur_dr_coeffs = dur_dr_coeffs,
         dutheta_dr_coeffs = dutheta_dr_coeffs,
         duphi_dr_coeffs = duphi_dr_coeffs,
-        flow = flow
+        flow = flow,
+        inner_thermal_bc = inner_thermal_bc,
+        field = field,
+        magnetic = _magnetic_record(magnetic, T(Pm))
     )
 end
 
@@ -1111,6 +1125,8 @@ end
     basic_state(cd, χ, E, Ra, Pr;
                 temperature_bc=nothing,
                 flux_bc=nothing,
+                inner_temperature_bc=nothing,
+                inner_flux_bc=nothing,
                 mechanical_bc=:no_slip,
                 lmax_bs=nothing)
 
@@ -1133,10 +1149,16 @@ or `nonaxisymmetric_basic_state`).
 - `flux_bc` : SphericalHarmonicBC specifying the outer radial temperature gradient
   ∂θ̄/∂r (the outward heat flux is its negative)
   (Cannot specify both temperature_bc and flux_bc)
+- `inner_temperature_bc`, `inner_flux_bc` : the same for the inner boundary (at most
+  one of them). Without a Y00 term the inner wall keeps its mean temperature 1, or
+  for a flux condition the conduction value ∂θ̄/∂r = -1/(χ(1-χ)). Fixed flux on
+  both walls leaves the mean temperature undetermined and throws. Perturbations
+  on a state with a fixed-flux inner wall need `thermal_bc=(:fixed_flux, …)`.
 - `mechanical_bc` : `:no_slip` (default) or `:stress_free`
 - `lmax_bs` : Maximum ℓ for basic state (default `max(ℓ_bc + 2, 4)`). An explicit
   value must retain every nonzero boundary mode, otherwise an `ArgumentError` is
-  thrown instead of silently dropping the forcing.
+  thrown instead of silently dropping the forcing. The default is a starting
+  truncation; use [`mean_flow_resolution`](@ref) to check spatial refinement.
 - `coupled_thermal_wind` : ignored compatibility keyword (the viscous solve always
   includes the full coupling); `false` emits a one-time warning
 
@@ -1176,12 +1198,19 @@ bs = basic_state(cd, χ, E, Ra, Pr;
                  mechanical_bc=:stress_free)
 ```
 
+## Heterogeneous heat flux at the inner boundary
+```julia
+# Hemispherical ICB flux pattern, with the conduction mean flux
+bs = basic_state(cd, χ, E, Ra, Pr; inner_flux_bc=Y11(0.2))
+```
+
 # Automatic Dispatch Logic
 
 The function automatically selects the appropriate implementation:
 
 1. If no boundary condition is given, or all its amplitudes are zero:
-   → `conduction_basic_state` (pure conduction profile)
+   → `conduction_basic_state` (pure conduction profile). An explicit zero Y00
+     flux is retained; an absent Y00 flux uses the conduction heat flux.
 
 2. If boundary condition is axisymmetric (only m=0 modes, including Y00 alone):
    → the viscous solver of `nonaxisymmetric_basic_state` with `mmax_bs=0`
@@ -1189,21 +1218,36 @@ The function automatically selects the appropriate implementation:
 
 3. If boundary condition has m≠0 modes:
    → `nonaxisymmetric_basic_state` (returns `BasicState3D`)
+
+An inner-boundary condition uses the same solver, with the harmonics of both walls.
 """
 function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
                      temperature_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
                      flux_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
+                     inner_temperature_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
+                     inner_flux_bc::Union{Nothing, SphericalHarmonicBC}=nothing,
                      mechanical_bc::Symbol=:no_slip,
                      lmax_bs::Union{Nothing, Int}=nothing,
-                     coupled_thermal_wind::Bool=true)
+                     coupled_thermal_wind::Bool=true,
+                     B0_type::BackgroundField=no_field, Le::Real=0, Pm::Real=1,
+                     magnetic_bc=:insulating)
+    magnetic = (B0_type=B0_type, Le=Le, Pm=Pm, magnetic_bc=magnetic_bc)
 
     # Validate: can't have both temperature_bc and flux_bc
     if temperature_bc !== nothing && flux_bc !== nothing
         error("Cannot specify both temperature_bc and flux_bc. Choose one.")
     end
+    if inner_temperature_bc !== nothing && inner_flux_bc !== nothing
+        error("Cannot specify both inner_temperature_bc and inner_flux_bc. Choose one.")
+    end
     _warn_ignored_flow_keywords(coupled_thermal_wind=coupled_thermal_wind)
 
     T = eltype(cd.x)
+    if inner_temperature_bc !== nothing || inner_flux_bc !== nothing
+        return _two_wall_basic_state(cd, T(χ), T(E), T(Ra), T(Pr), temperature_bc, flux_bc,
+            inner_temperature_bc, inner_flux_bc, lmax_bs; mechanical_bc=mechanical_bc,
+            coupled_thermal_wind=coupled_thermal_wind, magnetic...)
+    end
 
     # Determine thermal BC type and the boundary condition
     if flux_bc !== nothing
@@ -1222,20 +1266,26 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
     # Get lmax and mmax from boundary condition
     bc_lmax, bc_mmax = get_lmax_mmax(bc)
 
-    # Use provided lmax_bs or auto-determine (add 2 for thermal wind coupling)
+    # Starting truncation only: repeated Coriolis coupling can require many
+    # degrees beyond the boundary forcing, especially at small Ekman number.
     _lmax = lmax_bs === nothing ? max(bc_lmax + 2, 4) : lmax_bs
     _check_retained_bc_modes(bc.coeffs, _lmax, is_axisymmetric(bc) ? 0 : bc_mmax,
                              flux_bc === nothing ? "temperature_bc" : "flux_bc")
 
-    # Check if BC is effectively zero (only conduction)
+    # Zero angular forcing still distinguishes an insulating outer wall from
+    # an omitted mean flux, which defaults to the conduction heat flux.
     if iszero(bc)
+        if thermal_bc === :fixed_flux && haskey(bc.coeffs, (0, 0))
+            return conduction_basic_state(cd, T(χ), _lmax;
+                thermal_bc=thermal_bc, outer_flux=T(bc.coeffs[(0, 0)]))
+        end
         return conduction_basic_state(cd, T(χ), _lmax; thermal_bc=thermal_bc)
     end
 
     if is_axisymmetric(bc)
         bs = nonaxisymmetric_basic_state(cd,T(χ),T(E),T(Ra),T(Pr),_lmax,0,to_dict(bc);
             mechanical_bc=mechanical_bc,thermal_bc=thermal_bc,
-            coupled_thermal_wind=coupled_thermal_wind)
+            coupled_thermal_wind=coupled_thermal_wind,magnetic...)
         return _axisymmetric_state(bs)
     end
 
@@ -1247,7 +1297,8 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
                                            _lmax, bc_mmax, amplitudes;
                                            mechanical_bc=mechanical_bc,
                                            thermal_bc=:fixed_temperature,
-                                           coupled_thermal_wind=coupled_thermal_wind)
+                                           coupled_thermal_wind=coupled_thermal_wind,
+                                           magnetic...)
     else  # fixed_flux
         return nonaxisymmetric_basic_state(cd, T(χ), T(E), T(Ra), T(Pr),
                                            _lmax, bc_mmax,
@@ -1255,8 +1306,50 @@ function basic_state(cd, χ::Real, E::Real, Ra::Real, Pr::Real;
                                            mechanical_bc=mechanical_bc,
                                            thermal_bc=:fixed_flux,
                                            outer_fluxes=amplitudes,
-                                           coupled_thermal_wind=coupled_thermal_wind)
+                                           coupled_thermal_wind=coupled_thermal_wind,
+                                           magnetic...)
     end
+end
+
+# Truncation and solver keywords for symbolic conditions on both walls: the outer
+# condition (if any) and the inner one. Shared by `basic_state` and
+# `basic_state_selfconsistent`.
+function _two_wall_setup(::Type{T}, temperature_bc, flux_bc, inner_temperature_bc,
+                         inner_flux_bc, lmax_bs, mmax_bs; full_band::Bool=false) where T
+    outer = flux_bc !== nothing ? flux_bc : temperature_bc
+    inner = inner_flux_bc !== nothing ? inner_flux_bc : inner_temperature_bc
+    thermal_bc = flux_bc !== nothing ? :fixed_flux : :fixed_temperature
+    inner_thermal_bc = inner_flux_bc !== nothing ? :fixed_flux : :fixed_temperature
+    bcs = outer === nothing ? (inner,) : (outer, inner)
+    axisymmetric = all(is_axisymmetric, bcs)
+    _lmax = lmax_bs === nothing ? max(maximum(get_lmax, bcs) + 2, 4) : lmax_bs
+    # The self-consistent solver keeps the full azimuthal band by default (`full_band`),
+    # since products generate new orders.
+    _mmax = mmax_bs !== nothing ? mmax_bs : axisymmetric ? 0 :
+            full_band ? _lmax : maximum(get_mmax, bcs)
+    outer === nothing || _check_retained_bc_modes(outer.coeffs, _lmax, _mmax,
+                                                  flux_bc === nothing ? "temperature_bc" : "flux_bc")
+    _check_retained_bc_modes(inner.coeffs, _lmax, _mmax,
+                             inner_flux_bc === nothing ? "inner_temperature_bc" : "inner_flux_bc")
+    outer_modes = outer === nothing ? Dict{Tuple{Int,Int},T}() :
+        Dict{Tuple{Int,Int},T}(k => T(v) for (k, v) in outer.coeffs)
+    none = Dict{Tuple{Int,Int},T}()
+    keywords = (; thermal_bc, inner_thermal_bc,
+                outer_fluxes = thermal_bc === :fixed_flux ? outer_modes : none,
+                inner_amplitudes = Dict{Tuple{Int,Int},T}(k => T(v) for (k, v) in inner.coeffs))
+    amplitudes = thermal_bc === :fixed_flux ? none : outer_modes
+    return _lmax, _mmax, axisymmetric, amplitudes, keywords
+end
+
+function _two_wall_basic_state(cd, χ::T, E::T, Ra::T, Pr::T, temperature_bc, flux_bc,
+                               inner_temperature_bc, inner_flux_bc, lmax_bs;
+                               mechanical_bc, coupled_thermal_wind, magnetic...) where T
+    _lmax, _mmax, axisymmetric, amplitudes, keywords = _two_wall_setup(T, temperature_bc,
+        flux_bc, inner_temperature_bc, inner_flux_bc, lmax_bs, nothing)
+    bs = nonaxisymmetric_basic_state(cd, χ, E, Ra, Pr, _lmax, _mmax, amplitudes;
+        mechanical_bc=mechanical_bc, coupled_thermal_wind=coupled_thermal_wind, keywords...,
+        magnetic...)
+    return axisymmetric ? _axisymmetric_state(bs) : bs
 end
 
 

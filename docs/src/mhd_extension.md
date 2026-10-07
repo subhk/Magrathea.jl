@@ -3,16 +3,6 @@
 !!! note "Eigensolver setup"
     Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Magnetohydrodynamics</div>
-  <h1>Stability of rotating, conducting fluids in magnetic fields.</h1>
-  <p>
-    The MHD module studies the linear stability of conducting fluids under rotation,
-    thermal gradients, and imposed magnetic fields &mdash; for rotating magnetoconvection,
-    stellar convection, and laboratory MHD.
-  </p>
-</div>
-
 ## Overview
 
 The MHD implementation in `Magrathea` extends the hydrodynamic solver with:
@@ -25,7 +15,8 @@ The MHD implementation in `Magrathea` extends the hydrodynamic solver with:
 
 ## Physical Problem
 
-The solver linearizes about a **motionless conductive state** with a prescribed,
+`MHDProblem` linearizes about a **motionless conductive state** (for mean flows with
+an imposed field, see the [MHD guide](mhd_user_guide.md#Mean-flows:-biglobal-and-triglobal-MHD)) with a prescribed,
 current-free axial or dipolar field. It does not couple the hydrodynamic nonlinear
 mean-flow solver into MHD; explicit `MHDProblem.basic_state` objects are rejected.
 `no_field` is hydrodynamic stability, with no magnetic degrees of freedom.
@@ -47,8 +38,12 @@ The MHD equations in a rotating spherical shell:
 
 **Momentum (Navier-Stokes + Lorentz):**
 ```math
-\frac{\partial \mathbf{u}}{\partial t} + 2\boldsymbol{\Omega} \times \mathbf{u} = -\nabla p + E\nabla^2\mathbf{u} + \frac{Ra \cdot E^2}{Pr} \Theta \hat{\mathbf{r}} + Le^2 (\nabla \times \mathbf{B}) \times \mathbf{B}_0
+\frac{\partial \mathbf{u}}{\partial t} + 2\hat{\mathbf{z}} \times \mathbf{u} = -\nabla p + E\nabla^2\mathbf{u} + \frac{Ra \cdot E^2}{Pr\,(1-r_i)^3}\, r\Theta \hat{\mathbf{r}} + Le^2 (\nabla \times \mathbf{B}) \times \mathbf{B}_0
 ```
+
+Here ``\mathbf B`` is the perturbation field and ``r_i`` is `ricb`. As in the
+hydrodynamic solvers, `Ra` is based on the shell thickness and gravity is
+proportional to radius; see [Mathematical Foundations](theory/mathematical_foundations.md).
 
 **Induction:**
 ```math
@@ -70,8 +65,8 @@ The MHD equations in a rotating spherical shell:
 | Parameter | Symbol | Definition | Physical Meaning |
 |-----------|--------|------------|------------------|
 | Magnetic Prandtl | ``Pm`` | ``\nu/\eta`` | Viscous to magnetic diffusivity |
-| Lehnert number | ``Le`` | ``B_0/(\sqrt{\mu\rho}\Omega L)`` | Magnetic to rotational forces |
-| Magnetic Ekman | ``E_m`` | ``E/Pm = \eta/(\Omega L^2)`` | Magnetic diffusion rate |
+| Lehnert number | ``Le`` | ``B_0/(\sqrt{\mu\rho}\,\Omega r_o)`` | Magnetic to rotational forces |
+| Magnetic Ekman | ``E_m`` | ``E/Pm = \eta/(\Omega r_o^2)`` | Magnetic diffusion rate |
 
 ### Typical Parameter Values
 
@@ -126,7 +121,7 @@ params = MHDParams(
 
 # Solve via the high-level API.
 # Insulating or perfectly conducting walls use energy-conserving Galerkin assembly.
-# A finite-conductivity inner core uses coefficient-space tau assembly.
+# A finite-conductivity inner core or mantle uses coefficient-space tau assembly.
 result = solve(MHDProblem(params); nev=10, which=:LR)
 
 eigenvalues = result.eigenvalues
@@ -143,15 +138,32 @@ println(σ_lead > 0 ? "System is UNSTABLE" : "System is STABLE")
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `E` | Float64 | Ekman number |
-| `Pr` | Float64 | Prandtl number |
-| `Pm` | Float64 | Magnetic Prandtl number |
-| `Ra` | Float64 | Rayleigh number |
-| `Le` | Float64 | Lehnert number (0 for hydrodynamics) |
-| `ricb` | Float64 | Inner core radius ratio |
-| `m` | Int | Azimuthal wavenumber |
-| `lmax` | Int | Maximum spherical harmonic degree |
-| `N` | Int | Radial resolution |
+| `E` | Real | Ekman number, based on the outer radius |
+| `Ra` | Real | Rayleigh number, based on the shell thickness |
+| `ricb` | Real | Inner core radius ratio, `0 < ricb < 1` |
+| `m` | Int | Azimuthal wavenumber, `m ≥ 0` |
+| `lmax` | Int | Maximum spherical harmonic degree, `lmax ≥ m` |
+| `N` | Int | Maximum Chebyshev degree (`N + 1` coefficients); even and `≥ 8` |
+
+### Optional Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `Pr` | `1.0` | Prandtl number |
+| `Pm` | `1.0` | Magnetic Prandtl number |
+| `Le` | `0.0` | Lehnert number; `0` for `no_field`, `> 0` for an imposed field |
+| `symm` | `1` | Equatorial symmetry: `1`, `-1`, or `0` for both parities |
+| `B0_type` | `no_field` | Background field: `no_field`, `axial`, or `dipole` |
+| `B0_amplitude` | `0.0` | Legacy display tag; does not rescale the field and must be `0` for `no_field` |
+| `bci`, `bco` | `1` | Mechanical walls (see below) |
+| `bci_thermal`, `bco_thermal` | `0` | Thermal walls |
+| `bci_magnetic`, `bco_magnetic` | `0` | Magnetic walls |
+| `heating` | `:differential` | `:differential` or `:internal` |
+| `mantle_radius` | `nothing` | Outer mantle radius, required and `> 1` when `bco_magnetic=1` |
+| `mantle_diffusivity_ratio` | `1` | Mantle/fluid magnetic diffusivity ratio |
+| `forcing_frequency` | `0.0` | Legacy keyword; must be zero |
+
+Numeric parameters are promoted to a common type `T` (`MHDParams{T}`).
 
 ### Background Field Options
 
@@ -184,14 +196,26 @@ end
 | Value | Type | Condition | Use Case |
 |-------|------|-----------|----------|
 | 0 | Insulating | ``(l+1)f + r f' = 0`` (CMB), ``l f - r f' = 0`` (ICB) | Earth's mantle |
-| 1 | Conducting core | Evolving regular core field, matched to the shell | Inner boundary only; equal diffusivity/permeability |
+| 1 | Finite conductor | Evolving core or mantle field, matched to the fluid | Stationary solid with equal permeability |
 | 2 | Perfect conductor | ``f=0``, tangential electric field zero | Ideal stationary conducting wall |
 
 For no-slip perfect-conductor walls the toroidal condition is ``g'+g/r=0``.
 For stress-free walls the code includes the tangential ``\mathbf{u}\times\mathbf{B}_0``
-contribution. Conducting-core matching is described in the [user guide](mhd_user_guide.md).
-`forcing_frequency` must be zero; `bco_magnetic=1` is rejected because a conducting
-mantle model is not implemented.
+contribution. `bci_magnetic=1` uses a regular core with the fluid's magnetic
+diffusivity. `bco_magnetic=1` adds a finite mantle on
+``1\le r\le R_m``, with `mantle_radius=R_m > 1` required and
+`mantle_diffusivity_ratio=η_m/η_f > 0` (default `1`). The mantle matches a vacuum
+field at its outer surface. Both conducting regions evolve with the same unknown
+eigenvalue as the fluid, using tau assembly; `forcing_frequency` must be zero.
+See [conducting-region matching](@ref conducting-mantle)
+for the interface equations and an example.
+
+`solve` checks the reconstructed magnetic boundary fields by default. Use
+`boundary_check=:error` to reject eigenmodes whose physical residuals exceed
+`boundary_rtol` and `boundary_atol`; inspect `result.extra.magnetic_boundaries`
+or call `magnetic_boundary_residuals(result)`. These checks include angular
+components above the retained harmonic cutoff. Radial and angular refinement
+are still required to establish convergence.
 
 ## Background Magnetic Fields
 
@@ -264,26 +288,29 @@ Where:
 
 | Block | Physical Process | Strength |
 |-------|------------------|----------|
-| ``A_{uf}``, ``A_{vf}`` | Lorentz force (B → u) | ``Le^2`` |
-| ``A_{fu}``, ``A_{fv}`` | Induction (u → B) | ``Le`` |
-| ``A_{u\Theta}`` | Buoyancy | ``Ra/Pr`` |
-| ``A_{\Theta u}`` | Temperature advection | 1 |
+| ``A_{uf}``, ``A_{ug}``, ``A_{vf}``, ``A_{vg}`` | Lorentz force (B → u) | ``Le^2`` |
+| ``A_{fu}``, ``A_{fv}``, ``A_{gu}``, ``A_{gv}`` | Induction (u → B) | 1 (assembled only when ``Le > 0``) |
+| ``A_{u\Theta}`` | Buoyancy | ``Ra\,E^2/(Pr\,(1-r_i)^3)`` |
+| ``A_{\Theta u}`` | Temperature advection | ``-dT_0/dr``; ``r_i/((1-r_i)r^2)`` for differential heating |
 
 ## Use Cases
 
 ### Case 1: Hydrodynamic Benchmark (No Magnetic Field)
 
-Reproduce Christensen & Wicht (2015) Table 1:
+Reproduce the onset benchmark of Barik et al. (2023) at the shell-thickness
+Ekman number Ek_d = 10⁻³ (critical m = 4, R̃aᶜ = 55.9, ωᶜ = -0.0231). `E` is
+based on the outer radius, `E = Ek_d (1 - ricb)^2`, and `Ra = R̃a / Ek_d` is based
+on the shell thickness:
 
 ```julia
 params = MHDParams(
-    E = 4.734e-5,
+    E = 4.225e-4,
     Pr = 1.0,
     Pm = 1.0,
-    Ra = 1.6e6,
+    Ra = 5.59e4,
     Le = 0.0,           # No magnetic field
     ricb = 0.35,
-    m = 9,
+    m = 4,
     lmax = 20,
     N = 24,
     B0_type = no_field,
@@ -296,7 +323,7 @@ result = solve(MHDProblem(params); nev = 10, which = :LR)  # insulating ⇒ ener
 eigenvalues = result.eigenvalues
 
 println("Growth rate: ", real(eigenvalues[1]), " (expect ≈ 0)")
-println("Frequency: ", imag(eigenvalues[1]), " (expect ≈ 0.37)")
+println("Frequency: ", imag(eigenvalues[1]), " (expect ≈ -0.0231)")
 ```
 
 ### Case 2: Magnetoconvection with Axial Field
@@ -326,7 +353,10 @@ for Le in Le_values
 end
 ```
 
-**Physical insight**: Increasing ``Le`` stabilizes convection due to magnetic tension.
+**Physical insight**: The effect of ``Le`` is not monotonic. In this scan the growth
+rate is essentially unchanged up to ``Le = 10^{-3}``, rises slightly at
+``Le = 10^{-2}``, and falls at ``Le = 0.1``: a field can relax the rotational
+constraint as well as add magnetic tension.
 
 ### Case 3: Ideal Perfect-Conductor Inner Boundary
 
@@ -343,10 +373,11 @@ params = MHDParams(
     bco_magnetic = 0,    # Insulating at CMB
 )
 
+# Low-level tau pencil; solve(MHDProblem(params)) uses the Galerkin assembly here.
 op = MHDStabilityOperator(params)
 A, B, interior_dofs, info = assemble_mhd_matrices(op)
 
-println("DOFs with perfect conductor BC: ", length(interior_dofs))
+println("Differential-equation rows with perfect conductor BC: ", length(interior_dofs))
 ```
 
 ## Troubleshooting
@@ -355,12 +386,11 @@ println("DOFs with perfect conductor BC: ", length(interior_dofs))
 
 ```julia
 # Relax tolerance and increase iterations
-eigenvalues, _, _ = solve_eigenvalue_problem(A_int, B_int;
-    nev = 30,
-    tol = 1e-4,
-    maxiter = 1000,
-)
+result = solve(MHDProblem(params); nev = 30, tol = 1e-4, maxiter = 1000)
 ```
+
+Passing `sigma` near the expected eigenvalue also helps shift-invert. For small
+problems, `backend = :dense` computes the whole spectrum as a cross-check.
 
 ### All Eigenvalues Negative (Stable)
 
@@ -386,19 +416,23 @@ Check:
 
 ### Matrix Size Estimates
 
-| lmax | N | Approx DOFs | Memory | Solve Time |
-|------|---|-------------|--------|------------|
-| 10 | 24 | ~600 | <0.1 GB | seconds |
-| 20 | 32 | ~2,000 | ~0.3 GB | ~10 sec |
-| 30 | 48 | ~5,000 | ~2 GB | ~1 min |
-| 50 | 64 | ~15,000 | ~20 GB | ~10 min |
+For `m = 2` with an imposed field, with the dense storage of two complex matrices
+reported by `estimate_size(MHDProblem(params))`:
+
+| lmax | N | DOFs (one parity) | DOFs (`symm = 0`) | Dense storage (one parity / both) |
+|------|---|-------------------|-------------------|-----------------------------------|
+| 10 | 24 | 575 | 1,125 | 0.01 / 0.04 GB |
+| 20 | 32 | 1,584 | 3,135 | 0.08 / 0.29 GB |
+| 30 | 48 | 3,577 | 7,105 | 0.38 / 1.5 GB |
+| 50 | 64 | 7,995 | 15,925 | 1.9 / 7.6 GB |
 
 ### Tips for Large Problems
 
 1. Start with low resolution for parameter exploration
-2. Use sparse matrix storage (default)
-3. Increase `nev` only as needed
-4. Monitor memory usage with `Base.summarysize(A)`
+2. Call `estimate_size(MHDProblem(params))` before solving; it also estimates the `N` needed for the magnetic boundary layers
+3. Use sparse matrix storage (default)
+4. Increase `nev` only as needed
+5. Monitor memory usage with `Base.summarysize(A)`
 
 ## Complete Example
 

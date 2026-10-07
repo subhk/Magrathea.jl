@@ -3,12 +3,6 @@
 !!! note "Eigensolver setup"
     Eigenvalue examples assume the [SLEPc setup](getting_started.md#SLEPc-setup), including loading the wrappers and calling `slepc_init!`.
 
-<div class="magrathea-hero">
-  <div class="magrathea-eyebrow">Help</div>
-  <h1>FAQ &amp; troubleshooting.</h1>
-  <p>Common questions and fixes for Magrathea.jl users.</p>
-</div>
-
 ## Installation
 
 ### Q: Julia complains about incompatible package versions
@@ -35,7 +29,7 @@ julia -e 'using Pkg; Pkg.activate("."); Pkg.instantiate()'
 
 **Possible causes:**
 - Network issues or proxy settings
-- Large dependencies (MKL, FFTW) downloading for the first time
+- Large optional packages (Makie, the PETSc/SLEPc wrappers) downloading and precompiling for the first time
 
 **Solutions:**
 1. Check your internet connection
@@ -81,7 +75,7 @@ using Magrathea
 
 1. **Provide a better initial guess:**
    ```julia
-   Ra_c, ω_c, _ = find_critical_rayleigh(..., Ra_guess=5e5)
+   Ra_c, ω_c, _ = find_critical_Ra(OnsetProblem(params); Ra_guess=5e5)
    ```
 
 2. **Reduce the number of eigenvalues:**
@@ -104,7 +98,9 @@ using Magrathea
 1. Verify all parameters match exactly (E, Pr, Ra, m, χ)
 2. Check boundary condition settings
 3. Ensure sufficient resolution (increase `lmax`, `Nr`)
-4. Compare against published tables (Christensen & Wicht 2015)
+4. Compare against the published onset values reproduced in
+   [Onset Convection](analysis/onset_convection.md), mapping literature
+   parameters with `E = Ek_d (1 - χ)^2` and `Ra = Ra_d`
 
 ---
 
@@ -226,7 +222,7 @@ using Magrathea
 4. **Start from working examples:**
    ```julia
    # Use conduction as baseline
-   bs_test = conduction_basic_state(cd, χ)
+   bs_test = conduction_basic_state(cd, χ, bs.lmax_bs)
    ```
 
 ---
@@ -261,7 +257,9 @@ end
 
 ### Q: MHD extension slows everything down
 
-**Explanation:** MHD doubles the number of variables (velocity + magnetic field).
+**Explanation:** An imposed field adds poloidal and toroidal magnetic unknowns to the
+velocity and temperature fields, and a finite conducting core or mantle adds
+solid-region unknowns.
 
 **Solutions:**
 
@@ -284,20 +282,23 @@ end
 
 **Quick reference:**
 
-| Value | Type | Physical Meaning |
-|-------|------|------------------|
-| 0 | Insulating | No currents outside (Earth's mantle) |
-| 1 | Conducting | Finite conductivity boundary |
-| 2 | Perfect conductor | Infinite conductivity (Earth's inner core) |
+| Value | Inner wall (`bci_magnetic`) | Outer wall (`bco_magnetic`) |
+|-------|-----------------------------|-----------------------------|
+| 0 | Insulating | Insulating (e.g. Earth's mantle) |
+| 1 | Conducting solid core with the fluid's magnetic diffusivity | Conducting mantle out to `mantle_radius > 1`, diffusivity scaled by `mantle_diffusivity_ratio`, insulating outside |
+| 2 | Perfect conductor | Perfect conductor |
 
 **Earth-like configuration:**
 ```julia
 params = MHDParams(
     ...,
-    bci_magnetic = 2,  # Perfect conductor at ICB
-    bco_magnetic = 0,  # Insulating at CMB
+    bci_magnetic = 1,  # Conducting inner core, same diffusivity as the fluid
+    bco_magnetic = 0,  # Insulating mantle
 )
 ```
+
+Insulating and perfectly conducting walls use the energy-conserving Galerkin
+solver; a finite conducting core or mantle (`1`) uses the tau solver.
 
 ---
 
@@ -312,13 +313,13 @@ params = MHDParams(
 
 **Validation approach:**
 ```julia
-# Reproduce known benchmark
+# Onset benchmark of Barik et al. (2023), Ek_d = 1e-3: marginal at m = 4
 params = MHDParams(
-    E = 4.734e-5, Pr = 1.0, Pm = 1.0,
-    Ra = 1.6e6, Le = 0.0,  # Hydrodynamic benchmark
-    ...
+    E = 4.225e-4, Pr = 1.0, Pm = 1.0,   # E = Ek_d (1 - ricb)^2
+    Ra = 5.59e4, Le = 0.0,               # Ra = R̃a / Ek_d, R̃a = 55.9
+    ricb = 0.35, m = 4, lmax = 20, N = 24,
 )
-# Compare against Christensen & Wicht (2015) Table 1
+# Expect growth rate ≈ 0 and frequency ≈ -0.0231 (test/published_benchmarks.jl)
 ```
 
 ---
@@ -351,8 +352,8 @@ params = MHDParams(
 **Steps:**
 
 1. Enable GitHub Pages in repository settings
-2. Choose "GitHub Actions" as source
-3. The `.github/workflows/docs.yml` in this repo uses Documenter's `deploydocs` — push to `main` triggers automatic deployment.
+2. Choose "Deploy from a branch" with the `gh-pages` branch as source
+3. The `.github/workflows/docs.yml` in this repo uses Documenter's `deploydocs`, which pushes the built site to `gh-pages` — push to `main` (or a tag) triggers automatic deployment.
 
 ---
 
@@ -362,35 +363,39 @@ params = MHDParams(
 
 ```julia
 # 1. Check matrix properties
-using LinearAlgebra, SparseArrays
+using LinearAlgebra
 
 op = LinearStabilityOperator(params)
-A, B = op.A, op.B
+A, B, interior_dofs, boundary_dofs = assemble_matrices(op)  # dense, boundary rows imposed
 
 println("A size: ", size(A))
-println("A nnz: ", nnz(A), " (", 100*nnz(A)/prod(size(A)), "% fill)")
+println("A fill: ", 100 * count(!iszero, A) / length(A), "%")
 println("A symmetric: ", issymmetric(A))
 
 # 2. Check for NaN/Inf
-@assert !any(isnan, A.nzval) "A contains NaN"
-@assert !any(isinf, A.nzval) "A contains Inf"
+@assert all(isfinite, A) "A contains NaN or Inf"
+@assert all(isfinite, B) "B contains NaN or Inf"
 
-# 3. Test with dense solver for small problems
+# 3. Test with the dense backend for small problems
 if size(A, 1) < 1000
-    λ_dense = eigen(Matrix(A), Matrix(B)).values
-    println("Dense eigenvalues: ", sort(λ_dense, by=real, rev=true)[1:5])
+    result = solve(OnsetProblem(params); backend=:dense, nev=5)
+    println("Dense eigenvalues: ", result.eigenvalues)
 end
 ```
+
+`backend=:dense` solves the same constrained pencil with LAPACK and needs no
+PETSc. Its cost grows with the cube of the matrix size, so it suits small
+validation problems; SLEPc remains the sparse solver.
 
 ### Performance Profiling
 
 ```julia
 using BenchmarkTools
 
-# Time matrix assembly
-@btime op = LinearStabilityOperator($params)
+# Time operator setup (radial grid and index maps)
+@btime LinearStabilityOperator($params)
 
-# Time eigenvalue solve
+# Time assembly and eigenvalue solve
 @btime solve_eigenvalue_problem($op; nev=4)
 
 # Profile memory

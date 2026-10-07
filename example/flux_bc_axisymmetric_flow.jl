@@ -1,425 +1,50 @@
 #!/usr/bin/env julia
-# =============================================================================
-#  Example: Mean Flow from Axisymmetric Heat Flux Boundary Conditions (Y₂₀)
-#
-#  This example demonstrates computing the basic state (temperature + thermal
-#  wind flow) driven by:
-#    - Inner boundary: uniform fixed temperature
-#    - Outer boundary: -Y₂₀ heat flux pattern (latitudinal cooling variation)
-#
-#  Axisymmetric forcing drives both zonal flow and viscous meridional circulation.
-#  The momentum solve is Stokes–Coriolis with both mechanical boundaries.
-#  The standard constructor used here neglects thermal advection and momentum
-#  inertia; basic_state_selfconsistent includes both (momentum_model=:stokes
-#  drops the inertia). Use mean_flow_velocity for physical vector fields.
-# =============================================================================
-
-push!(LOAD_PATH, joinpath(@__DIR__, ".."))
+# Axisymmetric heat-flux forcing: conduction plus Stokes–Coriolis flow.
+# E=1e-2, Ra=100 is a tractable demonstration with explicit resolution checks.
+# At the original E=1e-4, Ra=1e6, lmax=12→16 still changes the radial velocity
+# by about 51% in volume L2. MAGRATHEA_MEAN_FLOW_ORIGINAL=1 restores that case;
+# the bounded refinement study will fail clearly if it remains unresolved.
 
 using Magrathea
-using Printf
 using LinearAlgebra
+using Printf
+include(joinpath(@__DIR__, "mean_flow_resolution.jl"))
+using .MeanFlowExampleResolution
 
-# =============================================================================
-#  Physical Parameters
-# =============================================================================
-
-# Geometry
-χ = 0.35        # Radius ratio r_i/r_o (Earth's core: ~0.35)
-
-# Non-dimensional numbers
-E = 1e-4        # Ekman number (rotation dominance)
-Ra = 1e6        # Rayleigh number (buoyancy strength)
-Pr = 1.0        # Prandtl number (ν/κ)
-
-# Resolution
-Nr = 32         # Radial points
-lmax_bs = 8     # Maximum spherical harmonic degree for basic state
-
-# Flux amplitudes
-flux_mean = -1.0     # Y₀₀ part of the outer radial temperature gradient ∂T̄/∂r
-flux_Y20 = -0.2      # Y₂₀ amplitude at outer boundary (negative = polar cooling)
-
-println("=" ^ 70)
-println("  Mean Flow from Axisymmetric Heat Flux (Y₂₀) Boundary Conditions")
-println("=" ^ 70)
-println()
-println("Physical Parameters:")
-println("  Radius ratio χ = $χ")
-println("  Ekman number E = $E")
-println("  Rayleigh number Ra = $Ra")
-println("  Prandtl number Pr = $Pr")
-println()
-println("Boundary Conditions:")
-println("  Inner: fixed temperature (temperature reference)")
-println("  Outer: ∂T̄/∂r = Y₀₀ ($flux_mean) + Y₂₀ ($flux_Y20)")
-println()
-println("Y₂₀ pattern: Y₂₀ ∝ (3cos²θ - 1)/2")
-println("  → Enhanced cooling at poles (cos²θ = 1)")
-println("  → Reduced cooling at equator (cos²θ = 0)")
-println()
-println("Resolution: Nr = $Nr, lmax = $lmax_bs")
-println()
-
-# =============================================================================
-#  Setup Chebyshev Grid
-# =============================================================================
-
-cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
-r = cd.x
-r_i = χ
-r_o = 1.0
-
-println("Radial grid: r ∈ [$(round(minimum(r), digits=3)), $(round(maximum(r), digits=3))]")
-println()
-
-# =============================================================================
-#  Define Flux Boundary Condition using Symbolic Spherical Harmonics
-# =============================================================================
-
-# Construct the outer boundary flux pattern
-# Y00 carries the mean heat flux, Y20 adds the latitudinal variation
+BLAS.set_num_threads(1)
+original = original_parameters()
+E, Ra = original ? (1e-4, 1e6) : (1e-2, 100.0)
+Pr = 1.0; χ = 0.35
+radial_levels = original ? (32, 48, 64) : (16, 24, 32)
+angular_levels = (4, 8, 12, 16)
+flux_mean = -1.0
+flux_Y20 = -0.2
 outer_flux = Y00(flux_mean) + Y20(flux_Y20)
 
-println("Outer boundary flux pattern:")
-println("  $outer_flux")
-println()
+println("Axisymmetric flux-driven mean flow: E=$E, Ra=$Ra, Pr=$Pr, χ=$χ")
+println("Inner T=1; outer ∂T/∂r = $flux_mean + $flux_Y20 P₂(cosθ).")
+println("Flux means the increasing-radius temperature derivative. Both walls are no-slip.")
+println("Model: Laplace temperature plus steady viscous Stokes–Coriolis flow.")
+println("Thermal advection and momentum inertia are omitted; meridional circulation is retained.")
+original || println("Use MAGRATHEA_MEAN_FLOW_ORIGINAL=1 for the original parameters.")
 
-# =============================================================================
-#  Compute Basic State (Standard Solver: Conduction + Stokes–Coriolis Flow)
-# =============================================================================
-
-println("-" ^ 70)
-println("Computing basic state...")
-println("-" ^ 70)
-println()
-println("Note: basic_state solves conduction with the prescribed boundary flux and")
-println("      the viscous Stokes–Coriolis flow that temperature drives. It does not")
-println("      iterate thermal advection: axisymmetric forcing still drives meridional")
-println("      circulation (ū_r, ū_θ), so use basic_state_selfconsistent when that")
-println("      transport matters.")
-println()
-
-# Use the standard basic_state function (which detects axisymmetry)
-bs = basic_state(
-    cd, χ, E, Ra, Pr;
-    flux_bc = outer_flux,
-    mechanical_bc = :no_slip,
-    lmax_bs = lmax_bs
-)
-
-println("Basic state computed (thermal advection neglected).")
-
-# =============================================================================
-#  Analyze the Basic State
-# =============================================================================
-
-println()
-println("-" ^ 70)
-println("Basic State Analysis")
-println("-" ^ 70)
-
-# Determine if we got BasicState or BasicState3D
-is_3d = isa(bs, BasicState3D)
-
-if is_3d
-    # Temperature field analysis
-    println("\nTemperature coefficients T̄_ℓm(r):")
-    println("  Mode (ℓ,m)     max|T̄|        Location")
-    println("  " * "-"^50)
-
-    for m in 0:bs.mmax_bs
-        for ℓ in m:bs.lmax_bs
-            if haskey(bs.theta_coeffs, (ℓ, m))
-                T_lm = bs.theta_coeffs[(ℓ, m)]
-                T_max = maximum(abs.(T_lm))
-                if T_max > 1e-10
-                    idx_max = argmax(abs.(T_lm))
-                    r_max = r[idx_max]
-                    @printf("  (%d,%d)         %.4e      r = %.3f\n", ℓ, m, T_max, r_max)
-                end
-            end
-        end
-    end
-
-    # Zonal velocity (u_φ) analysis
-    println("\nZonal velocity coefficients ū_φ,ℓm(r):")
-    println("  Mode (ℓ,m)     max|ū_φ|       Location")
-    println("  " * "-"^50)
-
-    let has_uphi = false
-        for m in 0:bs.mmax_bs
-            for ℓ in m:bs.lmax_bs
-                if haskey(bs.uphi_coeffs, (ℓ, m))
-                    u_lm = bs.uphi_coeffs[(ℓ, m)]
-                    u_max = maximum(abs.(u_lm))
-                    if u_max > 1e-10
-                        has_uphi = true
-                        idx_max = argmax(abs.(u_lm))
-                        r_max = r[idx_max]
-                        @printf("  (%d,%d)         %.4e      r = %.3f\n", ℓ, m, u_max, r_max)
-                    end
-                end
-            end
-        end
-        if !has_uphi
-            println("  (No significant zonal flow)")
-        end
-    end
-
-    # Meridional velocity (u_θ) analysis
-    println("\nMeridional velocity coefficients ū_θ,ℓm(r):")
-    println("  Mode (ℓ,m)     max|ū_θ|       Location")
-    println("  " * "-"^50)
-
-    let has_meridional = false
-        for m in 0:bs.mmax_bs
-            for ℓ in m:bs.lmax_bs
-                if haskey(bs.utheta_coeffs, (ℓ, m))
-                    u_lm = bs.utheta_coeffs[(ℓ, m)]
-                    u_max = maximum(abs.(u_lm))
-                    if u_max > 1e-10
-                        has_meridional = true
-                        idx_max = argmax(abs.(u_lm))
-                        r_max = r[idx_max]
-                        @printf("  (%d,%d)         %.4e      r = %.3f\n", ℓ, m, u_max, r_max)
-                    end
-                end
-            end
-        end
-        if !has_meridional
-            println("  (No meridional component above the reporting threshold)")
-        end
-    end
-
-    # Radial velocity (u_r) analysis
-    println("\nRadial velocity coefficients ū_r,ℓm(r):")
-    println("  Mode (ℓ,m)     max|ū_r|       Location")
-    println("  " * "-"^50)
-
-    let has_radial = false
-        for m in 0:bs.mmax_bs
-            for ℓ in m:bs.lmax_bs
-                if haskey(bs.ur_coeffs, (ℓ, m))
-                    u_lm = bs.ur_coeffs[(ℓ, m)]
-                    u_max = maximum(abs.(u_lm))
-                    if u_max > 1e-10
-                        has_radial = true
-                        idx_max = argmax(abs.(u_lm))
-                        r_max = r[idx_max]
-                        @printf("  (%d,%d)         %.4e      r = %.3f\n", ℓ, m, u_max, r_max)
-                    end
-                end
-            end
-        end
-        if !has_radial
-            println("  (No significant radial flow)")
-        end
-    end
-
-else
-    # BasicState (axisymmetric) - uses coefficient dictionaries
-    println("\nTemperature coefficients T̄_ℓ₀(r):")
-    println("  Mode ℓ      max|T̄|        Location")
-    println("  " * "-"^40)
-
-    for ℓ in 0:bs.lmax_bs
-        if haskey(bs.theta_coeffs, ℓ)
-            T_l = bs.theta_coeffs[ℓ]
-            T_max = maximum(abs.(T_l))
-            if T_max > 1e-10
-                idx_max = argmax(abs.(T_l))
-                r_max = r[idx_max]
-                @printf("  %d          %.4e      r = %.3f\n", ℓ, T_max, r_max)
-            end
-        end
-    end
-
-    println("\nZonal velocity coefficients ū_φ,ℓ₀(r):")
-    println("  Mode ℓ      max|ū_φ|       Location")
-    println("  " * "-"^40)
-
-    let has_uphi = false
-        for ℓ in 0:bs.lmax_bs
-            if haskey(bs.uphi_coeffs, ℓ)
-                u_l = bs.uphi_coeffs[ℓ]
-                u_max = maximum(abs.(u_l))
-                if u_max > 1e-10
-                    has_uphi = true
-                    idx_max = argmax(abs.(u_l))
-                    r_max = r[idx_max]
-                    @printf("  %d          %.4e      r = %.3f\n", ℓ, u_max, r_max)
-                end
-            end
-        end
-        if !has_uphi
-            println("  (No significant zonal flow)")
-        end
-    end
-
-    println("\nMeridional flow:")
-    println("  max coefficient |u_θ| = ", maximum(maximum(abs,v) for v in values(bs.utheta_coeffs);init=0.0))
-    println("  max coefficient |u_r| = ", maximum(maximum(abs,v) for v in values(bs.ur_coeffs);init=0.0))
+result = refine_mean_flow(; radial_levels, angular_levels) do Nr, L
+    cd = ChebyshevDiffn(Nr, [χ, 1.0], 4)
+    basic_state(cd, χ, E, Ra, Pr; flux_bc=outer_flux,
+                mechanical_bc=:no_slip, lmax_bs=L)
 end
+bs = result.state
+Nr = result.Nr; lmax_bs = result.lmax
 
-# =============================================================================
-#  Physical Interpretation
-# =============================================================================
+actual_mean = bs.dtheta_dr_coeffs[0][end] / sqrt(4π)
+actual_Y20 = bs.dtheta_dr_coeffs[2][end] * sqrt(5 / (4π))
+@assert isapprox(actual_mean, flux_mean; atol=1e-12)
+@assert isapprox(actual_Y20, flux_Y20; atol=1e-12)
+@printf("Verified outer gradient: mean=%+.6f, P₂ amplitude=%+.6f\n",
+        actual_mean, actual_Y20)
+print_flow_profile(bs)
 
-println()
-println("-" ^ 70)
-println("Physical Interpretation")
-println("-" ^ 70)
-println()
-println("The Y₂₀ heat flux pattern at the outer boundary creates:")
-println()
-println("1. Temperature field:")
-println("   - Dominant Y₀₀ mode: mean radial temperature gradient")
-println("   - Y₂₀ mode: latitudinal temperature variation")
-println("   - Pattern: hotter at equator, cooler at poles (for negative Y₂₀)")
-println()
-println("2. Zonal flow (ū_φ) via thermal wind balance:")
-println("   - Thermal wind equation: 2Ω ∂ū_φ/∂z = (Ra E²/Pr)(1/r) ∂T̄/∂θ")
-println("   - Y₂₀ temperature has ∂/∂θ that gives ∝ sinθ cosθ")
-println("   - This drives Y₃₀ (and possibly Y₁₀) velocity modes")
-println("   - Creates prograde/retrograde jets at different latitudes")
-println()
-println("3. Meridional circulation:")
-println("   - For m=0 (axisymmetric): ∂T̄/∂φ = 0")
-println("   - Viscosity and both mechanical boundaries couple the velocity components")
-println("   - The viscous solution generally includes meridional circulation")
-println("   - Use the self-consistent thermal solver when heat advection matters")
-println()
-println("4. Comparison with Y₂₂ case:")
-println("   - Y₂₂ (m=2): Has ∂T̄/∂φ ≠ 0, drives meridional flow")
-println("   - Y₂₀ (m=0): Has ∂T̄/∂φ = 0 but can have viscous meridional circulation")
-println("   - Both drive zonal flow through ∂T̄/∂θ")
-println()
-
-# =============================================================================
-#  Radial Profiles
-# =============================================================================
-
-println("-" ^ 70)
-println("Radial Profiles")
-println("-" ^ 70)
-
-if is_3d
-    if haskey(bs.theta_coeffs, (2, 0))
-        T_20 = bs.theta_coeffs[(2, 0)]
-
-        # Find the zonal velocity mode (scalar projection has even degree for Y20 forcing)
-        u_40 = haskey(bs.uphi_coeffs, (4, 0)) ? bs.uphi_coeffs[(4, 0)] : zeros(Nr)
-        u_20 = haskey(bs.uphi_coeffs, (2, 0)) ? bs.uphi_coeffs[(2, 0)] : zeros(Nr)
-
-        println("\nY₂₀ temperature and resulting zonal velocity:")
-        println("  r          T̄₂₀(r)         ū_φ,₄₀(r)       ū_φ,₂₀(r)")
-        println("  " * "-"^60)
-
-        n_print = min(12, Nr)
-        print_step = max(1, Nr ÷ n_print)
-        for i in 1:print_step:Nr
-            @printf("  %.4f     %+.4e     %+.4e     %+.4e\n",
-                    r[i], T_20[i], u_40[i], u_20[i])
-        end
-    end
-else
-    # BasicState (axisymmetric) - integer keys
-    if haskey(bs.theta_coeffs, 2)
-        T_20 = bs.theta_coeffs[2]
-
-        # Find the zonal velocity modes
-        u_40 = haskey(bs.uphi_coeffs, 4) ? bs.uphi_coeffs[4] : zeros(Nr)
-        u_20 = haskey(bs.uphi_coeffs, 2) ? bs.uphi_coeffs[2] : zeros(Nr)
-
-        println("\nY₂₀ temperature and resulting zonal velocity:")
-        println("  r          T̄₂₀(r)         ū_φ,₄₀(r)       ū_φ,₂₀(r)")
-        println("  " * "-"^60)
-
-        n_print = min(12, Nr)
-        print_step = max(1, Nr ÷ n_print)
-        for i in 1:print_step:Nr
-            @printf("  %.4f     %+.4e     %+.4e     %+.4e\n",
-                    r[i], T_20[i], u_40[i], u_20[i])
-        end
-    end
-end
-
-# =============================================================================
-#  Estimate Characteristic Velocities
-# =============================================================================
-
-println()
-println("-" ^ 70)
-println("Characteristic Velocities")
-println("-" ^ 70)
-
-if is_3d
-    let u_phi_max = 0.0, u_theta_max = 0.0, u_r_max = 0.0
-        for (key, val) in bs.uphi_coeffs
-            u_phi_max = max(u_phi_max, maximum(abs.(val)))
-        end
-        for (key, val) in bs.utheta_coeffs
-            u_theta_max = max(u_theta_max, maximum(abs.(val)))
-        end
-        for (key, val) in bs.ur_coeffs
-            u_r_max = max(u_r_max, maximum(abs.(val)))
-        end
-
-        println()
-        @printf("  max|ū_φ|  = %.4e  (zonal flow)\n", u_phi_max)
-        @printf("  max|ū_θ|  = %.4e  (meridional flow)\n", u_theta_max)
-        @printf("  max|ū_r|  = %.4e  (radial flow)\n", u_r_max)
-
-        if u_theta_max < 1e-10 && u_r_max < 1e-10
-            println()
-            println("  ✓ Meridional coefficients are below the reporting threshold")
-        end
-
-        # Rossby number estimate
-        Ro = u_phi_max # outer-radius, rotation-time velocity units
-        @printf("\n  Rossby number Ro = U/(ΩL) ≈ %.4e\n", Ro)
-        @printf("  (Geostrophic balance valid for Ro << 1)\n")
-    end
-else
-    # BasicState uses integer keys
-    let u_phi_max = 0.0
-        for (ℓ, val) in bs.uphi_coeffs
-            u_phi_max = max(u_phi_max, maximum(abs.(val)))
-        end
-
-        println()
-        @printf("  max|ū_φ|  = %.4e  (zonal flow)\n", u_phi_max)
-        println("  max coefficient |ū_θ| = ", maximum(maximum(abs,v) for v in values(bs.utheta_coeffs);init=0.0))
-        println("  max coefficient |ū_r| = ", maximum(maximum(abs,v) for v in values(bs.ur_coeffs);init=0.0))
-
-        Ro = u_phi_max # outer-radius, rotation-time velocity units
-        @printf("\n  Rossby number Ro = U/(ΩL) ≈ %.4e\n", Ro)
-        @printf("  (Geostrophic balance valid for Ro << 1)\n")
-    end
-end
-
-# =============================================================================
-#  Summary: Y₂₀ vs Y₂₂ Comparison
-# =============================================================================
-
-println()
-println("-" ^ 70)
-println("Summary: Axisymmetric (Y₂₀) vs Non-Axisymmetric (Y₂₂)")
-println("-" ^ 70)
-println()
-println("┌────────────────────┬──────────────────────┬──────────────────────┐")
-println("│     Property       │        Y₂₀ (m=0)     │        Y₂₂ (m=2)     │")
-println("├────────────────────┼──────────────────────┼──────────────────────┤")
-println("│ Symmetry           │ Axisymmetric         │ Sectoral (4-fold)    │")
-println("│ ∂T̄/∂φ              │ = 0                  │ ≠ 0                  │")
-println("│ Advection ū·∇T̄     │ ≠ 0 (meridional ū)   │ ≠ 0 (needs iteration)│")
-println("│ Zonal flow ū_φ     │ Yes (thermal wind)   │ Yes (thermal wind)   │")
-println("│ Meridional u_θ,u_r │ Yes (viscous)        │ Yes (mode coupling)  │")
-println("│ Velocity modes     │ Y₁₀, Y₃₀ (from ∂/∂θ) │ Y₁₂-Y₈₂ (coupled)    │")
-println("└────────────────────┴──────────────────────┴──────────────────────┘")
-println()
-
-println("=" ^ 70)
-println("  Example completed successfully")
-println("=" ^ 70)
+println("Axisymmetric forcing produces zonal flow and viscous meridional circulation.")
+println("The three native velocity channels passed independent radial and angular checks.")
+println("Use basic_state_selfconsistent, with its own convergence study, when heat transport")
+println("or momentum inertia is important; the present checks concern the conduction/Stokes model.")

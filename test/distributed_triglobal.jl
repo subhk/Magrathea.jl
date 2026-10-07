@@ -2,13 +2,12 @@ using Test
 using SparseArrays
 using Magrathea
 
-# small coupled triglobal fixture (mirror test/triglobal.jl ~line 324-344)
+# Small coupled triglobal fixture with zero velocity at both stationary walls.
 function _p5_problem()
     E=1e-3; Pr=1.0; Ra=1e4; χ=0.35; Nr=12; lmax=4
     cd = ChebyshevDiffn(Nr, [χ, 1.0], 2)
-    uphi = Dict((1,1) => ones(Float64, Nr))
-    duphi_dr = Dict((1,1) => zeros(Float64, Nr))
-    # reproduce _basic_state_3d_with_modes from test/triglobal.jl:
+    uphi = Dict((1,1) => (cd.x .- χ) .* (1 .- cd.x))
+    duphi_dr = Dict((1,1) => cd.D1 * uphi[(1,1)])
     T = Float64
     bs3d = Magrathea.BasicState3D{T}(lmax_bs=1, mmax_bs=1, Nr=Nr, r=cd.x,
         theta_coeffs=Dict{Tuple{Int,Int},Vector{T}}(), dtheta_dr_coeffs=Dict{Tuple{Int,Int},Vector{T}}(),

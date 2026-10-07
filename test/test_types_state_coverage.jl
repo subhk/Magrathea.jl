@@ -12,8 +12,8 @@
 #  every assertion here is construction / structural / error-path only. NO
 #  eigensolver / solve() / SLEPc / PETSc / MPI is touched. Axisymmetric (m=0)
 #  paths are preferred; for m≠0 mean-flow coupling only structural facts
-#  (dims / eltype / no-throw / which matrix is written) are asserted — never
-#  coupling COEFFICIENT VALUES (those carry known bugs).
+#  (dims / eltype / no-throw / which matrix is written) are asserted here;
+#  coefficient values are validated in mean_flow_coupling.jl.
 # =============================================================================
 
 using Test
@@ -394,7 +394,7 @@ function _build_mneq0_bs_op(::Type{T}, m::Int) where {T<:Real}
     cd = Magrathea.ChebyshevDiffn(Nr, T[χ, one(T)], 4)
     r = cd.x
     theta = fill(T(0.1), Nr)
-    uphi = fill(T(0.2), Nr)
+    uphi = T(0.2) .* (r .- χ) .* (one(T) .- r)
     z = zeros(T, Nr)
     bs = Magrathea.BasicState{T}(
         lmax_bs = 2,

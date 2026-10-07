@@ -20,15 +20,21 @@
 #  Used by the steady vector-potential mean-flow solve and thermal transport.
 # =============================================================================
 
-"""Quadrature grid + precomputed associated-Legendre / normalization tables."""
+"""Quadrature grid with fully normalized associated-Legendre tables."""
 struct SHGrid{T<:Real}
     lmax::Int
     mmax::Int
     μ::Vector{T}              # Gauss-Legendre nodes (cosθ)
     w::Vector{T}              # Gauss-Legendre weights
     φ::Vector{T}              # equispaced azimuthal nodes
-    P::Dict{Int,Matrix{T}}    # |m| → P_ℓ|m| table (|m| up to mmax+1 for dθ)
-    N::Dict{Int,Vector{T}}    # |m| → N_ℓ|m|
+    Q::Dict{Int,Matrix{T}}    # |m| → N_ℓ|m| P_ℓ|m| (up to mmax+1 for dθ)
+end
+
+function SHGrid{T}(lmax::Int, mmax::Int, μ::Vector{T}, w::Vector{T},
+                   φ::Vector{T}) where {T<:Real}
+    Q = Dict(a => _normalized_legendre_table(a, lmax, μ)
+             for a in 0:min(mmax + 1, lmax))
+    return SHGrid{T}(lmax, mmax, μ, w, φ, Q)
 end
 
 # `sh_grid` is a pure function of (lmax, mmax, T) and its result is read-only, so
@@ -48,13 +54,15 @@ end
 function _build_sh_grid(lmax::Int, mmax::Int, ::Type{T}) where {T<:Real}
     Nθ = 3 * lmax + 6                      # oversampled for product dealiasing
     Nφ = max(3 * mmax + 4, 6)              # ≥ product (2mmax) + test (mmax) azimuthal degree
-    μ64, w64 = _gauss_legendre_nodes(Nθ)
-    μ = T.(μ64); w = T.(w64)
+    # Types wider than Float64 need nodes computed in T to keep their precision.
+    μ, w = if eps(T) < eps(Float64)
+        _resolution_gauss(Nθ, T)
+    else
+        μ64, w64 = _gauss_legendre_nodes(Nθ)
+        T.(μ64), T.(w64)
+    end
     φ = T[2 * T(π) * (k - 1) / Nφ for k in 1:Nφ]
-    amax = min(mmax + 1, lmax)
-    P = Dict{Int,Matrix{T}}(am => _associated_legendre_table(am, lmax, μ) for am in 0:amax)
-    N = Dict{Int,Vector{T}}(am => _normalization_table(T, am, lmax) for am in 0:mmax)
-    SHGrid{T}(lmax, mmax, μ, w, φ, P, N)
+    SHGrid{T}(lmax, mmax, μ, w, φ)
 end
 
 _sh_sinθ(g::SHGrid{T}, j::Int) where {T} = sqrt(one(T) - g.μ[j]^2)
@@ -76,35 +84,36 @@ end
 function _sh_Y(g::SHGrid{T}, ℓ::Int, m::Int, j::Int, k::Int) where {T}
     am = abs(m)
     (ℓ < am || ℓ > g.lmax || am > g.mmax) && return zero(T)
-    g.N[am][ℓ - am + 1] * g.P[am][ℓ - am + 1, j] * _sh_φfac(g, m, k)
+    g.Q[am][ℓ - am + 1, j] * _sh_φfac(g, m, k)
 end
 
-# pole-safe dP̃_ℓ^am/dθ = ½[P̃^{am+1} - (ℓ+am)(ℓ-am+1) P̃^{am-1}]  (Condon-Shortley)
-function _sh_dPdθ(g::SHGrid{T}, ℓ::Int, am::Int, j::Int) where {T}
+# Pole-safe ladder relation for fully normalized associated Legendre functions.
+function _sh_dQdθ(g::SHGrid{T}, ℓ::Int, am::Int, j::Int) where {T}
     ℓ == 0 && return zero(T)
-    Pp = (am + 1 <= ℓ && haskey(g.P, am + 1)) ? g.P[am + 1][ℓ - (am + 1) + 1, j] : zero(T)
-    Pm = am == 0 ? -g.P[1][ℓ - 1 + 1, j] / (ℓ * (ℓ + 1)) : g.P[am - 1][ℓ - (am - 1) + 1, j]
-    T(0.5) * (Pp - T((ℓ + am) * (ℓ - am + 1)) * Pm)
+    am == 0 && return sqrt(T(ℓ) * T(ℓ + 1)) * g.Q[1][ℓ, j]
+    qp = am < ℓ ? sqrt(T(ℓ - am) * T(ℓ + am + 1)) * g.Q[am + 1][ℓ - am, j] : zero(T)
+    qm = sqrt(T(ℓ + am) * T(ℓ - am + 1)) * g.Q[am - 1][ℓ - am + 2, j]
+    return (qp - qm) / T(2)
 end
 
 """∂θ Ȳ_ℓm at grid node (j,k)."""
 function _sh_dYθ(g::SHGrid{T}, ℓ::Int, m::Int, j::Int, k::Int) where {T}
     am = abs(m)
     (ℓ < am || ℓ > g.lmax || am > g.mmax) && return zero(T)
-    g.N[am][ℓ - am + 1] * _sh_dPdθ(g, ℓ, am, j) * _sh_φfac(g, m, k)
+    _sh_dQdθ(g, ℓ, am, j) * _sh_φfac(g, m, k)
 end
 
 """(1/sinθ) ∂φ Ȳ_ℓm — pole-safe (P_ℓ^m ∝ sin^m so /sinθ is clean at interior nodes)."""
 function _sh_dYφ_over_sin(g::SHGrid{T}, ℓ::Int, m::Int, j::Int, k::Int) where {T}
     am = abs(m)
     (ℓ < am || am == 0 || ℓ > g.lmax || am > g.mmax) && return zero(T)
-    g.N[am][ℓ - am + 1] * _sh_P_over_sin(g,ℓ,am,j) * _sh_dφfac(g, m, k)
+    _sh_Q_over_sin(g,ℓ,am,j) * _sh_dφfac(g, m, k)
 end
 
-function _sh_P_over_sin(g::SHGrid{T},l,am,j) where T
+function _sh_Q_over_sin(g::SHGrid{T},l,am,j) where T
     s=_sh_sinθ(g,j)
-    s>0 && return g.P[am][l-am+1,j]/s
-    am==1 ? -g.μ[j]^(l+1)*T(l*(l+1))/2 : zero(T)
+    s>0 && return g.Q[am][l-am+1,j]/s
+    am==1 ? -g.μ[j]^(l+1)*sqrt(T(2l+1)*T(l)*T(l+1)/(T(16)*T(π))) : zero(T)
 end
 
 """
@@ -164,16 +173,16 @@ function sh_synthesize!(f::AbstractMatrix{T}, coeffs::AbstractDict{Tuple{Int,Int
         am = abs(m)
         (am > g.mmax || ℓ > g.lmax || ℓ < am) && continue
         kind == 3 && am == 0 && continue          # (1/sinθ)∂φ Ȳ_ℓ0 ≡ 0
-        Nam = g.N[am]; Pam = g.P[am]
-        c = a * Nam[ℓ - am + 1]; row = ℓ - am + 1
+        Qam = g.Q[am]
+        c = a; row = ℓ - am + 1
         mi = m + g.mmax + 1
         mused[mi] = true
         if kind == 3
-            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * _sh_P_over_sin(g,ℓ,am,j); end
+            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * _sh_Q_over_sin(g,ℓ,am,j); end
         elseif kind == 2
-            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * _sh_dPdθ(g, ℓ, am, j); end
+            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * _sh_dQdθ(g, ℓ, am, j); end
         else  # kind == 1
-            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * Pam[row, j]; end
+            @inbounds for j in 1:Nθ; Gθ[j, mi] += c * Qam[row, j]; end
         end
     end
     φf = Vector{T}(undef, Nφ)
@@ -209,7 +218,7 @@ function sh_analyze!(coeffs::AbstractDict{Tuple{Int,Int},T}, f::AbstractMatrix{T
     Fφ = Vector{T}(undef, Nθ)
     for m in -g.mmax:g.mmax
         am = abs(m)
-        Nam = g.N[am]; Pam = g.P[am]
+        Qam = g.Q[am]
         @inbounds for k in 1:Nφ; φf[k] = _sh_φfac(g, m, k); end
         @inbounds for j in 1:Nθ
             s = zero(T)
@@ -217,10 +226,10 @@ function sh_analyze!(coeffs::AbstractDict{Tuple{Int,Int},T}, f::AbstractMatrix{T
             Fφ[j] = s * g.w[j] * dφ
         end
         for ℓ in am:g.lmax
-            Nlm = Nam[ℓ - am + 1]; row = ℓ - am + 1
+            row = ℓ - am + 1
             acc = zero(T)
-            @inbounds for j in 1:Nθ; acc += Pam[row, j] * Fφ[j]; end
-            coeffs[(ℓ, m)] = Nlm * acc
+            @inbounds for j in 1:Nθ; acc += Qam[row, j] * Fφ[j]; end
+            coeffs[(ℓ, m)] = acc
         end
     end
     coeffs
@@ -250,7 +259,7 @@ function sh_horizontal_divergence!(div::AbstractDict{Tuple{Int,Int},T},
     Aφ = Vector{T}(undef, Nθ); Bφ = Vector{T}(undef, Nθ)
     for m in -g.mmax:g.mmax
         am = abs(m)
-        Nam = g.N[am]; Pam = g.P[am]
+        Qam = g.Q[am]
         @inbounds for k in 1:Nφ
             φf[k] = _sh_φfac(g, m, k); dφf[k] = _sh_dφfac(g, m, k)
         end
@@ -265,19 +274,18 @@ function sh_horizontal_divergence!(div::AbstractDict{Tuple{Int,Int},T},
             Bφ[j] = b * wdφ
         end
         for ℓ in max(1, am):g.lmax
-            Nlm = Nam[ℓ - am + 1]; row = ℓ - am + 1
+            row = ℓ - am + 1
             acc = zero(T)
             if am == 0   # (1/sinθ)∂φ Ȳ_ℓ0 ≡ 0: only the θ-component projects
                 @inbounds for j in 1:Nθ
-                    acc += _sh_dPdθ(g, ℓ, am, j) * Aφ[j]
+                    acc += _sh_dQdθ(g, ℓ, am, j) * Aφ[j]
                 end
             else
                 @inbounds for j in 1:Nθ
-                    acc += _sh_dPdθ(g, ℓ, am, j) * Aφ[j] +
-                           (Pam[row, j] / _sh_sinθ(g, j)) * Bφ[j]
+                    acc += _sh_dQdθ(g, ℓ, am, j) * Aφ[j] +
+                           (Qam[row, j] / _sh_sinθ(g, j)) * Bφ[j]
                 end
             end
-            acc *= Nlm
             s_ℓm = acc / sqrt(T(ℓ * (ℓ + 1)))          # spheroidal coefficient
             div[(ℓ, m)] = -sqrt(T(ℓ * (ℓ + 1))) * s_ℓm  # = -ℓ(ℓ+1)/√(ℓ(ℓ+1)) · s
         end
@@ -329,11 +337,12 @@ Since ‖Y^{no-factorial}_ℓm‖² = (ℓ+|m|)!/(ℓ-|m|)!, a coefficient trans
 function _sh_nf_to_orth_factor(ℓ::Int, m::Int, ::Type{T}) where {T<:Real}
     am = abs(m)
     am == 0 && return one(T)
-    ratio = one(T)                       # ∏_{k=ℓ-am+1}^{ℓ+am} k = (ℓ+am)!/(ℓ-am)!
+    factor = one(T)
     for k in (ℓ - am + 1):(ℓ + am)
-        ratio *= T(k)
+        # Avoid overflowing the factorial ratio before taking its square root.
+        factor *= sqrt(T(k))
     end
-    return sqrt(ratio)
+    return factor
 end
 
 """Rescale a coeff dict from no-factorial → orthonormal (`dir=+1`) or back (`dir=-1`)."""

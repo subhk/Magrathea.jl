@@ -9,10 +9,16 @@ module Magrathea
     using WignerSymbols
     using SpecialFunctions
 
+    # Extend CommonSolve's `solve` so the export composes with SciML packages
+    # instead of clashing with their `solve`.
+    import CommonSolve: solve
+
     # ---- Organized source files ----
 
     # 1. Spectral methods (ChebyshevDiffn, ultraspherical operators)
     include("Spectral/Spectral.jl")
+    # Imposed-field type and magnetic options, used by basic states and stability.
+    include("Stability/magnetic.jl")
 
     # 2. Basic states (needs ChebyshevDiffn from Spectral)
     include("BasicStates/BasicStates.jl")
@@ -56,6 +62,8 @@ module Magrathea
         nonaxisymmetric_basic_state,
         basic_state,
         mean_flow_velocity,
+        mean_temperature,
+        mean_flow_resolution,
 
         # Self-consistent basic state (with advection)
         nonaxisymmetric_basic_state_selfconsistent,
@@ -140,6 +148,7 @@ module Magrathea
         BackgroundField,
         no_field, axial, dipole,
         assemble_mhd_matrices,
+        magnetic_boundary_residuals,
 
         # =================================================================
         # v2.0 API types and functions

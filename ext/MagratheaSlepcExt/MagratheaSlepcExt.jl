@@ -91,7 +91,7 @@ runs) comes from the option string set in `slepc_init!`. Returns the Magrathea c
 """
 function _slepc_solve(A::SparseMatrixCSC, B::SparseMatrixCSC;
                       nev::Int, sigma, which::Symbol, selection::Symbol,
-                      tol::Real, maxiter::Int, verbosity::Int=0)
+                      tol::Real, maxiter::Int, krylovdim=nothing, verbosity::Int=0)
     _INITIALIZED[] || error("call Magrathea.slepc_init!() once before a :slepc solve")
     PetscScalar <: Real &&
         error("PETSc/SLEPc must be built with complex scalars (--with-scalar-type=complex)")
@@ -103,7 +103,7 @@ function _slepc_solve(A::SparseMatrixCSC, B::SparseMatrixCSC;
 
     return _eps_solve_and_gather(Amat, Bmat, n; nev=nev, sigma=sigma, which=which,
                                  selection=selection, tol=tol, maxiter=maxiter,
-                                 verbosity=verbosity)
+                                 krylovdim=krylovdim, verbosity=verbosity)
 end
 
 """
@@ -121,7 +121,8 @@ still override it; `info["strategy"]` reports the transform actually used.
 """
 function _eps_solve_and_gather(Amat, Bmat, n::Int;
                               nev::Int, sigma, which::Symbol, selection::Symbol,
-                              tol::Real, maxiter::Int, verbosity::Int=0)
+                              tol::Real, maxiter::Int, krylovdim=nothing,
+                              verbosity::Int=0)
     target = sigma === nothing ?
         (which === :LR ? ComplexF64(10, 0) :
          which === :LI ? ComplexF64(0, 10) : ComplexF64(1, 0)) :
@@ -131,7 +132,7 @@ function _eps_solve_and_gather(Amat, Bmat, n::Int;
     vr = vi = nothing
     try
         EPSSetOperators(eps, Amat, Bmat)
-        _eps_set_dimensions(eps, nev)
+        _eps_set_dimensions(eps, nev, krylovdim)
         EPSSetTarget(eps, PetscScalar(target))
         EPSSetWhichEigenpairs(eps, EPS_TARGET_MAGNITUDE)
         _eps_set_tolerances(eps, tol, maxiter)

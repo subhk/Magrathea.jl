@@ -10,6 +10,8 @@
 #  - f: poloidal magnetic field perturbation
 #  - g: toroidal magnetic field perturbation
 #  - h: temperature perturbation
+#  Optional stationary conductors append [fi, gi] in the core and [fm, gm]
+#  in the mantle, with interface conditions coupling them to the fluid.
 #
 # =============================================================================
 
@@ -190,7 +192,7 @@ end
 
 """Row layout of the MHD tau matrix as a Phase-1 index_map: keys `(ℓ, section)` for
 sections `:u,:v,:f,:g,:h` in order, followed by `:fi,:gi` for a conducting
-core, each a contiguous `(N+1)`-row range."""
+core and `:fm,:gm` for a conducting mantle, each a contiguous `(N+1)`-row range."""
 function _mhd_index_map(op::MHDStabilityOperator)
     n_per_mode = op.params.N + 1
     im = Dict{Tuple{Int,Symbol}, UnitRange{Int}}()
@@ -198,6 +200,9 @@ function _mhd_index_map(op::MHDStabilityOperator)
     sections = [(:u, op.ll_u), (:v, op.ll_v), (:f, op.ll_f), (:g, op.ll_g), (:h, op.ll_h)]
     if op.params.bci_magnetic == 1
         append!(sections, [(:fi, op.ll_f), (:gi, op.ll_g)])
+    end
+    if op.params.bco_magnetic == 1
+        append!(sections, [(:fm, op.ll_f), (:gm, op.ll_g)])
     end
     for (sec, ls) in sections
         for l in ls
@@ -243,12 +248,15 @@ pencil; deleting the tau rows and corresponding columns destroys the BCs.
 
 # Matrix Structure
 
-The matrix is organized in 5 sections:
+The fluid matrix is organized in 5 sections:
 1. Section u (poloidal velocity): 2curl Navier-Stokes with Lorentz force
 2. Section v (toroidal velocity): 1curl Navier-Stokes with Lorentz force
 3. Section f (poloidal B field): no-curl induction equation
 4. Section g (toroidal B field): 1curl induction equation
 5. Section h (temperature): heat equation with advection
+
+Finite conducting regions append magnetic diffusion sections: `fi, gi` in the
+core and `fm, gm` in the mantle, each coupled through physical interface conditions.
 
 # Couplings
 
@@ -259,7 +267,46 @@ Magnetic → Magnetic: Magnetic diffusion
 Velocity → Temperature: Thermal advection
 Temperature → Velocity: Buoyancy
 """
-function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing) where {T}
+function _assemble_mhd_coo(op::MHDStabilityOperator{T};
+                           owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing) where {T}
+    # Radial products, such as the dipole's r⁶ weights, raise the polynomial degree,
+    # and row k of the C⁴/C² projection needs coefficients k … k + 8. Assemble at
+    # N + 8 and keep the first N + 1 rows and columns of every block, so no product is
+    # truncated before its projection. Tau rows replace the top rows afterwards.
+    N = op.params.N
+    padded = _mhd_operator_at_degree(op, N + 8)
+    keep = zeros(Int, padded.matrix_size)        # padded index -> index (0: dropped)
+    position = zeros(Int, op.matrix_size)        # index -> padded index
+    pmap = _mhd_index_map(padded)
+    for (key, range) in _mhd_index_map(op)
+        keep[first(pmap[key]) .+ (0:N)] = range
+        position[range] = first(pmap[key]) .+ (0:N)
+    end
+    # Block order is preserved, so owned rows map into one contiguous padded range.
+    owned_padded = owned_julia_rows === nothing ? nothing :
+        isempty(owned_julia_rows) ? (1:0) :
+        position[first(owned_julia_rows)]:position[last(owned_julia_rows)]
+    c = _assemble_mhd_coo_unpadded(padded; owned_julia_rows=owned_padded)
+    A = _keep_coo_entries(c.A_rows, c.A_cols, c.A_vals, keep)
+    B = _keep_coo_entries(c.B_rows, c.B_cols, c.B_vals, keep)
+    return (A_rows=A[1], A_cols=A[2], A_vals=A[3], B_rows=B[1], B_cols=B[2], B_vals=B[3],
+            n=op.matrix_size, interior_dofs=Int[], info=Dict{String,Any}())
+end
+
+"""Map COO triplets through `keep` (old index → new index), dropping entries mapped to 0."""
+function _keep_coo_entries(rows, cols, vals, keep)
+    R = Int[]; C = Int[]; V = similar(vals, 0)
+    @inbounds for k in eachindex(vals)
+        r = keep[rows[k]]; c = keep[cols[k]]
+        r == 0 || c == 0 || (push!(R, r); push!(C, c); push!(V, vals[k]))
+    end
+    return R, C, V
+end
+
+# Operator triplets at the operator's own degree; `_assemble_mhd_coo` calls this on a
+# padded operator.
+function _assemble_mhd_coo_unpadded(op::MHDStabilityOperator{T};
+                                    owned_julia_rows::Union{Nothing,UnitRange{Int}}=nothing) where {T}
     params = op.params
     E = params.E
     Pr = params.Pr
@@ -287,7 +334,7 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
     nb_f > 0 && push!(section_info, "f($nb_f)")
     nb_g > 0 && push!(section_info, "g($nb_g)")
     nb_h > 0 && push!(section_info, "h($nb_h)")
-    @info "Assembling MHD sparse matrices" size="$n × $n" sections=join(section_info, ", ")
+    @debug "Assembling MHD sparse matrices" size="$n × $n" sections=join(section_info, ", ")
 
     # Use COO format for efficient assembly. Keep value storage tied to the
     # parameter precision; Coriolis terms still introduce complex values.
@@ -620,6 +667,18 @@ function _assemble_mhd_coo(op::MHDStabilityOperator{T}; owned_julia_rows::Union{
             add_block!(B_rows, B_cols, B_vals, mass, base, base)
         end
     end
+    # The mantle has plain Chebyshev potentials on [1, mantle_radius]. Its
+    # weighted diffusion/mass operators already have C² residual coefficients;
+    # add_block! only converts the fluid rows, leaving these unchanged.
+    if params.bco_magnetic == 1
+        imap = _mhd_index_map(op)
+        for (sec, ls) in ((:fm, op.ll_f), (:gm, op.ll_g)), l in ls
+            base = first(imap[(l, sec)]) - 1
+            diffusion, mass = _mhd_mantle_operators(op, l)
+            add_block!(A_rows, A_cols, A_vals, diffusion, base, base)
+            add_block!(B_rows, B_cols, B_vals, mass, base, base)
+        end
+    end
 
     return (A_rows=A_rows, A_cols=A_cols, A_vals=A_vals,
             B_rows=B_rows, B_cols=B_cols, B_vals=B_vals,
@@ -644,7 +703,7 @@ function assemble_mhd_matrices(op::MHDStabilityOperator{T}) where {T}
     # =========================================================================
     # Apply boundary conditions at the COO stage, then build CSC once
     # =========================================================================
-    # Tau BCs overwrite whole boundary rows across u/v/f/g/h. Applying them on the
+    # Tau BCs overwrite whole boundary rows across the fluid and solid sections. Applying them on the
     # assembled CSC forces O(nnz) structural insertions per row; instead drop the
     # operator entries on the boundary rows and append the BC functionals to the
     # triplets, so the single sparse() build carries the BCs with no churn.
@@ -664,7 +723,7 @@ function assemble_mhd_matrices(op::MHDStabilityOperator{T}) where {T}
 
     # Identify interior DOFs
     interior_dofs = setdiff(1:n, sort!(collect(bc_rows)))
-    @info "MHD assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
+    @debug "MHD assembly complete" interior_dofs=length(interior_dofs) total_dofs=n
 
     section_labels = String[]
     nb_u > 0 && push!(section_labels, "u")
@@ -673,6 +732,7 @@ function assemble_mhd_matrices(op::MHDStabilityOperator{T}) where {T}
     nb_g > 0 && push!(section_labels, "g")
     nb_h > 0 && push!(section_labels, "h")
     params.bci_magnetic == 1 && nb_f + nb_g > 0 && push!(section_labels, "fi, gi")
+    params.bco_magnetic == 1 && nb_f + nb_g > 0 && push!(section_labels, "fm, gm")
 
     info = Dict(
         "method" => "MHD sparse ultraspherical",

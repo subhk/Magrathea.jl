@@ -54,6 +54,25 @@ which can become very large. Use sparse methods and Krylov subspace solvers.
     mechanical_bc::Symbol = :no_slip
     thermal_bc::ThermalBC = :fixed_temperature
     equatorial_symmetry::Symbol = :both
+    Pm::T = one(E)
+    Le::T = zero(E)
+    B0_type::BackgroundField = no_field
+    magnetic_bc::MagneticBC = :insulating
+end
+
+# Convert numeric inputs, such as an integer Ra, to the basic state's float type.
+# Every position is at least as broad as the generated constructor's, so that one
+# keeps handling matching types without an ambiguity.
+function TriglobalParams(E::Real, Pr::Real, Ra::Real, χ::Real, m_range, lmax, Nr,
+                         basic_state_3d::BasicState3D{T},
+                         mechanical_bc, thermal_bc, equatorial_symmetry,
+                         Pm::Real=1, Le::Real=0, B0_type=no_field,
+                         magnetic_bc=:insulating) where T
+    _check_magnetic_options(Pm, Le, B0_type, magnetic_bc, mechanical_bc)
+    _check_basic_state_magnetic(Pm, Le, B0_type, magnetic_bc, basic_state_3d)
+    return TriglobalParams{T}(T(E), T(Pr), T(Ra), T(χ), m_range, lmax, Nr,
+                              basic_state_3d, mechanical_bc, thermal_bc,
+                              equatorial_symmetry, T(Pm), T(Le), B0_type, magnetic_bc)
 end
 
 """Validate that every requested azimuthal mode can be represented at `lmax`."""
@@ -96,8 +115,10 @@ end
 function _triglobal_reduced_block_size(params::TriglobalParams, m::Int)
     nP, nT, nΘ = _triglobal_mode_l_counts(m, params.lmax, params.equatorial_symmetry)
     toroidal_ls = _l_sets(abs(m), params.lmax, params.equatorial_symmetry)[:T]
-    gauge = _angular_momentum_gauge(params.mechanical_bc, m, toroidal_ls)
-    return nP * (params.Nr - 4) + nT * (params.Nr - 2) + nΘ * (params.Nr - 2) - gauge
+    gauge = _angular_momentum_gauge(params.mechanical_bc, m, toroidal_ls;
+                                    _gauge_magnetic(params)...)
+    magnetic = _has_magnetic(params) ? (nT + nP) * (params.Nr - 2) : 0
+    return nP * (params.Nr - 4) + nT * (params.Nr - 2) + nΘ * (params.Nr - 2) + magnetic - gauge
 end
 
 
@@ -255,6 +276,13 @@ Returns a CoupledModeProblem structure.
 function setup_coupled_mode_problem(params::TriglobalParams{T}) where T
     _validate_triglobal_m_range(params.m_range, params.lmax)
     _validate_triglobal_symmetry(params.equatorial_symmetry)
+    # Check all azimuthal modes before projecting the state onto m=0 for the
+    # diagonal blocks. The native radial grid may differ from the perturbations',
+    # but it must span the same shell.
+    _check_shell_domain(params.basic_state_3d.r, params.χ)
+    _check_basic_state_truncation(params.basic_state_3d)
+    _check_basic_state_thermal_bc(params.thermal_bc, params.basic_state_3d)
+    _check_basic_state_mechanical_bc(params.mechanical_bc, params.basic_state_3d)
     if params.equatorial_symmetry !== :both &&
        !_basic_state_equatorially_symmetric(params.basic_state_3d)
         throw(ArgumentError(
@@ -340,7 +368,8 @@ function _single_mode_operator_abs(problem::CoupledModeProblem{T}, m_abs::Int) w
         mechanical_bc = params_tri.mechanical_bc,
         thermal_bc = params_tri.thermal_bc,
         equatorial_symmetry = params_tri.equatorial_symmetry,
-        basic_state = basic_state_axis
+        basic_state = basic_state_axis;
+        _magnetic_kwargs(params_tri)...
     )
 
     # Create operator and assemble matrices
@@ -713,20 +742,42 @@ Returns:
 - `Ra_c` - Critical Rayleigh number
 - `σ_c` - Growth rate at Ra_c (should be ≈ 0)
 - `ω_c` - Drift frequency at Ra_c
+
+[`find_critical_Ra`](@ref) on a `TriglobalProblem` runs the same search and
+returns `(Ra_c, ω_c, eigenvector_c)` like the other problem types.
 """
 function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
-                                          basic_state_3d;
-                                          Ra_min=1e5, Ra_max=1e8,
-                                          tol=1e-4, max_iter=20,
-                                          mechanical_bc=:no_slip,
-                                          thermal_bc=:fixed_temperature,
-                                          equatorial_symmetry=:both,
-                                          verbose=true,
-                                          nev::Int=6,
-                                          sigma=nothing,
-                                          which::Symbol=:LR,
-                                          backend::Symbol=:slepc)
+                                          basic_state_3d; kwargs...)
+    Ra_c, σ_c, ω_c, _ = _find_critical_triglobal(E, Pr, χ, m_range, lmax, Nr,
+                                                 basic_state_3d; kwargs...)
+    return Ra_c, σ_c, ω_c
+end
+
+_leading_eigenvector(vecs) = size(vecs, 2) == 0 ? eltype(vecs)[] : vecs[:, 1]
+
+# Bisection behind `find_critical_rayleigh_triglobal`. It also returns the leading
+# eigenvector at the reported Ra (empty on non-root MPI ranks).
+function _find_critical_triglobal(E, Pr, χ, m_range, lmax, Nr,
+                                  basic_state_3d;
+                                  Ra_min=1e5, Ra_max=1e8,
+                                  tol=1e-4, max_iter=20,
+                                  mechanical_bc=:no_slip,
+                                  thermal_bc=:fixed_temperature,
+                                  equatorial_symmetry=:both,
+                                  verbose=true,
+                                  nev::Int=6,
+                                  sigma=nothing,
+                                  which::Symbol=:LR,
+                                  backend::Symbol=:slepc,
+                                  Pm::Real=1, Le::Real=0,
+                                  B0_type::BackgroundField=no_field,
+                                  magnetic_bc=:insulating)
     _check_backend(backend)
+    # TriglobalParams shares the basic state's float type, so integer bounds and
+    # other scalar types are converted to it here.
+    T = eltype(basic_state_3d.r)
+    E, Pr, χ, Ra_min, Ra_max = T(E), T(Pr), T(χ), T(Ra_min), T(Ra_max)
+    magnetic = (Pm=T(Pm), Le=T(Le), B0_type=B0_type, magnetic_bc=magnetic_bc)
     solve_kw = (; nev=nev, σ_target=sigma, which=which, backend=backend, verbose=false)
     if verbose
         println("="^70)
@@ -756,18 +807,18 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
         E=E, Pr=Pr, Ra=Ra_low, χ=χ, m_range=m_range, lmax=lmax, Nr=Nr,
         basic_state_3d=basic_state_3d,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
-        equatorial_symmetry=equatorial_symmetry
+        equatorial_symmetry=equatorial_symmetry; magnetic...
     )
-    vals_low, _ = solve_triglobal_eigenvalue_problem(params_low; solve_kw...)
+    vals_low, vecs_low = solve_triglobal_eigenvalue_problem(params_low; solve_kw...)
     σ_low = real(vals_low[1])
 
     params_high = TriglobalParams(
         E=E, Pr=Pr, Ra=Ra_high, χ=χ, m_range=m_range, lmax=lmax, Nr=Nr,
         basic_state_3d=basic_state_3d,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
-        equatorial_symmetry=equatorial_symmetry
+        equatorial_symmetry=equatorial_symmetry; magnetic...
     )
-    vals_high, _ = solve_triglobal_eigenvalue_problem(params_high; solve_kw...)
+    vals_high, vecs_high = solve_triglobal_eigenvalue_problem(params_high; solve_kw...)
     σ_high = real(vals_high[1])
 
     if verbose
@@ -781,7 +832,7 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
         if verbose
             println("  Returning lower bound as estimate.")
         end
-        return Ra_low, σ_low, imag(vals_low[1])
+        return Ra_low, σ_low, imag(vals_low[1]), _leading_eigenvector(vecs_low)
     end
 
     if σ_high < 0
@@ -789,7 +840,7 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
         if verbose
             println("  Returning upper bound as estimate.")
         end
-        return Ra_high, σ_high, imag(vals_high[1])
+        return Ra_high, σ_high, imag(vals_high[1]), _leading_eigenvector(vecs_high)
     end
 
     # Bisection loop
@@ -800,15 +851,15 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
     end
 
     for iter in 1:max_iter
-        Ra_mid = 0.5 * (Ra_low + Ra_high)
+        Ra_mid = (Ra_low + Ra_high) / 2
 
         params_mid = TriglobalParams(
             E=E, Pr=Pr, Ra=Ra_mid, χ=χ, m_range=m_range, lmax=lmax, Nr=Nr,
             basic_state_3d=basic_state_3d,
             mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
-            equatorial_symmetry=equatorial_symmetry
+            equatorial_symmetry=equatorial_symmetry; magnetic...
         )
-        vals_mid, _ = solve_triglobal_eigenvalue_problem(params_mid; solve_kw...)
+        vals_mid, vecs_mid = solve_triglobal_eigenvalue_problem(params_mid; solve_kw...)
         σ_mid = real(vals_mid[1])
         ω_mid = imag(vals_mid[1])
 
@@ -828,7 +879,7 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
                 println("  σ_c  = ", @sprintf("%+.6e", σ_mid))
                 println("  ω_c  = ", @sprintf("%+.6e", ω_mid))
             end
-            return Ra_mid, σ_mid, ω_mid
+            return Ra_mid, σ_mid, ω_mid, _leading_eigenvector(vecs_mid)
         end
 
         # Update bounds
@@ -840,14 +891,14 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
     end
 
     # Max iterations reached
-    Ra_mid = 0.5 * (Ra_low + Ra_high)
+    Ra_mid = (Ra_low + Ra_high) / 2
     params_mid = TriglobalParams(
         E=E, Pr=Pr, Ra=Ra_mid, χ=χ, m_range=m_range, lmax=lmax, Nr=Nr,
         basic_state_3d=basic_state_3d,
         mechanical_bc=mechanical_bc, thermal_bc=thermal_bc,
-        equatorial_symmetry=equatorial_symmetry
+        equatorial_symmetry=equatorial_symmetry; magnetic...
     )
-    vals_mid, _ = solve_triglobal_eigenvalue_problem(params_mid; solve_kw...)
+    vals_mid, vecs_mid = solve_triglobal_eigenvalue_problem(params_mid; solve_kw...)
     σ_mid = real(vals_mid[1])
     ω_mid = imag(vals_mid[1])
 
@@ -858,5 +909,5 @@ function find_critical_rayleigh_triglobal(E, Pr, χ, m_range, lmax, Nr,
         println("  σ_c  = ", @sprintf("%+.6e", σ_mid))
     end
 
-    return Ra_mid, σ_mid, ω_mid
+    return Ra_mid, σ_mid, ω_mid, _leading_eigenvector(vecs_mid)
 end

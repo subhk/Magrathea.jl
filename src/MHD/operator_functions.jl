@@ -484,7 +484,7 @@ end
 Magnetic diffusion for poloidal magnetic field.
 ∇×(η∇×B_pol)
 
-Where Em = η/(ΩL²) is the magnetic Ekman number.
+Where Em = η/(Ω r_o²) is the magnetic Ekman number.
 """
 function operator_magnetic_diffusion_poloidal(op::MHDStabilityOperator{T},
                                               l::Int, Em::T) where {T}

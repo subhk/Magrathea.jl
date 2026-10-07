@@ -248,7 +248,7 @@ end
 
 function chebyshev_coefficients(::Type{T}, power::Int, N::Int, ri::Real, ro::Real;
                                 tol::Real=1e-9) where {T<:Real}
-    x = [T(cos(π * (i + 0.5) / N)) for i in 0:N-1]
+    x = [cospi(T(2i + 1) / (2N)) for i in 0:N-1]   # in T, so wider types keep precision
     riT = T(ri)
     roT = T(ro)
 
@@ -264,14 +264,17 @@ function chebyshev_coefficients(::Type{T}, power::Int, N::Int, ri::Real, ro::Rea
     for k in 0:N-1
         s = zero(T)
         for i in eachindex(x)
-            s += f_vals[i] * T(cos(π * k * (i - 0.5) / N))
+            s += f_vals[i] * cospi(T(k * (2i - 1)) / (2N))
         end
         coeffs[k+1] = (T(2) / T(N)) * s
     end
 
     coeffs[1] /= T(2)
+    # Drop round-off as well as `tol`: Float32 noise sits far above the default 1e-9
+    # and would otherwise fill the band of every multiplication operator.
+    cutoff = max(T(tol), 100 * eps(T) * maximum(abs, coeffs))
     @inbounds for i in eachindex(coeffs)
-        abs(coeffs[i]) <= T(tol) && (coeffs[i] = zero(T))
+        abs(coeffs[i]) <= cutoff && (coeffs[i] = zero(T))
     end
     return coeffs
 end
@@ -285,7 +288,7 @@ end
 function chebyshev_coefficients(::Type{T}, f::Function, N::Int, ri::Real, ro::Real;
                                 tol::Real=1e-9) where {T<:Real}
     # Evaluate function at Chebyshev-Gauss points
-    x = [T(cos(π * (i + 0.5) / N)) for i in 0:N-1]
+    x = [cospi(T(2i + 1) / (2N)) for i in 0:N-1]   # in T, so wider types keep precision
     riT = T(ri)
     roT = T(ro)
 
@@ -308,14 +311,17 @@ function chebyshev_coefficients(::Type{T}, f::Function, N::Int, ri::Real, ro::Re
     for k in 0:N-1
         s = zero(T)
         for i in eachindex(x)
-            s += f_vals[i] * T(cos(π * k * (i - 0.5) / N))
+            s += f_vals[i] * cospi(T(k * (2i - 1)) / (2N))
         end
         coeffs[k+1] = (T(2) / T(N)) * s
     end
 
     coeffs[1] /= T(2)
+    # Drop round-off as well as `tol`: Float32 noise sits far above the default 1e-9
+    # and would otherwise fill the band of every multiplication operator.
+    cutoff = max(T(tol), 100 * eps(T) * maximum(abs, coeffs))
     @inbounds for i in eachindex(coeffs)
-        abs(coeffs[i]) <= T(tol) && (coeffs[i] = zero(T))
+        abs(coeffs[i]) <= cutoff && (coeffs[i] = zero(T))
     end
     return coeffs
 end
@@ -517,7 +523,7 @@ function multiplication_matrix(a0::AbstractVector{T}, λ::Real, N::Int;
                 val = half * a2[t_idx]
                 if i > 0  # H[1,:] = 0 per Kore line 1040
                     h_idx = i + j + 1
-                    h_idx <= N && (val += half * a2[h_idx])
+                    h_idx <= length(a2) && (val += half * a2[h_idx])
                 end
                 if val != zero(T)
                     push!(rows, i + 1)
@@ -835,57 +841,3 @@ function _zero_row!(A::SparseMatrixCSC, r::Int)
     return nothing
 end
 
-"""
-    _bc_row_values(bc_type, row, N, ri, ro, ::Type{RT}) -> (block_range, row_vals)
-
-Tau boundary-condition functional for a single row: the column range it occupies
-(its own (N+1) diagonal block) and the dense coefficient vector written there.
-Single source of truth shared by the in-place applier `apply_boundary_conditions!`
-and the COO-stage collectors, so the two never drift.
-
-bc_type can be:
-  - :dirichlet → u = 0
-  - :neumann → du/dr = 0
-  - :neumann2 → r · d²u/dr² = 0 (for stress-free)
-"""
-function _bc_row_values(bc_type::Symbol, row::Int, N::Int, ri::Real, ro::Real,
-                        ::Type{RT}) where {RT}
-    scale = _radial_scale(ri, ro)
-    local_idx = (row - 1) % (N + 1) + 1
-    block_start = (row - local_idx) + 1
-    block_range = block_start:(block_start + N)
-    boundary = local_idx <= 2 ? :outer : :inner
-
-    if bc_type == :dirichlet
-        row_vals = _chebyshev_boundary_values(N, boundary, RT)
-    elseif bc_type == :neumann
-        row_vals = scale * _chebyshev_boundary_derivative(N, boundary, RT)
-    elseif bc_type == :neumann2
-        r_boundary = _boundary_radius(ri, ro, boundary)
-        row_vals = r_boundary * scale^2 * _chebyshev_boundary_second_derivative(N, boundary, RT)
-    else
-        throw(ArgumentError("Unsupported boundary condition type: $(bc_type)"))
-    end
-    return block_range, row_vals
-end
-
-"""
-    apply_boundary_conditions!(A::SparseMatrixCSC, B::SparseMatrixCSC,
-                               bc_rows::Vector{Int}, bc_type::Symbol)
-
-Apply boundary conditions by replacing rows in the matrices A and B (tau method).
-See `_bc_row_values` for the supported `bc_type`s.
-"""
-function apply_boundary_conditions!(A::SparseMatrixCSC{T}, B::SparseMatrixCSC{T},
-                                   bc_rows::Vector{Int}, bc_type::Symbol,
-                                   N::Int, ri::Real, ro::Real) where {T}
-    RT = _real_scalar_type(T)
-    for row in bc_rows
-        # Clear the row in place, then write the BC functional.
-        _zero_row!(A, row)
-        _zero_row!(B, row)
-        block_range, row_vals = _bc_row_values(bc_type, row, N, ri, ro, RT)
-        A[row, block_range] = row_vals
-    end
-    return nothing
-end
